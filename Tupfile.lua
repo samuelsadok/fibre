@@ -5,6 +5,9 @@ LIBS = {'pthread', 'rt'}
 CFLAGS = {}
 LDFLAGS = {}
 
+TOOLCHAIN = 'arm-linux-gnueabihf-' -- cross-compile
+--TOOLCHAIN = '' -- compile for the current architecture
+
 -- C sources
 C_SOURCES = {
     'rpi_ws281x/mailbox.c',
@@ -48,8 +51,8 @@ function compile(compiler, flags, sources)
     return objects
 end
 
-c_obj = compile('arm-linux-gnueabihf-gcc', CFLAGS, C_SOURCES)
-cpp_obj = compile('arm-linux-gnueabihf-g++ -std=c++11', CFLAGS, CPP_SOURCES)
+c_obj = compile(TOOLCHAIN..'gcc', CFLAGS, C_SOURCES)
+cpp_obj = compile(TOOLCHAIN..'g++ -std=c++11', CFLAGS, CPP_SOURCES)
 
 
 objects = {}
