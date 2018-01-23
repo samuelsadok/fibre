@@ -1,0 +1,10 @@
+[Unit]
+Description=LED strip Control Service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/lightd
+
+[Install]
+WantedBy=multi-user.target
+

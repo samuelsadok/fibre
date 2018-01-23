@@ -61,7 +61,7 @@ for _,obj in pairs(cpp_obj) do objects += obj end
 
 tup.frule{
     inputs=objects,
-    command='arm-linux-gnueabihf-g++ %f '..
+    command=TOOLCHAIN..'g++ %f '..
             tostring(CFLAGS)..' '..
             tostring(LDFLAGS)..
             ' -o %o',

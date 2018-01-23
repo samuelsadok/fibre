@@ -1,0 +1,9 @@
+[Unit]
+Description=Dim the light every evening
+
+[Timer]
+OnCalendar=23:50:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
