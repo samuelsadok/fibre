@@ -2,11 +2,12 @@
 """
 Connect to a fibre-enabled device to play with in the IPython interactive shell.
 """
-
-import fibre
 import argparse
 import sys
+import os
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/python")
+import fibre
 
 # Parse arguments
 parser = argparse.ArgumentParser(description='Connect to a fibre-enabled device to play with it in the IPython interactive shell.')
