@@ -2,8 +2,10 @@
 set -euo pipefail
 
 ln -sf "$(realpath lightctl.py)" /usr/bin/lightctl
-cp build/lightd /usr/bin/
 cp systemd/* /etc/systemd/system/
+
+#sudo systemctl stop lightd
+cp build/lightd /usr/bin/
 
 echo "Installation successful. You might want to:"
 echo "  sudo systemctl enable lightd"
