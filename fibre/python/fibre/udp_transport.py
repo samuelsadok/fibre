@@ -38,7 +38,8 @@ def open_udp(destination, printer=noprint, device_stdout=noprint):
     dest_addr = ':'.join(destination.split(":")[:-1])
     dest_port = int(destination.split(":")[-1])
   except (ValueError, IndexError):
-    raise Exception('"{}" is not a valid UDP destination. The format should be something like "localhost:1234".')
+    raise Exception('"{}" is not a valid UDP destination. The format should be something like "localhost:1234".'
+                    .format(destination))
   channel = channel_from_udp_destination(dest_addr, dest_port)
   udp_device = object_from_channel(channel, printer)
   return udp_device

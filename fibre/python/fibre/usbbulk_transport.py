@@ -4,8 +4,8 @@
 import usb.core
 import usb.util
 import sys
-import fibre.protocol
 import time
+import fibre.protocol
 
 # Currently we identify fibre-enabled devices by VID,PID
 WELL_KNOWN_VID_PID_PAIRS = [
