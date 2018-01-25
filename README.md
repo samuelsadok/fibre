@@ -74,6 +74,10 @@ Note that this is not yet representative for the existing code.
 | **I2C**          |       |
 
 
+## Projects based on Fibre ##
+
+[lightd](https://github.com/samuelsadok/lightd) Service that can be run on a Raspberry Pi (or similar) to control RGB LED strips
+
 ## Roadmap ##
 
 - Add compatibility with Windows, macOS, iOS, Android
