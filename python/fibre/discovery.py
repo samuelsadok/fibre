@@ -9,16 +9,26 @@ import json
 #import usb.util
 #import serial
 #import serial.tools.list_ports
-import fibre.protocol
-import fibre.usbbulk_transport
-import fibre.serial_transport
-import fibre.udp_transport
 import re
 import time
 import os
 import itertools
 import struct
 import functools
+
+import fibre.protocol
+# TODO: refactor code for each transport layer
+import fibre.udp_transport
+try:
+    import fibre.usbbulk_transport
+except ModuleNotFoundError:
+    def find_usb_channels():
+        return []
+try:
+    import fibre.serial_transport
+except ModuleNotFoundError:
+    def find_serial_channels():
+        return []
 
 def noprint(x):
   pass
