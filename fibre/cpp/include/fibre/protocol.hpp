@@ -36,7 +36,7 @@ inline size_t read_le(T* value, const uint8_t* buffer);
 template<>
 inline size_t write_le<uint8_t>(uint8_t value, uint8_t* buffer) {
     buffer[0] = value;
-    return 2;
+    return 1;
 }
 
 template<>
@@ -74,7 +74,7 @@ inline size_t write_le<float>(float value, uint8_t* buffer) {
 template<>
 inline size_t read_le<uint8_t>(uint8_t* value, const uint8_t* buffer) {
     *value = buffer[0];
-    return 2;
+    return 1;
 }
 
 template<>
