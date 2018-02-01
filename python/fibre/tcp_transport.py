@@ -35,7 +35,7 @@ class TCPTransport(fibre.protocol.StreamSource, fibre.protocol.StreamSink):
     except TimeoutError:
       # if we got a timeout data will still be none, so we call recv again
       # this time in non blocking state and see if we can get some data
-      return self.get_bytes(n_bytes, time.monotonic()-1)
+      return self.sock.recv(n_bytes, socket.MSG_DONTWAIT)
 
   def get_bytes_or_fail(self, n_bytes, deadline):
     result = self.get_bytes(n_bytes, deadline)
