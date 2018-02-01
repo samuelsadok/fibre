@@ -10,11 +10,16 @@ def noprint(x):
 
 class TCPTransport(fibre.protocol.StreamSource, fibre.protocol.StreamSink):
   def __init__(self, dest_addr, dest_port, printer):
-    self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    self.dest_addr = dest_addr
-    self.dest_port = dest_port
+    # TODO: FIXME: use IPv6
+    # Problem: getaddrinfo fails if the resolver returns an
+    # IPv4 address, but we are using AF_INET6
+    #family = socket.AF_INET6 if socket.has_ipv6 else socket.AF_INET
+    family = socket.AF_INET
+    self.sock = socket.socket(family, socket.SOCK_STREAM)
+    # TODO: Determine the right address to use from the list
+    self.target = socket.getaddrinfo(dest_addr, dest_port, family)[0][4]
     # TODO: this blocks until a connection is established, or the system cancels it
-    self.sock.connect((self.dest_addr, self.dest_port))
+    self.sock.connect(self.target)
 
   def process_bytes(self, buffer):
     self.sock.send(buffer)

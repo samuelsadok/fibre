@@ -9,12 +9,18 @@ def noprint(x):
 
 class UDPTransport(fibre.protocol.PacketSource, fibre.protocol.PacketSink):
   def __init__(self, dest_addr, dest_port, printer):
-    self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    self.dest_addr = dest_addr
-    self.dest_port = dest_port
+    # TODO: FIXME: use IPv6
+    # Problem: getaddrinfo fails if the resolver returns an
+    # IPv4 address, but we are using AF_INET6
+    #family = socket.AF_INET6 if socket.has_ipv6 else socket.AF_INET
+    family = socket.AF_INET
+    self.sock = socket.socket(family, socket.SOCK_DGRAM)
+    # TODO: Determine the right address to use from the list
+    self.target = socket.getaddrinfo(dest_addr,dest_port, family)[0][4]
+    print (self.target)
 
   def process_packet(self, buffer):
-    self.sock.sendto(buffer, (self.dest_addr, self.dest_port))
+    self.sock.sendto(buffer, self.target)
 
   def get_packet(self, deadline):
     # TODO: implement deadline
