@@ -5,7 +5,7 @@
 #include <signal.h>
 
 #include <fibre/protocol.hpp>
-#include <fibre/posix_udp.hpp>
+#include <fibre/posix_tcp.hpp>
 
 
 // global variable available on our testObject
@@ -45,16 +45,16 @@ int main() {
 
 
     // expose service on Fibre
-    std::thread server_thread(serve_on_udp, endpoints, NUM_ENDPOINTS, 9910);
+    std::thread server_thread(serve_on_tcp, endpoints, NUM_ENDPOINTS, 9910);
 
     printf("__fibre_test server started.\n");
 
     while (running) {
         // let the driver output the colors
-        printf("testProperty: %i", testProperty);
+        printf("testProperty: %i\n", testProperty);
 
-        // 10 frames / sec
-        usleep(1000000 / 10);
+        // 1 frames / sec
+        usleep(1000000 / 1);
     }
 
     return 0;
