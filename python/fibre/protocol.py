@@ -60,7 +60,7 @@ class DeviceInitException(Exception):
 
 class StreamSource(ABC):
     @abstractmethod
-    def get_bytes(self, deadline):
+    def get_bytes(self, n_bytes, deadline):
         pass
 
 class StreamSink(ABC):
@@ -127,7 +127,9 @@ class StreamBasedPacketSink(PacketSink):
         if (len(packet) >= MAX_PACKET_SIZE):
             raise NotImplementedError("packet larger than 127 currently not supported")
 
-        header = [SYNC_BYTE, len(packet)]
+        header = bytearray()
+        header.append(SYNC_BYTE)
+        header.append(len(packet))
         header.append(calc_crc8(CRC8_INIT, header))
 
         self._output.process_bytes(header)
