@@ -84,10 +84,6 @@ Note that this is not yet representative for the existing code.
 - Add bindings for JavaScript, C#
 - CI to test all items on the feature matrix
 
-## Build ##
+## Contribute ##
 
-To build the server change into the cpp directory and type:
-```
-tup init
-tup
-```
+This project losely adheres to the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html).
