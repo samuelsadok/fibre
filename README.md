@@ -63,7 +63,7 @@ Note that this is not yet representative for the existing code.
 |                  | Linux |
 |------------------|:-----:|
 | **UDP**          |   yes |
-| **raw TCP**      |       |
+| **raw TCP**      |   yes |
 | **WebSocks**     |       |
 | **HTTP**         |       |
 | **Bluetooth LE** |       |
