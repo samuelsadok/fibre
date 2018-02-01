@@ -4,6 +4,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <thread>
+#include <future>
 
 #include <fibre/protocol.hpp>
 
@@ -29,11 +31,45 @@ private:
 };
 
 
+int serve_client(const Endpoint endpoints[], size_t n_endpoints, int sock_fd) {
+    uint8_t buf[TCP_RX_BUF_LEN];
+
+//    printf("initializing output stack\n");
+    // initialize output stack for this client
+    TCPBytesSender tcp_packet_output(sock_fd);
+    StreamBasedPacketSink packet2stream(tcp_packet_output);
+    BidirectionalPacketBasedChannel channel(endpoints, n_endpoints, packet2stream);
+
+    StreamToPacketSegmenter stream2packet(channel);
+
+    // now listen for it
+    for (;;) {
+        memset(buf, 0, sizeof(buf));
+        // returns as soon as there is some data
+        ssize_t n_received = recv(sock_fd, buf, sizeof(buf), 0);
+        printf("recvd something: %d\n", n_received);
+        if (n_received == -1 || n_received == 0) {// -1 indicates error and 0 means that the client gracefully terminated
+            close(sock_fd);
+            return n_received;
+        }
+//        printf("Received packet from %s:%d\n\n",
+//            inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
+
+        // input processing stack
+        size_t processed = 0;
+        stream2packet.process_bytes(buf, n_received, processed);
+    }
+}
+
+// function to check if a worker thread handling a single client is done
+template<typename T>
+bool future_is_ready(std::future<T>& t){
+    return t.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+}
 
 int serve_on_tcp(const Endpoint endpoints[], size_t n_endpoints, unsigned int port) {
     struct sockaddr_in si_me, si_other;
     int s;
-    uint8_t buf[TCP_RX_BUF_LEN];
 
 
     if ((s=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
@@ -47,29 +83,23 @@ int serve_on_tcp(const Endpoint endpoints[], size_t n_endpoints, unsigned int po
         return -1;
 
     listen(s, 128); // make this socket a passive socket
+    std::vector<std::future<int>> serv_pool;
     for (;;) {
         memset(&si_other, 0, sizeof(si_other));
 
         socklen_t silen = sizeof(si_other);
+        printf("enter blocking accept\n");
         int client_portal_fd = accept(s, reinterpret_cast<sockaddr *>(&si_other), &silen); // blocking call
-        // TODO: make this accept more than one connection
-        memset(buf, 0, sizeof(buf));
-        ssize_t n_received = recv(s, buf, sizeof(buf), 0); // blocking again, once a connection has been established
-        if (n_received == -1)
-            return -1;
-        printf("Received packet from %s:%d\nData: %s\n\n",
-            inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port), buf);
-
-        // output stack
-        TCPBytesSender tcp_packet_output(client_portal_fd);
-        StreamBasedPacketSink packet2stream(tcp_packet_output);
-        BidirectionalPacketBasedChannel channel(endpoints, n_endpoints, packet2stream);
-
-        // input processing stack
-        // TODO: keep track of how many bytes were already processed
-        size_t processed = 0;
-        StreamToPacketSegmenter stream2packet(channel);
-        stream2packet.process_bytes(buf, n_received, processed);
+        printf("accepted client\n");
+        serv_pool.push_back(std::async(std::launch::async, serve_client, endpoints, n_endpoints, client_portal_fd));
+        // do a little clean up on the pool
+        for (std::vector<std::future<int>>::iterator it = serv_pool.end()-1; it >= serv_pool.begin(); --it) {
+            if (future_is_ready(*it)) {
+                printf("erasing thread\n");
+                // we can erase this thread
+                serv_pool.erase(it);
+            }
+        }
     }
 
     close(s);
