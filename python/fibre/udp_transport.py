@@ -17,7 +17,6 @@ class UDPTransport(fibre.protocol.PacketSource, fibre.protocol.PacketSink):
     self.sock = socket.socket(family, socket.SOCK_DGRAM)
     # TODO: Determine the right address to use from the list
     self.target = socket.getaddrinfo(dest_addr,dest_port, family)[0][4]
-    print (self.target)
 
   def process_packet(self, buffer):
     self.sock.sendto(buffer, self.target)
