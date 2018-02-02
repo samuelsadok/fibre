@@ -1,0 +1,8 @@
+[Unit]
+Description=Change the light to red and then dim it within the next 10min
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/lightctl ff0000 --time 5 --limit-brightness
+ExecStart=/usr/bin/sleep 565
+ExecStart=/usr/bin/lightctl 0 --time 30
