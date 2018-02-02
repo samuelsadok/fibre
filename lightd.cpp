@@ -5,7 +5,7 @@
 #include <signal.h>
 
 #include <fibre/protocol.hpp>
-#include <fibre/posix_udp.hpp>
+#include <fibre/posix_tcp.hpp>
 
 #include "rpi_ws281x/ws2811.h"
 
@@ -241,7 +241,7 @@ int main() {
     }
 
     // expose service on Fibre
-    std::thread server_thread(serve_on_udp, endpoints, NUM_ENDPOINTS, 9910);
+    std::thread server_thread(serve_on_tcp, endpoints, NUM_ENDPOINTS, 9910);
 
     printf("LED server started.\n");
 

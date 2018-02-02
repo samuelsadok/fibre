@@ -1,5 +1,5 @@
 
-CPP_SOURCES = {'lightd.cpp','fibre/cpp/posix_udp.cpp','fibre/cpp/protocol.cpp'}
+CPP_SOURCES = {'lightd.cpp','fibre/cpp/posix_tcp.cpp','fibre/cpp/protocol.cpp'}
 INCLUDE = {'fibre/cpp/include'}
 LIBS = {'pthread', 'rt'}
 CFLAGS = {}

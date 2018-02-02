@@ -37,7 +37,7 @@ if (args.verbose):
   printer = print
 else:
   printer = lambda x: None
-lightcontroller = fibre.open_udp(args.host + ':9910', printer=printer, device_stdout=print)
+lightcontroller = fibre.open_tcp(args.host + ':9910', printer=printer, device_stdout=print)
 
 # Set color
 lightcontroller.set_color(float((color >> 24) & 0xff) / 255,
