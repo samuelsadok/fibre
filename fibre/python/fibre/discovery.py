@@ -19,6 +19,7 @@ import functools
 import fibre.protocol
 # TODO: refactor code for each transport layer
 import fibre.udp_transport
+import fibre.tcp_transport
 try:
     import fibre.usbbulk_transport
 except ModuleNotFoundError:
