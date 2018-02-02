@@ -26,6 +26,8 @@ group.add_argument("-u", "--usb", metavar="BUS:DEVICE", action="store",
                     "using `lsusb`.")
 group.add_argument("-p", "--udp", metavar="ADDR:PORT", action="store",
                     help="Specifies the UDP port on which the device is reachable. ")
+group.add_argument("-t", "--tcp", metavar="ADDR:PORT", action="store",
+                    help="Specifies the TCP port on which the device is reachable. ")
 group.add_argument("-s", "--serial", metavar="PORT", action="store",
                     help="Specifies the serial port on which the device is connected. "
                     "For example \"/dev/ttyUSB0\". Use `ls /dev/tty*` to find your port name.")
@@ -55,6 +57,8 @@ elif not args.serial is None:
   my_device = fibre.open_serial(args.serial, printer=printer, device_stdout=print)
 elif not args.udp is None:
   my_device = fibre.open_udp(args.udp, printer=printer, device_stdout=print)
+elif not args.tcp is None:
+  my_device = fibre.open_tcp(args.tcp, printer=printer, device_stdout=print)
 else:
   print("Waiting for device...")
   consider_usb = 'usb' in args.discover.split(',')

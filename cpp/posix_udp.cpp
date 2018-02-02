@@ -13,7 +13,7 @@
 
 class UDPPacketSender : public PacketSink {
 public:
-    UDPPacketSender(int socket_fd, struct sockaddr_in *si_other) :
+    UDPPacketSender(int socket_fd, struct sockaddr_in6 *si_other) :
         _socket_fd(socket_fd),
         _si_other(si_other)
     {}
@@ -31,25 +31,26 @@ public:
 
 private:
     int _socket_fd;
-    struct sockaddr_in *_si_other;
+    struct sockaddr_in6 *_si_other;
 };
 
 
 
 int serve_on_udp(const Endpoint endpoints[], size_t n_endpoints, unsigned int port) {
-    struct sockaddr_in si_me, si_other;
+    struct sockaddr_in6 si_me, si_other;
     int s, i;
     socklen_t slen = sizeof(si_other);
     uint8_t buf[UDP_RX_BUF_LEN];
 
-    if ((s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+    if ((s=socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == -1)
         return -1;
 
     memset((char *) &si_me, 0, sizeof(si_me));
-    si_me.sin_family = AF_INET;
-    si_me.sin_port = htons(port);
-    si_me.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (bind(s, reinterpret_cast<struct sockaddr *>(&si_me), sizeof(si_me)) == -1)
+    si_me.sin6_family = AF_INET6;
+    si_me.sin6_port = htons(port);
+    si_me.sin6_flowinfo = 0;
+    si_me.sin6_addr= in6addr_any;
+    if (bind(s, reinterpret_cast<struct sockaddr *>(&si_me), sizeof(si_me)) == -1) 
         return -1;
 
     for (;;) {
