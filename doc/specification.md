@@ -51,9 +51,9 @@ If a variable is used without being assigned a value previously during processin
 | `AckEndpoint` | 0 | the endpoint where to send an acknowledgement for the payload |
 | `ExpectResponse` | false | whether the sender expects a response from processing the payload |
 | `ResponseEndpoint` | 0 | the endpoint where to send the response from processing the payload |
-| `EnforceOrdering` | false | if true, the payload will not be processed until all other payloads of the same thread with lower sequence numbers have been processessed |
 | `SeqNo` | 0 | the sequence number of the payload ID of the sequence number counter that should be incremented after processing the payload |
 | `SeqNoThread` | 0 | acts as a namespace for the sequence number so that multiple independent counters can be used in parallel |
+| `EnforceOrdering` | false | if true, the payload will not be processed until all other payloads of the same thread with lower sequence numbers have been processessed |
 
 ### Decoders ###
 
