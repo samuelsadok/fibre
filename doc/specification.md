@@ -141,9 +141,20 @@ TODO: discuss requests that expect _no_ acknowledgement (does expect result impl
 
 ### Duplicate Requests ###
 
-If the same request (as identified by the (`SeqNoThread`, `SeqNo`) tuple) is received multiple times, the requirements for the server are in general the same as for unique messages, with two differences:
- 1. The server is allowed to completely ignore _some_ of the duplicates as long as the following statement holds true: If the number of duplicates goes to infinity, the probability of a successful delivery of at least one ACK, NACK or result (whichever is applicable) must approach 1. For example a compliant policy would be exponential backoff: Keep message copies 1, 3, 6, 11, 20, 37, ... and ignore all in between. A non-compliant policy would be to keep the first 10 copies and then ignore all subsequent duplicates.
- 2. Let a **pure** request be a request that, when processed multiple times, has the same effect (but not necessarily result) as a when processed one single time. [TODO: not sure if this is precise enough] Duplicate write requests that are not pure MUST NOT be processed more than once.
+If the same request (as identified by the (`SeqNoThread`, `SeqNo`) tuple) is received multiple times, the requirements for the server are in general the same as for unique requests, with two differences:
+
+**Dropping selected requests:**
+The server is allowed to completely ignore _some_ of the duplicates as long as the following statement holds true: If the number of duplicates goes to infinity, the probability of a successful delivery of at least one ACK, NACK or result (whichever is applicable) must approach 1.
+  
+As an example we give three policies:
+  1. Handle _all_ incoming requests as specified in [Unique Requests](#unique-requests).
+  2. Handle request copies 1, 3, 6, 11, 20, 37, ... and ignore all in between (aka exponential backoff).
+  3. Only handle the first copy and then ignore all subsequent duplicates.
+
+Examples 1 and 2 are both compliant, however example 1 may use more bandwidth than necessary. Example 3 is compliant if and only if the result or NACK is returned over a reliable channel.
+
+**Avoiding duplicate actions:** Let a **pure** request be a request that, when processed multiple times, has the same effect (but not necessarily result) as a when processed one single time. [TODO: not sure if this is precise enough] Duplicate write requests that are not pure MUST NOT be processed more than once.
+
 
 Example:
 ```
