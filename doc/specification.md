@@ -85,12 +85,21 @@ Note that some decoders come in multiple variants that are functionally the same
     `[polynomial]` and `[init]` are both a 2-digit lower case hexadecimal number.
 
     This decoder interprets the incoming byte stream as a sequence of 4 byte blocks, each consisting of 3 data bytes followed
-    by one CRC8 checksum byte. The CRC init value for each block is the calculated CRC8 result of the previous block.
-    For an intact input stream this is equal to the 4th byte of the previous block. The CRC init value of the first block
+    by one CRC8 checksum byte. The CRC init value for each block is the CRC8 result of the previous block.  The CRC init value of the first block
     is `[init]`.
 
-    If and only if the calculated CRC of a given block matches the 4th byte in the block, the decoder MUST pass the three
-    data bytes to the inner decoder chain. Once an invalid block is encounterd, the decoder MUST ignore this and all subsequent blocks.
+    The decoder removes the CRC bytes from the stream and passes the data bytes to the inner decoders except if an invalid CRC is found, in which case it aborts.
+
+```
+Input stream:
++--------+--------+--------+------------+--------+--------+--------+------------+
+| byte 1 | byte 2 | byte 3 | crc(1...3) | byte 4 | byte 5 | byte 6 | crc(4...5) | ...
++--------+--------+--------+------------+--------+--------+--------+------------+
+becomes:
++--------+--------+--------+--------+--------+--------+
+| byte 1 | byte 2 | byte 3 | byte 4 | byte 5 | byte 6 | ...
++--------+--------+--------+--------+--------+--------+
+```
 
   - `Repeat:[uint-type]` (nested decoder)
   
