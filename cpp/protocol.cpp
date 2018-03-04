@@ -7,15 +7,7 @@
 #include <stdlib.h>
 
 /* Private defines -----------------------------------------------------------*/
-// Note that this option cannot be used to debug UART because it prints on UART
-//#define DEGUG_PROTOCOL
 /* Private macros ------------------------------------------------------------*/
-
-#ifdef DEGUG_PROTOCOL
-#define LOG_PROTO(...)  do { printf(__VA_ARGS__); osDelay(10); } while (0)
-#else
-#define LOG_PROTO(...)  ((void) 0)
-#endif
 
 /* Private typedef -----------------------------------------------------------*/
 /* Global constant data ------------------------------------------------------*/

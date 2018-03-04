@@ -10,13 +10,59 @@ see protocol.md for the protocol specification
 
 #include <functional>
 #include <limits>
-#include <cstring>
+//#include <stdint.h>
+#include <string.h>
 #include "crc.hpp"
 
+//#define DEBUG_PROTOCOL
 
-constexpr uint8_t SYNC_BYTE = 0xAA;
-constexpr uint8_t CRC8_INIT = 0x42;
-constexpr uint16_t CRC16_INIT = 0x1337;
+#ifdef DEBUG_PROTOCOL
+#define LOG_PROTO(...)  do { printf(__VA_ARGS__); /* osDelay(10); */ } while (0)
+#else
+#define LOG_PROTO(...)  ((void) 0)
+#endif
+
+
+// Default CRC-8 Polynomial: x^8 + x^5 + x^4 + x^2 + x + 1
+// Can protect a 4 byte payload against toggling of up to 5 bits
+//  source: https://users.ece.cmu.edu/~koopman/crc/index.html
+constexpr uint8_t CANONICAL_CRC8_POLYNOMIAL = 0x37;
+constexpr uint8_t CANONICAL_CRC8_INIT = 0x42;
+
+constexpr size_t CRC8_BLOCKSIZE = 4;
+
+// Default CRC-16 Polynomial: 0x9eb2 x^16 + x^13 + x^12 + x^11 + x^10 + x^8 + x^6 + x^5 + x^2 + 1
+// Can protect a 135 byte payload against toggling of up to 5 bits
+//  source: https://users.ece.cmu.edu/~koopman/crc/index.html
+// Also known as CRC-16-DNP
+constexpr uint16_t CANONICAL_CRC16_POLYNOMIAL = 0x3d65;
+constexpr uint16_t CANONICAL_CRC16_INIT = 0x1337;
+
+constexpr uint8_t CANONICAL_PREFIX = 0xAA;
+
+
+
+
+
+/* move to fibre_config.h ******************************/
+
+typedef size_t endpoint_id_t;
+
+struct ReceiverState {
+    endpoint_id_t endpoint_id;
+    size_t length;
+    uint16_t seqno_thread;
+    uint16_t seqno;
+    bool expect_ack;
+    bool expect_response;
+    bool enforce_ordering;
+};
+
+/*******************************************************/
+
+
+
+
 constexpr uint16_t PROTOCOL_VERSION = 1;
 
 // This value must not be larger than USB_TX_DATA_SIZE defined in usbd_cdc_if.h
@@ -139,17 +185,35 @@ class StreamSink {
 public:
     // @brief Processes a chunk of bytes that is part of a continuous stream.
     // The blocking behavior shall depend on the thread-local deadline_ms variable.
+    // @param processed_bytes: if not NULL, shall be incremented by the number of
+    //        bytes that were consumed.
     // @return: 0 on success, otherwise a non-zero error code
-    virtual int process_bytes(const uint8_t* buffer, size_t length, size_t& processed_bytes) = 0;
+    virtual int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) = 0;
 
     // @brief Returns the number of bytes that can still be written to the stream.
     // Shall return SIZE_MAX if the stream has unlimited lenght.
-    virtual size_t get_free_space() = 0;
+    // TODO: deprecate
+    //virtual size_t get_free_space() = 0;
 
-    int process_bytes(const uint8_t* buffer, size_t length) {
+    /*int process_bytes(const uint8_t* buffer, size_t length) {
         size_t processed_bytes = 0;
-        return process_bytes(buffer, length, processed_bytes);
-    }
+        return process_bytes(buffer, length, &processed_bytes);
+    }*/
+};
+
+class StreamSource {
+public:
+    // @brief Generate a chunk of bytes that are part of a continuous stream.
+    // The blocking behavior shall depend on the thread-local deadline_ms variable.
+    // @param generated_bytes: if not NULL, shall be incremented by the number of
+    //        bytes that were written to buffer.
+    // @return: 0 on success, otherwise a non-zero error code
+    virtual int get_bytes(uint8_t* buffer, size_t length, size_t* generated_bytes) = 0;
+
+    // @brief Returns the number of bytes that can still be written to the stream.
+    // Shall return SIZE_MAX if the stream has unlimited lenght.
+    // TODO: deprecate
+    //virtual size_t get_free_space() = 0;
 };
 
 // @brief Segments a stream into packets by looking for sync bytes and packet headers.
@@ -161,7 +225,7 @@ public:
     {
     };
 
-    int process_bytes(const uint8_t *buffer, size_t length, size_t& processed_bytes);
+    int process_bytes(const uint8_t *buffer, size_t length, size_t* processed_bytes);
     
     size_t get_free_space() { return SIZE_MAX; }
 
@@ -198,7 +262,7 @@ public:
     PacketBasedStreamSink(PacketSink& packet_sink) : _packet_sink(packet_sink) {}
     ~PacketBasedStreamSink() {}
 
-    int process_bytes(const uint8_t* buffer, size_t length, size_t& processed_bytes) {
+    int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
         // Loop to ensure all bytes get sent
         while (length) {
             size_t chunk = length < _packet_sink.get_mtu() ? length : _packet_sink.get_mtu();
@@ -207,7 +271,8 @@ public:
                 return -1;
             buffer += chunk;
             length -= chunk;
-            processed_bytes += chunk;
+            if (processed_bytes)
+                *processed_bytes += chunk;
         }
         return 0;
     }
@@ -227,12 +292,13 @@ public:
         buffer_length_(length) {}
 
     // Returns 0 on success and -1 if the buffer could not accept everything because it became full
-    int process_bytes(const uint8_t* buffer, size_t length, size_t& processed_bytes) {
+    int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
         size_t chunk = length < buffer_length_ ? length : buffer_length_;
         memcpy(buffer_, buffer, chunk);
         buffer_ += chunk;
         buffer_length_ -= chunk;
-        processed_bytes += chunk;
+        if (processed_bytes)
+            *processed_bytes += chunk;
         return chunk == length ? 0 : -1;
     }
 
@@ -252,21 +318,23 @@ public:
         follow_up_stream_(follow_up_stream) {}
 
     // Returns 0 on success and -1 if the buffer could not accept everything because it became full
-    int process_bytes(const uint8_t* buffer, size_t length, size_t& processed_bytes) {
+    int process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) {
         if (skip_ < length) {
             buffer += skip_;
             length -= skip_;
-            processed_bytes += skip_;
+            if (processed_bytes)
+                *processed_bytes += skip_;
             skip_ = 0;
             return follow_up_stream_.process_bytes(buffer, length, processed_bytes);
         } else {
             skip_ -= length;
-            processed_bytes += length;
+            if (processed_bytes)
+                *processed_bytes += length;
             return 0;
         }
     }
 
-    size_t get_free_space() { return skip_ + follow_up_stream_.get_free_space(); }
+    //size_t get_free_space() { return skip_ + follow_up_stream_.get_free_space(); }
 
 private:
     size_t skip_;
@@ -282,9 +350,10 @@ public:
     CRC16Calculator(uint16_t crc16_init) :
         crc16_(crc16_init) {}
 
-    int process_bytes(const uint8_t* buffer, size_t length, size_t& processed_bytes) {
-        crc16_ = calc_crc16(crc16_, buffer, length);
-        processed_bytes += length;
+    int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
+        crc16_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(crc16_, buffer, length);
+        if (processed_bytes)
+            *processed_bytes += length;
         return 0;
     }
 
@@ -304,6 +373,8 @@ typedef enum {
     CLOSE_TREE
 } EndpointType_t;
 
+
+#if 0
 
 // @brief Endpoint request handler
 //
@@ -510,5 +581,7 @@ private:
     uint8_t tx_buf_[TX_BUF_SIZE];
     const uint16_t json_crc_;
 };
+#endif
+
 
 #endif
