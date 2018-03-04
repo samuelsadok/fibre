@@ -6,7 +6,7 @@ In particular:
 
  - Nobody likes boiler plate code. Using a remote object should feel almost
    exactly as if it was local. No matter if it's in a different process, on
-   a USB device, connected via bluetooth, over the internet or all at the
+   a USB device, connected via Bluetooth, over the Internet or all at the
    same time.
    All complexity arising from the system being distributed should be taken
    care of by Fibre while still allowing the application developer to easily
