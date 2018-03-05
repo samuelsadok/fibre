@@ -1,3 +1,6 @@
+#ifndef __CPP_UTILS_HPP
+#define __CPP_UTILS_HPP
+
 /*
 
 ## Advanced C++ Topics
@@ -124,3 +127,5 @@ template <class T, class M> M get_member_type(M T:: *);
 // @brief Statically asserts that T is derived from type BaseType
 // (currently unused)
 #define EXPECT_TYPE(T, BaseType) static_assert(std::is_base_of<BaseType, T>::value, "expected template argument of type " #BaseType)
+
+#endif // __CPP_UTILS_HPP

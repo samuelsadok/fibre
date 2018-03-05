@@ -55,9 +55,8 @@ public:
 
 // @brief Encapsulates a BlockDecoder to make it look like a StreamDecoder
 // @tparam T The encapsulated BlockDecoder type.
-//           Must be similar to BlockDecoder, in other words it should
-//           inherit from BlockDecoder.
-template<typename T>
+//           Must inherit from BlockDecoder.
+template<typename T, ENABLE_IF(TypeChecker<T>::template all_are<BlockDecoder<T::block_size::value>>())>
 class StreamDecoder_from_BlockDecoder : public StreamDecoder {
 public:
     // @brief Imitates the constructor signature of the encapsulated type.
@@ -77,8 +76,7 @@ public:
     }
 
     inline int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
-        //buffer[1] = 0x01;
-        while (!block_decoder_.get_status() && get_expected_bytes() && (length >= T::block_size::value)) {
+        while (!get_status() && get_expected_bytes() && length) {
             // use the incoming bytes to fill internal buffer to get a complete block
             size_t n_copy = std::min(length, T::block_size::value - buffer_pos_);
             memcpy(buffer_ + buffer_pos_, buffer, n_copy);
@@ -93,16 +91,18 @@ public:
                 buffer_pos_ = 0;
             }
         }
-        return block_decoder_.get_status();
-    };
-
+        return get_status();
+    }
 private:
     T block_decoder_;
     size_t buffer_pos_ = 0;
     uint8_t buffer_[T::block_size::value];
 };
 
-template<typename T>
+// @brief Encapsulates a ByteDecoder to make it look like a BlockDecoder
+// @tparam T The encapsulated ByteDecoder type.
+//           Must inherit from ByteDecoder.
+template<typename T, ENABLE_IF(TypeChecker<T>::template all_are<ByteDecoder>())>
 class BlockDecoder_from_ByteDecoder : public BlockDecoder<1> {
 public:
     // @brief Imitates the constructor signature of the encapsulated type.
@@ -126,8 +126,10 @@ private:
     T byte_decoder_;
 };
 
-
-template<typename T>
+// @brief Encapsulates a ByteDecoder to make it look like a StreamDecoder
+// @tparam T The encapsulated ByteDecoder type.
+//           Must inherit from ByteDecoder.
+template<typename T, ENABLE_IF(TypeChecker<T>::template all_are<ByteDecoder>())>
 class StreamDecoder_from_ByteDecoder : public StreamDecoder {
 public:
     // @brief Imitates the constructor signature of the encapsulated type.
@@ -150,7 +152,7 @@ public:
             byte_decoder_.process_byte(*(buffer++));
         }
         return byte_decoder_.get_status();
-    };
+    }
 private:
     T byte_decoder_;
 };
@@ -160,6 +162,8 @@ private:
 template<typename T>
 class VarintByteDecoder : public ByteDecoder {
 public:
+    static constexpr T BIT_WIDTH = (CHAR_BIT * sizeof(T));
+
     VarintByteDecoder(T& state_variable) :
         state_variable_(state_variable)
     {}
@@ -177,18 +181,21 @@ public:
             LOG_PROTO("start decoding varint, with 0x%02x => %zx\n", input_byte, (uintptr_t)&state_variable_);
             state_variable_ = 0;
         }
+        // we assume bit_pos_ < BIT_WIDTH
         state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
         if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
-            LOG_PROTO("varint overflow: tried to add %02x << %d\n", input_byte, bit_pos_);
+            LOG_PROTO("varint overflow: tried to add %02x << %zu\n", input_byte, bit_pos_);
             return (status_ = -1); // overflow
         }
         bit_pos_ += 7;
         done_ = !(input_byte & 0x80);
-        return 0;
+        return (status_ = (done_ || bit_pos_ < BIT_WIDTH) ? 0 : -1);
     }
 
 private:
     T& state_variable_;
+    // At all times where status_ != 0 the following statement holds:
+    // (done_ || bit_pos_ < BIT_WIDTH)
     size_t bit_pos_ = 0; // bit position
     int status_ = 0;
     bool done_ = false;
@@ -238,9 +245,9 @@ public:
         return status_ = inner_decoder_.process_bytes(input_block, CRC8_BLOCKSIZE - 1, nullptr);
     }
 private:
+    TDecoder& inner_decoder_;
     int status_ = 0;
     uint8_t current_crc_ = INIT;
-    TDecoder& inner_decoder_;
 };
 
 template<unsigned INIT, unsigned POLYNOMIAL, typename TDecoder>
@@ -251,7 +258,7 @@ CRC8StreamDecoder<INIT, POLYNOMIAL, TDecoder> make_crc8_decoder(TDecoder decoder
     return CRC8StreamDecoder<INIT, POLYNOMIAL, TDecoder>(decoder);
 }
 
-
+// TODO: ENABLE_IF(TypeChecker<TDecoders...>::template all_are<StreamDecoder>())
 template<typename ... TDecoders>
 class DecoderChain;
 
@@ -291,7 +298,7 @@ public:
 
     int process_bytes(const uint8_t *input, size_t length, size_t* processed_bytes) final {
         if (this_decoder_.get_expected_bytes()) {
-            LOG_PROTO("decoder chain: process %u bytes in segment %s\n", length, typeid(TDecoder).name());
+            LOG_PROTO("decoder chain: process %zu bytes in segment %s\n", length, typeid(TDecoder).name());
             size_t chunk = 0;
             int status = this_decoder_.process_bytes(input, length, &chunk);
             if (status)
@@ -299,6 +306,8 @@ public:
             input += chunk;
             length -= chunk;
             if (processed_bytes) (*processed_bytes) += chunk;
+            if (!length)
+                return 0;
         }
         return subsequent_decoders_.process_bytes(input, length, processed_bytes);
     }
