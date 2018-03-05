@@ -9,7 +9,7 @@ void hexdump(const uint8_t* buf, size_t len);
 
 #include <fibre/crc.hpp>
 #include <fibre/decoders.hpp>
-//#include <fibre/encoders.hpp>
+#include <fibre/encoders.hpp>
 
 void hexdump(const uint8_t* buf, size_t len) {
     for (size_t pos = 0; pos < len; ++pos) {
@@ -24,12 +24,12 @@ void hexdump(const uint8_t* buf, size_t len) {
 
 bool varint_decoder_test() {
     struct test_case_t {
-        uint8_t raw_data[10];
+        uint8_t encoded[10];
         size_t length;
-        uint32_t ground_truth;
+        uint32_t decoded;
     };
     const test_case_t test_cases[] = {
-        // raw_data, length, expected output
+        // encoded, length, decoded
         { { 0x00 }, 1, 0 },
         { { 0x01 }, 1, 1 },
         { { 0xff, 0x01 }, 2, 0xff },
@@ -41,14 +41,29 @@ bool varint_decoder_test() {
         uint32_t result;
         VarintStreamDecoder<uint32_t> decoder = make_varint_decoder(result);
         size_t processed_bytes = 0;
-        int status = decoder.process_bytes(test_cases[i].raw_data, test_cases[i].length, &processed_bytes);
+        int status = decoder.process_bytes(test_cases[i].encoded, test_cases[i].length, &processed_bytes);
         if (status) {
-            return false;
-        } else if (result != test_cases[i].ground_truth) {
-            printf("test %zu: expected %u but got %u\n", i, test_cases[i].ground_truth, result);
             return false;
         } else if (processed_bytes != test_cases[i].length) {
             printf("test %zu: expected to process %zu bytes but processed %zu bytes\n", i, test_cases[i].length, processed_bytes);
+            return false;
+        } else if (result != test_cases[i].decoded) {
+            printf("test %zu: expected %u but got %u\n", i, test_cases[i].decoded, result);
+            return false;
+        }
+
+        VarintStreamEncoder<uint32_t> encoder = make_varint_encoder(test_cases[i].decoded);
+        uint8_t buffer[10];
+        size_t generated_bytes = 0;
+        status = encoder.get_bytes(buffer, sizeof(buffer), &generated_bytes);
+        if (status) {
+            return false;
+        } else if ((generated_bytes != test_cases[i].length) 
+                || memcmp(buffer, test_cases[i].encoded, test_cases[i].length)) {
+            printf("test %zu: expected:", i);
+            hexdump(test_cases[i].encoded, test_cases[i].length);
+            printf("got: ");
+            hexdump(buffer, generated_bytes);
             return false;
         }
     }
@@ -58,11 +73,12 @@ bool varint_decoder_test() {
 
 
 int main(void) {
-    /* Decoder demo (remove or move somewhere else) */
+    /***** Decoder demo (remove or move somewhere else) *****/
+    printf("Running decoder... ");
     // prepare raw data
-    uint8_t raw_data[] = { 0xBC, 0x03, 0xAC, 0xff, 0x02, 0x00, 0x00, 0xff };
-    raw_data[3] = calc_crc8<CANONICAL_CRC8_POLYNOMIAL>(CANONICAL_CRC8_INIT, raw_data, 3);
-    raw_data[7] = calc_crc8<CANONICAL_CRC8_POLYNOMIAL>(raw_data[3], raw_data + 4, 3);
+    uint8_t raw_data[] = { 0xBC, 0x03, 0xAC, 0x5e, 0x02, 0x00, 0x00, 0xd1 };
+    //raw_data[3] = calc_crc8<CANONICAL_CRC8_POLYNOMIAL>(CANONICAL_CRC8_INIT, raw_data, 3);
+    //raw_data[7] = calc_crc8<CANONICAL_CRC8_POLYNOMIAL>(raw_data[3], raw_data + 4, 3);
 
     // instantiate decoder
     ReceiverState state;
@@ -83,9 +99,36 @@ int main(void) {
     else
         printf("decoder demo failed\n");
 
+    
+    /***** Encoder demo (remove or move somewhere else) *****/    
+    printf("Running encoder... ");
+    // prepare request
+    Request request = {
+        .length = 444,
+        .endpoint_id = 300,
+    };
+
+    // construct encoder for the request
+    auto e2 = make_crc8_encoder<CANONICAL_CRC8_INIT, CANONICAL_CRC8_POLYNOMIAL>(
+        make_encoder_chain(
+            make_length_encoder(request),
+            make_endpoint_id_encoder(request)
+        )
+    );
+
+    // pull raw data out of the encoder
+    uint8_t buffer[20];
+    size_t generated_bytes = 0;
+    status = e2.get_bytes(buffer, sizeof(buffer), &generated_bytes);
+    if (status == 0) {
+        printf("generated %zu bytes:\n", generated_bytes);
+        hexdump(buffer, generated_bytes);
+    } else {
+        printf("encoder demo failed\n");
+    }
 
 
-    /* run automated test */
+    /***** run automated test *****/
     bool test_result = varint_decoder_test();
     if (test_result) {
         printf("all tests passed\n");
