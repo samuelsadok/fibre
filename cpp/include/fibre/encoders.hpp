@@ -215,7 +215,7 @@ VarintStreamEncoder<GET_TYPE_OF(&Request::length)> make_length_encoder(const Req
     return make_varint_encoder(request.length);
 }
 
-template<unsigned INIT, unsigned POLYNOMIAL, typename TEncoder,
+template<uint8_t INIT, uint8_t POLYNOMIAL, typename TEncoder,
         ENABLE_IF(TypeChecker<TEncoder>::template all_are<StreamEncoder>())>
 class CRC8BlockEncoder : public BlockEncoder<CRC8_BLOCKSIZE> {
 public:

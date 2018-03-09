@@ -224,7 +224,7 @@ VarintStreamDecoder<GET_TYPE_OF(&ReceiverState::length)> make_length_decoder(Rec
 
 
 
-template<unsigned INIT, unsigned POLYNOMIAL, typename TDecoder,
+template<uint8_t INIT, uint8_t POLYNOMIAL, typename TDecoder,
         ENABLE_IF(TypeChecker<TDecoder>::template all_are<StreamDecoder>())>
 class CRC8BlockDecoder : public BlockDecoder<CRC8_BLOCKSIZE> {
 public:
