@@ -266,6 +266,6 @@ Before considering the protocol stable we want to meet the following design goal
 
 And have a general outline for the following:
 
- - Encryption/Authentication/Priviledges
+ - Encryption/Authentication/Privileges
  - How does relaying work
 
