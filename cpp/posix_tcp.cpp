@@ -19,9 +19,10 @@ public:
         socket_fd_(socket_fd)
     {}
 
-    int process_bytes(const uint8_t* buffer, size_t length, size_t& processed_bytes) {
+    int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
         int bytes_sent = send(socket_fd_, buffer, length, 0);
-        processed_bytes = (bytes_sent == -1) ? 0 : bytes_sent;
+        if (processed_bytes)
+            *processed_bytes = (bytes_sent == -1) ? 0 : bytes_sent;
         return (bytes_sent == -1) ? -1 : 0;
     }
 
@@ -32,13 +33,13 @@ private:
 };
 
 
-int serve_client(const Endpoint endpoints[], size_t n_endpoints, int sock_fd) {
+int serve_client(int sock_fd) {
     uint8_t buf[TCP_RX_BUF_LEN];
 
     // initialize output stack for this client
     TCPStreamSink tcp_packet_output(sock_fd);
     StreamBasedPacketSink packet2stream(tcp_packet_output);
-    BidirectionalPacketBasedChannel channel(endpoints, n_endpoints, packet2stream);
+    BidirectionalPacketBasedChannel channel(packet2stream);
 
     StreamToPacketSegmenter stream2packet(channel);
 
@@ -56,7 +57,7 @@ int serve_client(const Endpoint endpoints[], size_t n_endpoints, int sock_fd) {
 
         // input processing stack
         size_t processed = 0;
-        stream2packet.process_bytes(buf, n_received, processed);
+        stream2packet.process_bytes(buf, n_received, &processed);
     }
 }
 
@@ -66,7 +67,7 @@ bool future_is_ready(std::future<T>& t){
     return t.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
 }
 
-int serve_on_tcp(const Endpoint endpoints[], size_t n_endpoints, unsigned int port) {
+int serve_on_tcp(unsigned int port) {
     struct sockaddr_in6 si_me, si_other;
     int s;
 
@@ -92,7 +93,7 @@ int serve_on_tcp(const Endpoint endpoints[], size_t n_endpoints, unsigned int po
         socklen_t silen = sizeof(si_other);
         // TODO: Add a limit on accepting connections
         int client_portal_fd = accept(s, reinterpret_cast<sockaddr *>(&si_other), &silen); // blocking call
-        serv_pool.push_back(std::async(std::launch::async, serve_client, endpoints, n_endpoints, client_portal_fd));
+        serv_pool.push_back(std::async(std::launch::async, serve_client, client_portal_fd));
         // do a little clean up on the pool
         for (std::vector<std::future<int>>::iterator it = serv_pool.end()-1; it >= serv_pool.begin(); --it) {
             if (future_is_ready(*it)) {
