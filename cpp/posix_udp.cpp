@@ -36,7 +36,7 @@ private:
 
 
 
-int serve_on_udp(const Endpoint endpoints[], size_t n_endpoints, unsigned int port) {
+int serve_on_udp(unsigned int port) {
     struct sockaddr_in6 si_me, si_other;
     int s, i;
     socklen_t slen = sizeof(si_other);
@@ -61,7 +61,7 @@ int serve_on_udp(const Endpoint endpoints[], size_t n_endpoints, unsigned int po
         //    inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port), buf);
 
         UDPPacketSender udp_packet_output(s, &si_other);
-        BidirectionalPacketBasedChannel udp_channel(endpoints, n_endpoints, udp_packet_output);
+        BidirectionalPacketBasedChannel udp_channel(udp_packet_output);
         udp_channel.process_packet(buf, n_received);
     }
 

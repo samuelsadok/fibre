@@ -1,25 +1,23 @@
 
 /* Includes ------------------------------------------------------------------*/
 
-#include <fibre/protocol.hpp>
-
 #include <memory>
 #include <stdlib.h>
 
+#include <fibre/protocol.hpp>
+
 /* Private defines -----------------------------------------------------------*/
-// Note that this option cannot be used to debug UART because it prints on UART
-//#define DEGUG_PROTOCOL
 /* Private macros ------------------------------------------------------------*/
-
-#ifdef DEGUG_PROTOCOL
-#define LOG_PROTO(...)  do { printf(__VA_ARGS__); osDelay(10); } while (0)
-#else
-#define LOG_PROTO(...)  ((void) 0)
-#endif
-
 /* Private typedef -----------------------------------------------------------*/
 /* Global constant data ------------------------------------------------------*/
 /* Global variables ----------------------------------------------------------*/
+
+Endpoint** endpoint_list_ = nullptr; // initialized by calling fibre_publish
+size_t n_endpoints_ = 0; // initialized by calling fibre_publish
+uint16_t json_crc_; // initialized by calling fibre_publish
+JSONDescriptorEndpoint json_file_endpoint_ = JSONDescriptorEndpoint();
+JSONWriter* application_json_writer_;
+
 /* Private constant data -----------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
 /* Private function prototypes -----------------------------------------------*/
@@ -45,51 +43,9 @@ void hexdump(const uint8_t* buf, size_t len) {
 }
 #endif
 
-static inline int write_string(const char* str, StreamSink* output) {
-    return output->process_bytes(reinterpret_cast<const uint8_t*>(str), strlen(str));
-}
-
-void Endpoint::write_json(size_t id, bool* need_comma, StreamSink* output) const {
-    if (type_ == CLOSE_TREE) {
-        write_string("]}", output);
-        *need_comma = true;
-    } else {
-        if (*need_comma)
-            write_string(",", output);
-
-        // write name
-        write_string("{\"name\":\"", output);
-        if (name_)
-            write_string(name_, output);
-
-        // write endpoint ID
-        write_string("\",\"id\":", output);
-        char id_buf[10];
-        snprintf(id_buf, sizeof(id_buf), "%u", id); // TODO: get rid of printf
-        write_string(id_buf, output);
-
-        // write additional JSON data
-        if (json_modifier_ && json_modifier_[0]) {
-            write_string(",", output);
-            write_string(json_modifier_, output);
-        }
-
-        if (type_ == BEGIN_OBJECT) {
-            write_string(",\"members\":[", output);
-            *need_comma = false;
-        } else if (type_ == BEGIN_FUNCTION) {
-            write_string(",\"arguments\":[", output);
-            *need_comma = false;
-        } else if (type_ == PROPERTY) {
-            write_string("}", output);
-            *need_comma = true;
-        }
-    }
-}
 
 
-
-int StreamToPacketSegmenter::process_bytes(const uint8_t *buffer, size_t length, size_t& processed_bytes) {
+int StreamToPacketSegmenter::process_bytes(const uint8_t *buffer, size_t length, size_t* processed_bytes) {
     int result = 0;
 
     while (length--) {
@@ -117,9 +73,9 @@ int StreamToPacketSegmenter::process_bytes(const uint8_t *buffer, size_t length,
             }
             header_index_ = packet_index_ = packet_length_ = 0;
         }
-
         buffer++;
-        processed_bytes++;
+        if (processed_bytes)
+            (*processed_bytes)++;
     }
 
     return result;
@@ -127,10 +83,10 @@ int StreamToPacketSegmenter::process_bytes(const uint8_t *buffer, size_t length,
 
 int StreamBasedPacketSink::process_packet(const uint8_t *buffer, size_t length) {
     // TODO: support buffer size >= 128
-    if (length >= get_mtu())
+    if (length >= 128)
         return -1;
 
-    LOG_PROTO("send header\r\n");
+    LOG_FIBRE("send header\r\n");
     uint8_t header[] = {
         SYNC_BYTE,
         static_cast<uint8_t>(length),
@@ -138,58 +94,64 @@ int StreamBasedPacketSink::process_packet(const uint8_t *buffer, size_t length) 
     };
     header[2] = calc_crc8(CRC8_INIT, header, 2);
 
-    if (output_.process_bytes(header, sizeof(header)))
+    if (output_.process_bytes(header, sizeof(header), nullptr))
         return -1;
-    LOG_PROTO("send payload:\r\n");
+    LOG_FIBRE("send payload:\r\n");
     hexdump(buffer, length);
-    if (output_.process_bytes(buffer, length))
+    if (output_.process_bytes(buffer, length, nullptr))
         return -1;
 
-    LOG_PROTO("send crc16\r\n");
+    LOG_FIBRE("send crc16\r\n");
     uint16_t crc16 = calc_crc16(CRC16_INIT, buffer, length);
     uint8_t crc16_buffer[] = {
         (uint8_t)((crc16 >> 8) & 0xff),
         (uint8_t)((crc16 >> 0) & 0xff)
     };
-    if (output_.process_bytes(crc16_buffer, 2))
+    if (output_.process_bytes(crc16_buffer, 2, nullptr))
         return -1;
-    LOG_PROTO("sent!\r\n");
+    LOG_FIBRE("sent!\r\n");
     return 0;
 }
 
 
-// Calculates the CRC16 of the JSON interface descriptor.
-// The init value is the protocol version.
-uint16_t BidirectionalPacketBasedChannel::calculate_json_crc16(void) {
-    CRC16Calculator crc16_calculator(PROTOCOL_VERSION);
 
-    uint8_t offset[4] = { 0 };
-    interface_query(offset, sizeof(offset), &crc16_calculator);
+void JSONDescriptorEndpoint::write_json(size_t id, StreamSink* output) {
+    write_string("{\"name\":\"\",", output);
 
-    return crc16_calculator.get_crc16();
+    // write endpoint ID
+    write_string("\"id\":", output);
+    char id_buf[10];
+    snprintf(id_buf, sizeof(id_buf), "%u", id); // TODO: get rid of printf
+    write_string(id_buf, output);
+
+    write_string(",\"type\":\"json\",\"access\":\"r\"}", output);
+}
+
+void JSONDescriptorEndpoint::register_endpoints(Endpoint** list, size_t id, size_t length) {
+    if (id < length)
+        list[id] = this;
 }
 
 // Returns part of the JSON interface definition.
-void BidirectionalPacketBasedChannel::interface_query(const uint8_t* input, size_t input_length, StreamSink* output) {
+void JSONDescriptorEndpoint::handle(const uint8_t* input, size_t input_length, StreamSink* output) {
     // The request must contain a 32 bit integer to specify an offset
     if (input_length < 4)
         return;
     uint32_t offset = 0;
     read_le<uint32_t>(&offset, input);
     NullStreamSink output_with_offset = NullStreamSink(offset, *output);
-    
-    bool need_comma = false;
+
+    size_t id = 0;
     write_string("[", &output_with_offset);
-    for (size_t i = 0; i < n_endpoints_; ++i) {
-        get_endpoint(i)->write_json(i, &need_comma, &output_with_offset);
-        if (!output->get_free_space())
-            return; // return early if the output cannot take more bytes
-    }
+    json_file_endpoint_.write_json(id, &output_with_offset);
+    id += decltype(json_file_endpoint_)::endpoint_count;
+    write_string(",", &output_with_offset);
+    application_json_writer_->write_json(id, &output_with_offset);
     write_string("]", &output_with_offset);
 }
 
 int BidirectionalPacketBasedChannel::process_packet(const uint8_t* buffer, size_t length) {
-    LOG_PROTO("got packet of length %d: \r\n", length);
+    LOG_FIBRE("got packet of length %d: \r\n", length);
     hexdump(buffer, length);
     if (length < 4)
         return -1;
@@ -206,9 +168,14 @@ int BidirectionalPacketBasedChannel::process_packet(const uint8_t* buffer, size_
         bool expect_response = endpoint_id & 0x8000;
         endpoint_id &= 0x7fff;
 
-        const Endpoint* endpoint = get_endpoint(endpoint_id);
-        if (!endpoint)
+        if (endpoint_id >= n_endpoints_)
             return -1;
+
+        Endpoint* endpoint = endpoint_list_[endpoint_id];
+        if (!endpoint) {
+            LOG_FIBRE("critical: no endpoint at %d", endpoint_id);
+            return -1;
+        }
 
         // Verify packet trailer. The expected trailer value depends on the selected endpoint.
         // For endpoint 0 this is just the protocol version, for all other endpoints it's a
@@ -216,10 +183,10 @@ int BidirectionalPacketBasedChannel::process_packet(const uint8_t* buffer, size_
         uint16_t expected_trailer = endpoint_id ? json_crc_ : PROTOCOL_VERSION;
         uint16_t actual_trailer = buffer[length - 2] | (buffer[length - 1] << 8);
         if (expected_trailer != actual_trailer) {
-            LOG_PROTO("trailer mismatch for endpoint %d: expected %04x, got %04x\r\n", endpoint_id, expected_trailer, actual_trailer);
+            LOG_FIBRE("trailer mismatch for endpoint %d: expected %04x, got %04x\r\n", endpoint_id, expected_trailer, actual_trailer);
             return -1;
         }
-        LOG_PROTO("trailer ok\r\n");
+        LOG_FIBRE("trailer ok for endpoint %d\r\n", endpoint_id);
 
         // TODO: if more bytes than the MTU were requested, should we abort or just return as much as possible?
 
@@ -237,7 +204,7 @@ int BidirectionalPacketBasedChannel::process_packet(const uint8_t* buffer, size_
             size_t actual_response_length = expected_response_length - output.get_free_space() + 2;
             write_le<uint16_t>(seq_no | 0x8000, tx_buf_);
 
-            LOG_PROTO("send packet:\r\n");
+            LOG_FIBRE("send packet:\r\n");
             hexdump(tx_buf_, actual_response_length);
             output_.process_packet(tx_buf_, actual_response_length);
         }
