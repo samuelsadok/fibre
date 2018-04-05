@@ -1,9 +1,8 @@
 
 tup.include('../tupfiles/build.lua')
 
-build{
-    name='libfibre',
-    toolchains={GCCToolchain('', {}, {})},
-    --sources={'test_server.cpp'}
-    includes={'include'}
+fibre_package = define_package{
+    sources={'protocol.cpp', 'posix_tcp.cpp', 'posix_udp.cpp'},
+    libs={'pthread'},
+    headers={'include'}
 }

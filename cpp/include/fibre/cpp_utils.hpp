@@ -128,4 +128,12 @@ template <class T, class M> M get_member_type(M T:: *);
 // (currently unused)
 #define EXPECT_TYPE(T, BaseType) static_assert(std::is_base_of<BaseType, T>::value, "expected template argument of type " #BaseType)
 
+// Backport definitions from C++14
+#if __cplusplus <= 201103L
+namespace std {
+    template< class T >
+    using underlying_type_t = typename underlying_type<T>::type;
+}
+#endif
+
 #endif // __CPP_UTILS_HPP
