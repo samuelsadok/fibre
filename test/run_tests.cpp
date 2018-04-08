@@ -104,8 +104,8 @@ int main(void) {
     printf("Running encoder... ");
     // prepare request
     Request request = {
-        .length = 444,
         .endpoint_id = 300,
+        .length = 444,
     };
 
     // construct encoder for the request

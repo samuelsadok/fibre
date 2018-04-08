@@ -182,11 +182,11 @@ public:
 
     int get_byte(uint8_t *output_byte) final {
         if (bit_pos_ == 0)
-            LOG_PROTO("start encoding varint, from pos %d\n", bit_pos_);
+            LOG_FIBRE("start encoding varint, from pos %d\n", bit_pos_);
         *output_byte = (state_variable_ >> bit_pos_) & 0x7f;
         bit_pos_ += 7;
         if (bit_pos_ < BIT_WIDTH && (state_variable_ >> bit_pos_)) {
-            LOG_PROTO("remainder: %x\n", state_variable_ >> bit_pos_);
+            LOG_FIBRE("remainder: %x\n", state_variable_ >> bit_pos_);
             *output_byte |= 0x80;
         }else
             done_ = true;
@@ -219,7 +219,8 @@ template<uint8_t INIT, uint8_t POLYNOMIAL, typename TEncoder,
         ENABLE_IF(TypeChecker<TEncoder>::template all_are<StreamEncoder>())>
 class CRC8BlockEncoder : public BlockEncoder<CRC8_BLOCKSIZE> {
 public:
-    CRC8BlockEncoder(TEncoder& inner_encoder) : inner_encoder_(inner_encoder) {}
+    CRC8BlockEncoder(TEncoder&& inner_encoder)
+        : inner_encoder_(std::forward<TEncoder>(inner_encoder)) {}
 
     int get_status() final {
         return status_;
@@ -243,7 +244,7 @@ public:
         return 0;
     }
 private:
-    TEncoder& inner_encoder_;
+    TEncoder inner_encoder_;
     int status_ = 0;
     uint8_t current_crc_ = INIT;
 };
@@ -252,8 +253,8 @@ template<unsigned INIT, unsigned POLYNOMIAL, typename TEncoder>
 using CRC8StreamEncoder = StreamEncoder_from_BlockEncoder<CRC8BlockEncoder<INIT, POLYNOMIAL, TEncoder>>;
 
 template<unsigned INIT, unsigned POLYNOMIAL, typename TEncoder>
-CRC8StreamEncoder<INIT, POLYNOMIAL, TEncoder> make_crc8_encoder(TEncoder encoder) {
-    return CRC8StreamEncoder<INIT, POLYNOMIAL, TEncoder>(encoder);
+CRC8StreamEncoder<INIT, POLYNOMIAL, TEncoder> make_crc8_encoder(TEncoder&& encoder) {
+    return CRC8StreamEncoder<INIT, POLYNOMIAL, TEncoder>(std::forward<TEncoder>(encoder));
 }
 
 template<typename ... TEncoders>
@@ -270,9 +271,9 @@ public:
 template<typename TEncoder, typename ... TEncoders>
 class EncoderChain<TEncoder, TEncoders...> : public StreamEncoder {
 public:
-    EncoderChain(TEncoder this_encoder, TEncoders ... subsequent_encoders) :
-        this_encoder_(this_encoder),
-        subsequent_encoders_(subsequent_encoders...)
+    EncoderChain(TEncoder&& this_encoder, TEncoders&& ... subsequent_encoders) :
+        this_encoder_(std::forward<TEncoder>(this_encoder)),
+        subsequent_encoders_(std::forward<TEncoders>(subsequent_encoders)...)
     {
         EXPECT_TYPE(TEncoder, StreamEncoder);
     }
@@ -295,7 +296,7 @@ public:
 
     int get_bytes(uint8_t *output, size_t length, size_t* generated_bytes) final {
         if (this_encoder_.get_available_bytes()) {
-            LOG_PROTO("encoder chain: generate %zu bytes in segment %s\n", length, typeid(TEncoder).name());
+            LOG_FIBRE("encoder chain: generate %zu bytes in segment %s\n", length, typeid(TEncoder).name());
             size_t chunk = 0;
             int status = this_encoder_.get_bytes(output, length, &chunk);
             if (status)
@@ -315,8 +316,8 @@ private:
 };
 
 template<typename ... TEncoders>
-EncoderChain<TEncoders...> make_encoder_chain(TEncoders ... encoders) {
-    return EncoderChain<TEncoders...>(encoders...);
+EncoderChain<TEncoders...> make_encoder_chain(TEncoders&& ... encoders) {
+    return EncoderChain<TEncoders...>(std::forward<TEncoders>(encoders)...);
 }
 
 #endif // __ENCODERS_HPP

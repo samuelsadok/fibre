@@ -78,6 +78,17 @@ public:
 
 */
 
+// Backport definitions from C++14
+#if __cplusplus <= 201103L
+namespace std {
+    template< class T >
+    using underlying_type_t = typename underlying_type<T>::type;
+
+    // source: http://en.cppreference.com/w/cpp/types/enable_if
+    template< bool B, class T = void >
+    using enable_if_t = typename enable_if<B,T>::type;
+}
+#endif
 
 // @brief Supports various queries on a list of types
 template<typename ... Ts>
@@ -116,24 +127,18 @@ public:
     }
 };
 
+#include <type_traits>
 #define ENABLE_IF(...) \
-  typename std::enable_if<__VA_ARGS__>::type* = nullptr
+  typename = std::enable_if_t<__VA_ARGS__>
 
 
 template <class T, class M> M get_member_type(M T:: *);
 #define GET_TYPE_OF(mem) decltype(get_member_type(mem))
 
 
+//#include <type_traits>
 // @brief Statically asserts that T is derived from type BaseType
-// (currently unused)
-#define EXPECT_TYPE(T, BaseType) static_assert(std::is_base_of<BaseType, T>::value, "expected template argument of type " #BaseType)
-
-// Backport definitions from C++14
-#if __cplusplus <= 201103L
-namespace std {
-    template< class T >
-    using underlying_type_t = typename underlying_type<T>::type;
-}
-#endif
+#define EXPECT_TYPE(T, BaseType) static_assert(std::is_base_of<BaseType, typename std::decay<T>::type>::value || std::is_convertible<typename std::decay<T>::type, BaseType>::value, "expected template argument of type " #BaseType)
+//#define EXPECT_TYPE(T, BaseType) static_assert(, "expected template argument of type " #BaseType)
 
 #endif // __CPP_UTILS_HPP

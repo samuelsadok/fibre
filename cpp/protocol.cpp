@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #include <fibre/protocol.hpp>
+#include <fibre/crc.hpp>
 
 /* Private defines -----------------------------------------------------------*/
 /* Private macros ------------------------------------------------------------*/
@@ -52,11 +53,11 @@ int StreamToPacketSegmenter::process_bytes(const uint8_t *buffer, size_t length,
         if (header_index_ < sizeof(header_buffer_)) {
             // Process header byte
             header_buffer_[header_index_++] = *buffer;
-            if (header_index_ == 1 && header_buffer_[0] != SYNC_BYTE) {
+            if (header_index_ == 1 && header_buffer_[0] != CANONICAL_PREFIX) {
                 header_index_ = 0;
             } else if (header_index_ == 2 && (header_buffer_[1] & 0x80)) {
                 header_index_ = 0; // TODO: support packets larger than 128 bytes
-            } else if (header_index_ == 3 && calc_crc8(CRC8_INIT, header_buffer_, 3)) {
+            } else if (header_index_ == 3 && calc_crc8<CANONICAL_CRC8_POLYNOMIAL>(CANONICAL_CRC8_INIT, header_buffer_, 3)) {
                 header_index_ = 0;
             } else if (header_index_ == 3) {
                 packet_length_ = header_buffer_[1] + 2;
@@ -68,7 +69,7 @@ int StreamToPacketSegmenter::process_bytes(const uint8_t *buffer, size_t length,
 
         // If both header and packet are fully received, hand it on to the packet processor
         if (header_index_ == 3 && packet_index_ == packet_length_) {
-            if (calc_crc16(CRC16_INIT, packet_buffer_, packet_length_) == 0) {
+            if (calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(CANONICAL_CRC16_INIT, packet_buffer_, packet_length_) == 0) {
                 result |= output_.process_packet(packet_buffer_, packet_length_ - 2);
             }
             header_index_ = packet_index_ = packet_length_ = 0;
@@ -88,11 +89,11 @@ int StreamBasedPacketSink::process_packet(const uint8_t *buffer, size_t length) 
 
     LOG_FIBRE("send header\r\n");
     uint8_t header[] = {
-        SYNC_BYTE,
+        CANONICAL_PREFIX,
         static_cast<uint8_t>(length),
         0
     };
-    header[2] = calc_crc8(CRC8_INIT, header, 2);
+    header[2] = calc_crc8<CANONICAL_CRC8_POLYNOMIAL>(CANONICAL_CRC8_INIT, header, 2);
 
     if (output_.process_bytes(header, sizeof(header), nullptr))
         return -1;
@@ -102,7 +103,7 @@ int StreamBasedPacketSink::process_packet(const uint8_t *buffer, size_t length) 
         return -1;
 
     LOG_FIBRE("send crc16\r\n");
-    uint16_t crc16 = calc_crc16(CRC16_INIT, buffer, length);
+    uint16_t crc16 = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(CANONICAL_CRC16_INIT, buffer, length);
     uint8_t crc16_buffer[] = {
         (uint8_t)((crc16 >> 8) & 0xff),
         (uint8_t)((crc16 >> 0) & 0xff)

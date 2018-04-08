@@ -18,7 +18,7 @@ see protocol.md for the protocol specification
 // Note that this option cannot be used to debug UART because it prints on UART
 //#define DEBUG_FIBRE
 #ifdef DEBUG_FIBRE
-#define LOG_FIBRE(...)  do { printf(__VA_ARGS__); osDelay(10); } while (0)
+#define LOG_FIBRE(...)  do { printf(__VA_ARGS__); } while (0)
 #else
 #define LOG_FIBRE(...)  ((void) 0)
 #endif

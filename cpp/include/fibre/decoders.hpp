@@ -93,6 +93,8 @@ public:
         }
         return get_status();
     }
+
+    size_t get_free_space() { return SIZE_MAX; } // TODO: deprecate
 private:
     T block_decoder_;
     size_t buffer_pos_ = 0;
@@ -145,6 +147,7 @@ public:
     inline size_t get_expected_bytes() final {
         return byte_decoder_.get_expected_bytes();
     }
+    inline size_t get_free_space() { return SIZE_MAX; }
     inline int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
         while (!byte_decoder_.get_status() && byte_decoder_.get_expected_bytes() && length) {
             length--;
@@ -166,7 +169,8 @@ public:
 
     VarintByteDecoder(T& state_variable) :
         state_variable_(state_variable)
-    {}
+    {
+    }
 
     size_t get_expected_bytes() final {
         return done_ ? 0 : 1;
@@ -178,13 +182,14 @@ public:
 
     int process_byte(uint8_t input_byte) final {
         if (bit_pos_ == 0) {
-            LOG_PROTO("start decoding varint, with 0x%02x => %zx\n", input_byte, (uintptr_t)&state_variable_);
+            LOG_FIBRE("start decoding varint, with 0x%02x => %zx\n", input_byte, (uintptr_t)&state_variable_);
             state_variable_ = 0;
         }
+        LOG_FIBRE("varint: decode %02x << %zu at %zx\n", input_byte, bit_pos_, &bit_pos_);
         // we assume bit_pos_ < BIT_WIDTH
         state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
         if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
-            LOG_PROTO("varint overflow: tried to add %02x << %zu\n", input_byte, bit_pos_);
+            LOG_FIBRE("varint overflow: tried to add %02x << %zu\n", input_byte, bit_pos_);
             return (status_ = -1); // overflow
         }
         bit_pos_ += 7;
@@ -196,9 +201,11 @@ private:
     T& state_variable_;
     // At all times where status_ != 0 the following statement holds:
     // (done_ || bit_pos_ < BIT_WIDTH)
+    //size_t bit_pos_ = 0; // bit position
     size_t bit_pos_ = 0; // bit position
     int status_ = 0;
     bool done_ = false;
+    int data[1024] = {0};
 };
 
 template<typename T>
@@ -211,14 +218,14 @@ using VarintStreamDecoder = StreamDecoder_from_ByteDecoder<VarintByteDecoder<T>>
 //using VarintStreamDecoder = StreamDecoder_from_BlockDecoder<VarintBlockDecoder<T>>;
 
 template<typename T>
-VarintStreamDecoder<T> make_varint_decoder(T& variable) {
+inline VarintStreamDecoder<T> make_varint_decoder(T& variable) {
     return VarintStreamDecoder<T>(variable);
 }
 
-VarintStreamDecoder<GET_TYPE_OF(&ReceiverState::endpoint_id)> make_endpoint_id_decoder(ReceiverState& state) {
+inline VarintStreamDecoder<GET_TYPE_OF(&ReceiverState::endpoint_id)> make_endpoint_id_decoder(ReceiverState& state) {
     return make_varint_decoder(state.endpoint_id);
 }
-VarintStreamDecoder<GET_TYPE_OF(&ReceiverState::length)> make_length_decoder(ReceiverState& state) {
+inline VarintStreamDecoder<GET_TYPE_OF(&ReceiverState::length)> make_length_decoder(ReceiverState& state) {
     return make_varint_decoder(state.length);
 }
 
@@ -228,7 +235,9 @@ template<uint8_t INIT, uint8_t POLYNOMIAL, typename TDecoder,
         ENABLE_IF(TypeChecker<TDecoder>::template all_are<StreamDecoder>())>
 class CRC8BlockDecoder : public BlockDecoder<CRC8_BLOCKSIZE> {
 public:
-    CRC8BlockDecoder(TDecoder& inner_decoder) : inner_decoder_(inner_decoder) {}
+    CRC8BlockDecoder(TDecoder&& inner_decoder) :
+            inner_decoder_(std::forward<TDecoder>(inner_decoder)) {
+    }
 
     int get_status() final {
         return status_;
@@ -245,7 +254,7 @@ public:
         return status_ = inner_decoder_.process_bytes(input_block, CRC8_BLOCKSIZE - 1, nullptr);
     }
 private:
-    TDecoder& inner_decoder_;
+    TDecoder inner_decoder_;
     int status_ = 0;
     uint8_t current_crc_ = INIT;
 };
@@ -254,8 +263,8 @@ template<unsigned INIT, unsigned POLYNOMIAL, typename TDecoder>
 using CRC8StreamDecoder = StreamDecoder_from_BlockDecoder<CRC8BlockDecoder<INIT, POLYNOMIAL, TDecoder>>;
 
 template<unsigned INIT, unsigned POLYNOMIAL, typename TDecoder>
-CRC8StreamDecoder<INIT, POLYNOMIAL, TDecoder> make_crc8_decoder(TDecoder decoder) {
-    return CRC8StreamDecoder<INIT, POLYNOMIAL, TDecoder>(decoder);
+inline CRC8StreamDecoder<INIT, POLYNOMIAL, TDecoder> make_crc8_decoder(TDecoder&& decoder) {
+    return CRC8StreamDecoder<INIT, POLYNOMIAL, TDecoder>(std::forward<TDecoder>(decoder));
 }
 
 // TODO: ENABLE_IF(TypeChecker<TDecoders...>::template all_are<StreamDecoder>())
@@ -268,14 +277,15 @@ public:
     size_t get_expected_bytes() { return 0; }
     int get_status() { return 0; }
     int process_bytes(const uint8_t *input, size_t length, size_t* processed_bytes) { return 0; }
+    size_t get_free_space() { return SIZE_MAX; } // TODO: deprecate
 };
 
 template<typename TDecoder, typename ... TDecoders>
 class DecoderChain<TDecoder, TDecoders...> : public StreamDecoder {
 public:
-    DecoderChain(TDecoder this_decoder, TDecoders ... subsequent_decoders) :
-        this_decoder_(this_decoder),
-        subsequent_decoders_(subsequent_decoders...)
+    DecoderChain(TDecoder&& this_decoder, TDecoders&& ... subsequent_decoders) :
+        this_decoder_(std::forward<TDecoder>(this_decoder)),
+        subsequent_decoders_(std::forward<TDecoders>(subsequent_decoders)...)
     {
         EXPECT_TYPE(TDecoder, StreamDecoder);
     }
@@ -298,28 +308,29 @@ public:
 
     int process_bytes(const uint8_t *input, size_t length, size_t* processed_bytes) final {
         if (this_decoder_.get_expected_bytes()) {
-            LOG_PROTO("decoder chain: process %zu bytes in segment %s\n", length, typeid(TDecoder).name());
+            LOG_FIBRE("decoder chain: process %zu bytes in segment %s\n", length, typeid(TDecoder).name());
             size_t chunk = 0;
             int status = this_decoder_.process_bytes(input, length, &chunk);
-            if (status)
-                return status;
             input += chunk;
             length -= chunk;
             if (processed_bytes) (*processed_bytes) += chunk;
+            if (status)
+                return status;
             if (!length)
                 return 0;
         }
         return subsequent_decoders_.process_bytes(input, length, processed_bytes);
     }
     
+    size_t get_free_space() { return SIZE_MAX; } // TODO: deprecate
 private:
     TDecoder this_decoder_;
     DecoderChain<TDecoders...> subsequent_decoders_;
 };
 
 template<typename ... TDecoders>
-DecoderChain<TDecoders...> make_decoder_chain(TDecoders ... decoders) {
-    return DecoderChain<TDecoders...>(decoders...);
+inline DecoderChain<TDecoders...> make_decoder_chain(TDecoders&& ... decoders) {
+    return DecoderChain<TDecoders...>(std::forward<TDecoders>(decoders)...);
 }
 
 #endif // __DECODERS_HPP
