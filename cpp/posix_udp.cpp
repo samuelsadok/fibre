@@ -38,7 +38,7 @@ private:
 
 int serve_on_udp(unsigned int port) {
     struct sockaddr_in6 si_me, si_other;
-    int s, i;
+    int s;
     socklen_t slen = sizeof(si_other);
     uint8_t buf[UDP_RX_BUF_LEN];
 
@@ -54,7 +54,7 @@ int serve_on_udp(unsigned int port) {
         return -1;
 
     for (;;) {
-        size_t n_received = recvfrom(s, buf, sizeof(buf), 0, reinterpret_cast<struct sockaddr *>(&si_other), &slen);
+        ssize_t n_received = recvfrom(s, buf, sizeof(buf), 0, reinterpret_cast<struct sockaddr *>(&si_other), &slen);
         if (n_received == -1)
             return -1;
         //printf("Received packet from %s:%d\nData: %s\n\n",

@@ -633,7 +633,7 @@ public:
         // write endpoint ID
         write_string("\",\"id\":", output);
         char id_buf[10];
-        snprintf(id_buf, sizeof(id_buf), "%u", id); // TODO: get rid of printf
+        snprintf(id_buf, sizeof(id_buf), "%zu", id); // TODO: get rid of printf
         write_string(id_buf, output);
 
         // write additional JSON data
@@ -773,7 +773,7 @@ public:
         // write endpoint ID
         write_string("\",\"id\":", output);
         char id_buf[10];
-        snprintf(id_buf, sizeof(id_buf), "%u", id); // TODO: get rid of printf
+        snprintf(id_buf, sizeof(id_buf), "%zu", id); // TODO: get rid of printf
         write_string(id_buf, output);
         
         // write arguments

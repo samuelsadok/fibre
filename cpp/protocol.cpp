@@ -122,7 +122,7 @@ void JSONDescriptorEndpoint::write_json(size_t id, StreamSink* output) {
     // write endpoint ID
     write_string("\"id\":", output);
     char id_buf[10];
-    snprintf(id_buf, sizeof(id_buf), "%u", id); // TODO: get rid of printf
+    snprintf(id_buf, sizeof(id_buf), "%zu", id); // TODO: get rid of printf
     write_string(id_buf, output);
 
     write_string(",\"type\":\"json\",\"access\":\"r\"}", output);
