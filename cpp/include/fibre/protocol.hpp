@@ -652,14 +652,14 @@ public:
 };
 
 template<typename ... TMembers>
-MemberList<TMembers...> make_protocol_member_list(TMembers&&... member_list) {
+MemberList<TMembers...> make_fibre_member_list(TMembers&&... member_list) {
     return MemberList<TMembers...>(std::forward<TMembers>(member_list)...);
 }
 
 template<typename ... TMembers>
-class ProtocolObject {
+class FibreObject {
 public:
-    ProtocolObject(const char * name, TMembers&&... member_list) :
+    FibreObject(const char * name, TMembers&&... member_list) :
         name_(name),
         member_list_(std::forward<TMembers>(member_list)...) {}
 
@@ -690,30 +690,30 @@ public:
 };
 
 template<typename ... TMembers>
-ProtocolObject<TMembers...> make_protocol_object(const char * name, TMembers&&... member_list) {
-    return ProtocolObject<TMembers...>(name, std::forward<TMembers>(member_list)...);
+FibreObject<TMembers...> make_fibre_object(const char * name, TMembers&&... member_list) {
+    return FibreObject<TMembers...>(name, std::forward<TMembers>(member_list)...);
 }
 
 template<typename TProperty>
-class ProtocolProperty : public Endpoint {
+class FibreProperty : public Endpoint {
 public:
     static constexpr const char * json_modifier = get_default_json_modifier<TProperty>();
     static constexpr size_t endpoint_count = 1;
 
-    ProtocolProperty(const char * name, TProperty* property)
+    FibreProperty(const char * name, TProperty* property)
         : name_(name), property_(property)
     {}
 
 /*  TODO: find out why the move constructor is not used when it could be
-    ProtocolProperty(const ProtocolProperty&) = delete;
+    FibreProperty(const FibreProperty&) = delete;
     // @brief Move constructor
-    ProtocolProperty(ProtocolProperty&& other) :
+    FibreProperty(FibreProperty&& other) :
         Endpoint(std::move(other)),
         name_(std::move(other.name_)),
         property_(other.property_)
     {}
-    constexpr ProtocolProperty& operator=(const ProtocolProperty& other) = delete;
-    constexpr ProtocolProperty& operator=(const ProtocolProperty& other) {
+    constexpr FibreProperty& operator=(const FibreProperty& other) = delete;
+    constexpr FibreProperty& operator=(const FibreProperty& other) {
         //Endpoint(std::move(other)),
         //name_(std::move(other.name_)),
         //property_(other.property_)
@@ -721,10 +721,10 @@ public:
         property_ = other.property_;
         return *this;
     }
-    ProtocolProperty& operator=(ProtocolProperty&& other)
+    FibreProperty& operator=(FibreProperty&& other)
         : name_(other.name_), property_(other.property_)
     {}
-    ProtocolProperty& operator=(const ProtocolProperty& other)
+    FibreProperty& operator=(const FibreProperty& other)
         : name_(other.name_), property_(other.property_)
     {}*/
 
@@ -785,26 +785,26 @@ public:
 
 // Non-const non-enum types
 template<typename TProperty, ENABLE_IF(!std::is_enum<TProperty>::value)>
-ProtocolProperty<TProperty> make_protocol_property(const char * name, TProperty* property) {
-    return ProtocolProperty<TProperty>(name, property);
+FibreProperty<TProperty> make_fibre_property(const char * name, TProperty* property) {
+    return FibreProperty<TProperty>(name, property);
 };
 
 // Const non-enum types
 template<typename TProperty, ENABLE_IF(!std::is_enum<TProperty>::value)>
-ProtocolProperty<const TProperty> make_protocol_ro_property(const char * name, const TProperty* property) {
-    return ProtocolProperty<const TProperty>(name, property);
+FibreProperty<const TProperty> make_fibre_ro_property(const char * name, const TProperty* property) {
+    return FibreProperty<const TProperty>(name, property);
 };
 
 // Non-const enum types
 template<typename TProperty, ENABLE_IF(std::is_enum<TProperty>::value)>
-ProtocolProperty<std::underlying_type_t<TProperty>> make_protocol_property(const char * name, TProperty* property) {
-    return ProtocolProperty<std::underlying_type_t<TProperty>>(name, reinterpret_cast<std::underlying_type_t<TProperty>*>(property));
+FibreProperty<std::underlying_type_t<TProperty>> make_fibre_property(const char * name, TProperty* property) {
+    return FibreProperty<std::underlying_type_t<TProperty>>(name, reinterpret_cast<std::underlying_type_t<TProperty>*>(property));
 };
 
 // Const enum types
 template<typename TProperty, ENABLE_IF(std::is_enum<TProperty>::value)>
-ProtocolProperty<const std::underlying_type_t<TProperty>> make_protocol_ro_property(const char * name, const TProperty* property) {
-    return ProtocolProperty<const std::underlying_type_t<TProperty>>(name, reinterpret_cast<const std::underlying_type_t<TProperty>*>(property));
+FibreProperty<const std::underlying_type_t<TProperty>> make_fibre_ro_property(const char * name, const TProperty* property) {
+    return FibreProperty<const std::underlying_type_t<TProperty>>(name, reinterpret_cast<const std::underlying_type_t<TProperty>*>(property));
 };
 
 
@@ -822,10 +822,10 @@ struct PropertyListFactory<> {
 template<typename TProperty, typename ... TProperties>
 struct PropertyListFactory<TProperty, TProperties...> {
     template<unsigned IPos, typename ... TAllProperties>
-    static MemberList<ProtocolProperty<TProperty>, ProtocolProperty<TProperties>...>
+    static MemberList<FibreProperty<TProperty>, FibreProperty<TProperties>...>
     make_property_list(std::array<const char *, sizeof...(TAllProperties)> names, std::tuple<TAllProperties...>& values) {
-        return MemberList<ProtocolProperty<TProperty>, ProtocolProperty<TProperties>...>(
-            make_protocol_property(std::get<IPos>(names), &std::get<IPos>(values)),
+        return MemberList<FibreProperty<TProperty>, FibreProperty<TProperties>...>(
+            make_fibre_property(std::get<IPos>(names), &std::get<IPos>(values)),
             PropertyListFactory<TProperties...>::template make_property_list<IPos+1>(names, values)
         );
     }
@@ -850,17 +850,17 @@ struct return_type<T, Ts...> { typedef std::tuple<T, Ts...> type; };
 
 
 template<typename TObj, typename ... TInputsAndOutputs>
-class ProtocolFunction;
+class FibreFunction;
 
 template<typename TObj, typename ... TInputs, typename ... TOutputs>
-class ProtocolFunction<TObj, std::tuple<TInputs...>, std::tuple<TOutputs...>> : Endpoint {
+class FibreFunction<TObj, std::tuple<TInputs...>, std::tuple<TOutputs...>> : Endpoint {
 public:
     // @brief The return type of the function as written by a C++ programmer
     using TRet = typename return_type<TOutputs...>::type;
 
-    static constexpr size_t endpoint_count = 1 + MemberList<ProtocolProperty<TInputs>...>::endpoint_count + MemberList<ProtocolProperty<TOutputs>...>::endpoint_count;
+    static constexpr size_t endpoint_count = 1 + MemberList<FibreProperty<TInputs>...>::endpoint_count + MemberList<FibreProperty<TOutputs>...>::endpoint_count;
 
-    ProtocolFunction(const char * name, TObj& obj, TRet(TObj::*func_ptr)(TInputs...),
+    FibreFunction(const char * name, TObj& obj, TRet(TObj::*func_ptr)(TInputs...),
             std::array<const char *, sizeof...(TInputs)> input_names,
             std::array<const char *, sizeof...(TOutputs)> output_names) :
         name_(name), obj_(&obj), func_ptr_(func_ptr),
@@ -874,7 +874,7 @@ public:
     // The custom copy constructor is needed because otherwise the
     // input_properties_ and output_properties_ would point to memory
     // locations of the old object.
-    ProtocolFunction(const ProtocolFunction& other) :
+    FibreFunction(const FibreFunction& other) :
         name_(other.name_), obj_(other.obj_), func_ptr_(other.func_ptr_),
         input_names_{other.input_names_}, output_names_{other.output_names_},
         input_properties_(PropertyListFactory<TInputs...>::template make_property_list<0>(input_names_, in_args_)),
@@ -945,31 +945,31 @@ public:
     std::array<const char *, sizeof...(TOutputs)> output_names_; // TODO: remove
     std::tuple<TInputs...> in_args_;
     std::tuple<TOutputs...> out_args_;
-    MemberList<ProtocolProperty<TInputs>...> input_properties_;
-    MemberList<ProtocolProperty<TOutputs>...> output_properties_;
+    MemberList<FibreProperty<TInputs>...> input_properties_;
+    MemberList<FibreProperty<TOutputs>...> output_properties_;
 };
 
 template<typename TObj, typename ... TArgs, typename ... TNames,
         typename = std::enable_if_t<sizeof...(TArgs) == sizeof...(TNames)>>
-ProtocolFunction<TObj, std::tuple<TArgs...>, std::tuple<>> make_protocol_function(const char * name, TObj& obj, void(TObj::*func_ptr)(TArgs...), TNames ... names) {
-    return ProtocolFunction<TObj, std::tuple<TArgs...>, std::tuple<>>(name, obj, func_ptr, {names...}, {});
+FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<>> make_fibre_function(const char * name, TObj& obj, void(TObj::*func_ptr)(TArgs...), TNames ... names) {
+    return FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<>>(name, obj, func_ptr, {names...}, {});
 }
 
 template<typename TObj, typename TRet, typename ... TArgs, typename ... TNames,
         typename = std::enable_if_t<sizeof...(TArgs) == sizeof...(TNames) && !std::is_void<TRet>::value>>
-ProtocolFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>> make_protocol_function(const char * name, TObj& obj, TRet(TObj::*func_ptr)(TArgs...), TNames ... names) {
-    return ProtocolFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>>(name, obj, func_ptr, {names...}, {"result"});
+FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>> make_fibre_function(const char * name, TObj& obj, TRet(TObj::*func_ptr)(TArgs...), TNames ... names) {
+    return FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>>(name, obj, func_ptr, {names...}, {"result"});
 }
 
 
 #define FIBRE_EXPORTS(CLASS, ...) \
     struct fibre_export_t { \
         static CLASS* obj; \
-        using type = decltype(make_protocol_member_list(__VA_ARGS__)); \
+        using type = decltype(make_fibre_member_list(__VA_ARGS__)); \
     }; \
     fibre_export_t::type make_fibre_definitions() { \
         CLASS* obj = this; \
-        return make_protocol_member_list(__VA_ARGS__); \
+        return make_fibre_member_list(__VA_ARGS__); \
     } \
     fibre_export_t::type fibre_definitions = make_fibre_definitions()
 
