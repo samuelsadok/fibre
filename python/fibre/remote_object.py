@@ -219,6 +219,9 @@ class RemoteObject(object):
         else:
             raise AttributeError("Attribute {} not found".format(name))
 
+    def _close(self):
+        self.__channel__._channel_broken.set()
+
     def _tear_down(self):
         # Clear all remote members
         for k in self._remote_attributes.keys():

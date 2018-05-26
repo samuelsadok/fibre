@@ -87,7 +87,7 @@ class Event():
         def delayed_trigger():
             if not self.wait(timeout=timeout):
                 self.set()
-        threading.Thread(target=delayed_trigger, daemon=True).start()
+        threading.Thread(name='trigger_after', target=delayed_trigger, daemon=True).start()
 
 def wait_any(timeout=None, *events):
     """
