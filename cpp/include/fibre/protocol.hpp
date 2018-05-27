@@ -967,11 +967,11 @@ FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>> make_fibre_function(
         static CLASS* obj; \
         using type = decltype(make_fibre_member_list(__VA_ARGS__)); \
     }; \
-    fibre_export_t::type make_fibre_definitions() { \
+    typename fibre_export_t::type make_fibre_definitions() { \
         CLASS* obj = this; \
         return make_fibre_member_list(__VA_ARGS__); \
     } \
-    fibre_export_t::type fibre_definitions = make_fibre_definitions()
+    typename fibre_export_t::type fibre_definitions = make_fibre_definitions()
 
 
 

@@ -11,7 +11,7 @@ import fibre.protocol
 import fibre.utils
 import fibre.remote_object
 import fibre.serial_transport
-from fibre.utils import Event
+from fibre.utils import Event, Logger
 from fibre.protocol import ChannelBrokenException
 
 # Load all installed transport layers
@@ -99,7 +99,7 @@ def find_all(path, serial_number,
         prefix = search_spec.split(':')[0]
         the_rest = ':'.join(search_spec.split(':')[1:])
         if prefix in channel_types:
-            threading.Thread(target=channel_types[prefix],
+            threading.Thread(name='fibre-discover-'+prefix, target=channel_types[prefix],
                              args=(the_rest, serial_number, did_discover_channel, search_cancellation_token, channel_termination_token, logger)).start()
         else:
             raise Exception("Invalid path spec \"{}\"".format(search_spec))
@@ -107,16 +107,19 @@ def find_all(path, serial_number,
 
 def find_any(path="usb", serial_number=None,
         search_cancellation_token=None, channel_termination_token=None,
-        timeout=None, printer=noprint):
+        timeout=None, logger=None):
     """
     Blocks until the first matching Fibre node is connected and then returns that node
     """
+    if logger is None:
+        logger = Logger(verbose=False)
+
     result = [ None ]
     done_signal = Event(search_cancellation_token)
     def did_discover_object(obj):
         result[0] = obj
         done_signal.set()
-    find_all(path, serial_number, did_discover_object, done_signal, channel_termination_token, printer)
+    find_all(path, serial_number, did_discover_object, done_signal, channel_termination_token, logger)
     try:
         done_signal.wait(timeout=timeout)
     finally:
