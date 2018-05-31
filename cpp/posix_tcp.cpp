@@ -8,7 +8,7 @@
 #include <future>
 #include <vector>
 
-#include <fibre/protocol.hpp>
+#include <fibre/fibre.hpp>
 
 
 #define TCP_RX_BUF_LEN	512

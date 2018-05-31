@@ -4,7 +4,7 @@
 #include <thread>
 #include <signal.h>
 
-#include <fibre/protocol.hpp>
+#include <fibre/fibre.hpp>
 #include <fibre/posix_tcp.hpp>
 #include <fibre/posix_udp.hpp>
 
@@ -27,6 +27,12 @@ public:
     );
 };
 
+/*FIBRE_EXPORT_TYPE(float);
+FIBRE_EXPORT_TYPE(TestClass,
+    FIBRE_PROPERTY(property1),
+    FIBRE_PROPERTY(property2)
+    //FIBRE_FUNCTION(set_both, "arg1", "arg2")
+);*/
 
 int main() {
     printf("Starting Fibre server...\n");
