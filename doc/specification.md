@@ -84,6 +84,8 @@ Note that some decoders come in multiple variants that are functionally the same
 
     `[polynomial]` and `[init]` are both a 2-digit lower case hexadecimal number.
 
+    **Comment** *Why force blocks of size 4? This sounds bad, if we are satisfied with a single CRC byte covering the whole
+    payload.*   
     This decoder interprets the incoming byte stream as a sequence of 4 byte blocks, each consisting of 3 data bytes followed
     by one CRC8 checksum byte. The CRC init value for each block is the CRC8 result of the previous block.  The CRC init value of the first block
     is `[init]`.
