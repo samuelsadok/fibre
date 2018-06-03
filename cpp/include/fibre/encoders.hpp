@@ -2,15 +2,10 @@
 #ifndef __ENCODERS_HPP
 #define __ENCODERS_HPP
 
-#include "protocol.hpp"
+#include "stream.hpp"
 #include "crc.hpp"
 #include "cpp_utils.hpp"
 #include <utility>
-
-struct Request {
-    endpoint_id_t endpoint_id;
-    size_t length;
-};
 
 /* Base classes --------------------------------------------------------------*/
 
@@ -206,13 +201,6 @@ using VarintStreamEncoder = StreamEncoder_from_ByteEncoder<VarintByteEncoder<T>>
 template<typename T>
 VarintStreamEncoder<T> make_varint_encoder(const T& variable) {
     return VarintStreamEncoder<T>(variable);
-}
-
-VarintStreamEncoder<GET_TYPE_OF(&Request::endpoint_id)> make_endpoint_id_encoder(const Request& request) {
-    return make_varint_encoder(request.endpoint_id);
-}
-VarintStreamEncoder<GET_TYPE_OF(&Request::length)> make_length_encoder(const Request& request) {
-    return make_varint_encoder(request.length);
 }
 
 template<uint8_t INIT, uint8_t POLYNOMIAL, typename TEncoder,

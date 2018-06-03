@@ -2,7 +2,7 @@
 #ifndef __DECODERS_HPP
 #define __DECODERS_HPP
 
-#include "protocol.hpp"
+#include "stream.hpp"
 #include "crc.hpp"
 #include "cpp_utils.hpp"
 #include <utility>
