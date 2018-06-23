@@ -220,7 +220,7 @@ class RemoteObject(object):
             raise AttributeError("Attribute {} not found".format(name))
 
     def _close(self):
-        self.__channel__._channel_broken.set()
+        self.__channel__._channel_broken.set("channel closed by user")
 
     def _tear_down(self):
         # Clear all remote members
