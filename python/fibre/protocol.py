@@ -234,8 +234,9 @@ class Channel(PacketSink):
         def receiver_thread():
             error_ctr = 0
             try:
-                while (not cancellation_token.is_set() and not self._channel_broken.is_set()
-                        and error_ctr < 10):
+                while not cancellation_token.is_set():
+                    if error_ctr >= 10:
+                        raise ChannelBrokenException("too many consecutive receive errors")
                     # Set an arbitrary deadline because the get_packet function
                     # currently doesn't support a cancellation_token
                     deadline = time.monotonic() + 1.0
@@ -255,8 +256,8 @@ class Channel(PacketSink):
             except Exception:
                 self._logger.debug("receiver thread is exiting: " + traceback.format_exc())
             finally:
-                self._channel_broken.set()
-        threading.Thread(target=receiver_thread).start()
+                self._channel_broken.set("recv thread died")
+        threading.Thread(name='fibre-receiver', target=receiver_thread).start()
 
     def remote_endpoint_operation(self, endpoint_id, input, expect_ack, output_length):
         if input is None:
@@ -344,7 +345,7 @@ class Channel(PacketSink):
             ack_signal = self._expected_acks.get(seq_no, None)
             if (ack_signal):
                 self._responses[seq_no] = packet[2:]
-                ack_signal.set()
+                ack_signal.set("ack")
                 #print("received ack for packet " + str(seq_no))
             else:
                 print("received unexpected ACK: " + str(seq_no))

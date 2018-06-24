@@ -25,8 +25,25 @@ class UDPTransport(fibre.protocol.PacketSource, fibre.protocol.PacketSink):
 
   def get_packet(self, deadline):
     # TODO: implement deadline
-    data, _ = self.sock.recvfrom(1024)
-    return data
+
+    # convert deadline to seconds (floating point)
+    deadline = None if deadline is None else max(deadline - time.monotonic(), 0)
+    self.sock.settimeout(deadline)
+    try:
+      data, _ = self.sock.recvfrom(1024) # receive n_bytes
+      return data
+    except socket.timeout:
+      # if we got a timeout data will still be none, so we call recv again
+      # this time in non blocking state and see if we can get some data
+      try:
+        data, _ = self.sock.recvfrom(1024, socket.MSG_DONTWAIT)
+        return data
+      except socket.timeout:
+        raise TimeoutError
+
+
+    #data, _ = self.sock.recvfrom(1024)
+    #return data
 
 def discover_channels(path, serial_number, callback, cancellation_token, channel_termination_token, logger):
   """

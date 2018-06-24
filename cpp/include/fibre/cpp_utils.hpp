@@ -87,6 +87,10 @@ namespace std {
     // source: http://en.cppreference.com/w/cpp/types/enable_if
     template< bool B, class T = void >
     using enable_if_t = typename enable_if<B,T>::type;
+
+    // source: http://en.cppreference.com/w/cpp/utility/tuple/tuple_element
+    template <std::size_t I, class T>
+    using tuple_element_t = typename tuple_element<I, T>::type;
 }
 #endif
 
@@ -112,6 +116,7 @@ public:
         return std::is_base_of<U, DecayedT>::value
             && TypeChecker<Ts...>::template all_are<U>();
     }
+    constexpr static const size_t count = TypeChecker<Ts...>::count + 1;
 };
 
 template<>
@@ -125,7 +130,13 @@ public:
     constexpr static inline bool all_are() {
         return std::true_type::value;
     }
+    constexpr static const size_t count = 0;
 };
+
+template<typename ... Ts>
+TypeChecker<Ts...> make_type_checker(Ts ...) {
+    return TypeChecker<Ts...>();
+}
 
 #include <type_traits>
 #define ENABLE_IF(...) \

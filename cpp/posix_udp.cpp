@@ -5,7 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <fibre/protocol.hpp>
+#include <fibre/fibre.hpp>
 
 #define UDP_RX_BUF_LEN	512
 #define UDP_TX_BUF_LEN	512

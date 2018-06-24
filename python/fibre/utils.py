@@ -36,16 +36,17 @@ class Event():
         self._subscribers = []
         self._mutex = threading.Lock()
         if not trigger is None:
-            trigger.subscribe(lambda: self.set())
+            trigger.subscribe(lambda: self.set("subscription"))
 
     def is_set(self):
         return self._evt.is_set()
 
-    def set(self):
+    def set(self, reason="unknown"):
         """
         Sets the event and invokes all subscribers if the event was
         not already set
         """
+        #print("set because {}".format(reason))
         self._mutex.acquire()
         try:
             if not self._evt.is_set():
@@ -92,7 +93,7 @@ class Event():
         def delayed_trigger():
             if not self.wait(timeout=timeout):
                 self.set()
-        threading.Thread(target=delayed_trigger, daemon=True).start()
+        threading.Thread(name='trigger_after', target=delayed_trigger, daemon=True).start()
 
 def wait_any(timeout=None, *events):
     """

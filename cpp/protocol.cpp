@@ -4,8 +4,7 @@
 #include <memory>
 #include <stdlib.h>
 
-#include <fibre/protocol.hpp>
-#include <fibre/crc.hpp>
+#include <fibre/fibre.hpp>
 
 /* Private defines -----------------------------------------------------------*/
 /* Private macros ------------------------------------------------------------*/

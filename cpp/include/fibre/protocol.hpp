@@ -5,23 +5,21 @@ see protocol.md for the protocol specification
 #ifndef __PROTOCOL_HPP
 #define __PROTOCOL_HPP
 
+#ifndef __FIBRE_HPP
+#error "This file should not be included directly. Include fibre.hpp instead."
+#endif
+
 // TODO: resolve assert
 #define assert(expr)
 
 #include <functional>
 #include <limits>
+#include <vector>
 //#include <stdint.h>
 #include <string.h>
+#include "stream.hpp"
 #include "crc.hpp"
 #include "cpp_utils.hpp"
-
-// Note that this option cannot be used to debug UART because it prints on UART
-//#define DEBUG_FIBRE
-#ifdef DEBUG_FIBRE
-#define LOG_FIBRE(...)  do { printf(__VA_ARGS__); } while (0)
-#else
-#define LOG_FIBRE(...)  ((void) 0)
-#endif
 
 
 // Default CRC-8 Polynomial: x^8 + x^5 + x^4 + x^2 + x + 1
@@ -66,10 +64,6 @@ struct ReceiverState {
 #include <unistd.h>
 
 constexpr uint16_t PROTOCOL_VERSION = 1;
-
-// This value must not be larger than USB_TX_DATA_SIZE defined in usbd_cdc_if.h
-constexpr uint16_t TX_BUF_SIZE = 32; // does not work with 64 for some reason
-constexpr uint16_t RX_BUF_SIZE = 128; // larger values than 128 have currently no effect because of protocol limitations
 
 // Maximum time we allocate for processing and responding to a request
 constexpr uint32_t PROTOCOL_SERVER_TIMEOUT_MS = 10;
@@ -206,177 +200,6 @@ static inline T read_le(const uint8_t** buffer, size_t* length) {
     *length -= cnt;
     return result;
 }
-
-class PacketSink {
-public:
-    // @brief Get the maximum packet length (aka maximum transmission unit)
-    // A packet size shall take no action and return an error code if the
-    // caller attempts to send an oversized packet.
-    //virtual size_t get_mtu() = 0;
-
-    // @brief Processes a packet.
-    // The blocking behavior shall depend on the thread-local deadline_ms variable.
-    // @return: 0 on success, otherwise a non-zero error code
-    // TODO: define what happens when the packet is larger than what the implementation can handle.
-    virtual int process_packet(const uint8_t* buffer, size_t length) = 0;
-};
-
-class StreamSink {
-public:
-    // @brief Processes a chunk of bytes that is part of a continuous stream.
-    // The blocking behavior shall depend on the thread-local deadline_ms variable.
-    // @param processed_bytes: if not NULL, shall be incremented by the number of
-    //        bytes that were consumed.
-    // @return: 0 on success, otherwise a non-zero error code
-    virtual int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) = 0;
-
-    // @brief Returns the number of bytes that can still be written to the stream.
-    // Shall return SIZE_MAX if the stream has unlimited lenght.
-    // TODO: deprecate
-    virtual size_t get_free_space() = 0;
-
-    /*int process_bytes(const uint8_t* buffer, size_t length) {
-        size_t processed_bytes = 0;
-        return process_bytes(buffer, length, &processed_bytes);
-    }*/
-};
-
-class StreamSource {
-public:
-    // @brief Generate a chunk of bytes that are part of a continuous stream.
-    // The blocking behavior shall depend on the thread-local deadline_ms variable.
-    // @param generated_bytes: if not NULL, shall be incremented by the number of
-    //        bytes that were written to buffer.
-    // @return: 0 on success, otherwise a non-zero error code
-    virtual int get_bytes(uint8_t* buffer, size_t length, size_t* generated_bytes) = 0;
-
-    // @brief Returns the number of bytes that can still be written to the stream.
-    // Shall return SIZE_MAX if the stream has unlimited lenght.
-    // TODO: deprecate
-    //virtual size_t get_free_space() = 0;
-};
-
-class StreamToPacketSegmenter : public StreamSink {
-public:
-    StreamToPacketSegmenter(PacketSink& output) :
-        output_(output)
-    {
-    };
-
-    int process_bytes(const uint8_t *buffer, size_t length, size_t* processed_bytes);
-    
-    size_t get_free_space() { return SIZE_MAX; }
-
-private:
-    uint8_t header_buffer_[3];
-    size_t header_index_ = 0;
-    uint8_t packet_buffer_[RX_BUF_SIZE];
-    size_t packet_index_ = 0;
-    size_t packet_length_ = 0;
-    PacketSink& output_;
-};
-
-
-class StreamBasedPacketSink : public PacketSink {
-public:
-    StreamBasedPacketSink(StreamSink& output) :
-        output_(output)
-    {
-    };
-    
-    //size_t get_mtu() { return SIZE_MAX; }
-    int process_packet(const uint8_t *buffer, size_t length);
-
-private:
-    StreamSink& output_;
-};
-
-// @brief: Represents a stream sink that's based on an underlying packet sink.
-// A single call to process_bytes may result in multiple packets being sent.
-class PacketBasedStreamSink : public StreamSink {
-public:
-    PacketBasedStreamSink(PacketSink& packet_sink) : _packet_sink(packet_sink) {}
-    ~PacketBasedStreamSink() {}
-
-    int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
-        // Loop to ensure all bytes get sent
-        while (length) {
-            size_t chunk = length;
-            // send chunk as packet
-            if (_packet_sink.process_packet(buffer, chunk))
-                return -1;
-            buffer += chunk;
-            length -= chunk;
-            if (processed_bytes)
-                *processed_bytes += chunk;
-        }
-        return 0;
-    }
-
-    size_t get_free_space() { return SIZE_MAX; }
-
-private:
-    PacketSink& _packet_sink;
-};
-
-// Implements the StreamSink interface by writing into a fixed size
-// memory buffer.
-class MemoryStreamSink : public StreamSink {
-public:
-    MemoryStreamSink(uint8_t *buffer, size_t length) :
-        buffer_(buffer),
-        buffer_length_(length) {}
-
-    // Returns 0 on success and -1 if the buffer could not accept everything because it became full
-    int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
-        size_t chunk = length < buffer_length_ ? length : buffer_length_;
-        memcpy(buffer_, buffer, chunk);
-        buffer_ += chunk;
-        buffer_length_ -= chunk;
-        if (processed_bytes)
-            *processed_bytes += chunk;
-        return chunk == length ? 0 : -1;
-    }
-
-    size_t get_free_space() { return buffer_length_; }
-
-private:
-    uint8_t * buffer_;
-    size_t buffer_length_;
-};
-
-// Implements the StreamSink interface by discarding the first couple of bytes
-// and then forwarding the rest to another stream.
-class NullStreamSink : public StreamSink {
-public:
-    NullStreamSink(size_t skip, StreamSink& follow_up_stream) :
-        skip_(skip),
-        follow_up_stream_(follow_up_stream) {}
-
-    // Returns 0 on success and -1 if the buffer could not accept everything because it became full
-    int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
-        if (skip_ < length) {
-            buffer += skip_;
-            length -= skip_;
-            if (processed_bytes)
-                *processed_bytes += skip_;
-            skip_ = 0;
-            return follow_up_stream_.process_bytes(buffer, length, processed_bytes);
-        } else {
-            skip_ -= length;
-            if (processed_bytes)
-                *processed_bytes += length;
-            return 0;
-        }
-    }
-
-    size_t get_free_space() { return skip_ + follow_up_stream_.get_free_space(); }
-
-private:
-    size_t skip_;
-    StreamSink& follow_up_stream_;
-};
-
 
 
 // Implements the StreamSink interface by calculating the CRC16 checksum
@@ -677,14 +500,14 @@ public:
 };
 
 template<typename ... TMembers>
-MemberList<TMembers...> make_protocol_member_list(TMembers&&... member_list) {
+MemberList<TMembers...> make_fibre_member_list(TMembers&&... member_list) {
     return MemberList<TMembers...>(std::forward<TMembers>(member_list)...);
 }
 
 template<typename ... TMembers>
-class ProtocolObject {
+class FibreObject {
 public:
-    ProtocolObject(const char * name, TMembers&&... member_list) :
+    FibreObject(const char * name, TMembers&&... member_list) :
         name_(name),
         member_list_(std::forward<TMembers>(member_list)...) {}
 
@@ -715,30 +538,30 @@ public:
 };
 
 template<typename ... TMembers>
-ProtocolObject<TMembers...> make_protocol_object(const char * name, TMembers&&... member_list) {
-    return ProtocolObject<TMembers...>(name, std::forward<TMembers>(member_list)...);
+FibreObject<TMembers...> make_fibre_object(const char * name, TMembers&&... member_list) {
+    return FibreObject<TMembers...>(name, std::forward<TMembers>(member_list)...);
 }
 
 template<typename TProperty>
-class ProtocolProperty : public Endpoint {
+class FibreProperty : public Endpoint {
 public:
     static constexpr const char * json_modifier = get_default_json_modifier<TProperty>();
     static constexpr size_t endpoint_count = 1;
 
-    ProtocolProperty(const char * name, TProperty* property)
+    FibreProperty(const char * name, TProperty* property)
         : name_(name), property_(property)
     {}
 
 /*  TODO: find out why the move constructor is not used when it could be
-    ProtocolProperty(const ProtocolProperty&) = delete;
+    FibreProperty(const FibreProperty&) = delete;
     // @brief Move constructor
-    ProtocolProperty(ProtocolProperty&& other) :
+    FibreProperty(FibreProperty&& other) :
         Endpoint(std::move(other)),
         name_(std::move(other.name_)),
         property_(other.property_)
     {}
-    constexpr ProtocolProperty& operator=(const ProtocolProperty& other) = delete;
-    constexpr ProtocolProperty& operator=(const ProtocolProperty& other) {
+    constexpr FibreProperty& operator=(const FibreProperty& other) = delete;
+    constexpr FibreProperty& operator=(const FibreProperty& other) {
         //Endpoint(std::move(other)),
         //name_(std::move(other.name_)),
         //property_(other.property_)
@@ -746,10 +569,10 @@ public:
         property_ = other.property_;
         return *this;
     }
-    ProtocolProperty& operator=(ProtocolProperty&& other)
+    FibreProperty& operator=(FibreProperty&& other)
         : name_(other.name_), property_(other.property_)
     {}
-    ProtocolProperty& operator=(const ProtocolProperty& other)
+    FibreProperty& operator=(const FibreProperty& other)
         : name_(other.name_), property_(other.property_)
     {}*/
 
@@ -810,26 +633,26 @@ public:
 
 // Non-const non-enum types
 template<typename TProperty, ENABLE_IF(!std::is_enum<TProperty>::value)>
-ProtocolProperty<TProperty> make_protocol_property(const char * name, TProperty* property) {
-    return ProtocolProperty<TProperty>(name, property);
+FibreProperty<TProperty> make_fibre_property(const char * name, TProperty* property) {
+    return FibreProperty<TProperty>(name, property);
 };
 
 // Const non-enum types
 template<typename TProperty, ENABLE_IF(!std::is_enum<TProperty>::value)>
-ProtocolProperty<const TProperty> make_protocol_ro_property(const char * name, const TProperty* property) {
-    return ProtocolProperty<const TProperty>(name, property);
+FibreProperty<const TProperty> make_fibre_ro_property(const char * name, const TProperty* property) {
+    return FibreProperty<const TProperty>(name, property);
 };
 
 // Non-const enum types
 template<typename TProperty, ENABLE_IF(std::is_enum<TProperty>::value)>
-ProtocolProperty<std::underlying_type_t<TProperty>> make_protocol_property(const char * name, TProperty* property) {
-    return ProtocolProperty<std::underlying_type_t<TProperty>>(name, reinterpret_cast<std::underlying_type_t<TProperty>*>(property));
+FibreProperty<std::underlying_type_t<TProperty>> make_fibre_property(const char * name, TProperty* property) {
+    return FibreProperty<std::underlying_type_t<TProperty>>(name, reinterpret_cast<std::underlying_type_t<TProperty>*>(property));
 };
 
 // Const enum types
 template<typename TProperty, ENABLE_IF(std::is_enum<TProperty>::value)>
-ProtocolProperty<const std::underlying_type_t<TProperty>> make_protocol_ro_property(const char * name, const TProperty* property) {
-    return ProtocolProperty<const std::underlying_type_t<TProperty>>(name, reinterpret_cast<const std::underlying_type_t<TProperty>*>(property));
+FibreProperty<const std::underlying_type_t<TProperty>> make_fibre_ro_property(const char * name, const TProperty* property) {
+    return FibreProperty<const std::underlying_type_t<TProperty>>(name, reinterpret_cast<const std::underlying_type_t<TProperty>*>(property));
 };
 
 
@@ -847,10 +670,10 @@ struct PropertyListFactory<> {
 template<typename TProperty, typename ... TProperties>
 struct PropertyListFactory<TProperty, TProperties...> {
     template<unsigned IPos, typename ... TAllProperties>
-    static MemberList<ProtocolProperty<TProperty>, ProtocolProperty<TProperties>...>
+    static MemberList<FibreProperty<TProperty>, FibreProperty<TProperties>...>
     make_property_list(std::array<const char *, sizeof...(TAllProperties)> names, std::tuple<TAllProperties...>& values) {
-        return MemberList<ProtocolProperty<TProperty>, ProtocolProperty<TProperties>...>(
-            make_protocol_property(std::get<IPos>(names), &std::get<IPos>(values)),
+        return MemberList<FibreProperty<TProperty>, FibreProperty<TProperties>...>(
+            make_fibre_property(std::get<IPos>(names), &std::get<IPos>(values)),
             PropertyListFactory<TProperties...>::template make_property_list<IPos+1>(names, values)
         );
     }
@@ -875,17 +698,17 @@ struct return_type<T, Ts...> { typedef std::tuple<T, Ts...> type; };
 
 
 template<typename TObj, typename ... TInputsAndOutputs>
-class ProtocolFunction;
+class FibreFunction;
 
 template<typename TObj, typename ... TInputs, typename ... TOutputs>
-class ProtocolFunction<TObj, std::tuple<TInputs...>, std::tuple<TOutputs...>> : Endpoint {
+class FibreFunction<TObj, std::tuple<TInputs...>, std::tuple<TOutputs...>> : Endpoint {
 public:
     // @brief The return type of the function as written by a C++ programmer
     using TRet = typename return_type<TOutputs...>::type;
 
-    static constexpr size_t endpoint_count = 1 + MemberList<ProtocolProperty<TInputs>...>::endpoint_count + MemberList<ProtocolProperty<TOutputs>...>::endpoint_count;
+    static constexpr size_t endpoint_count = 1 + MemberList<FibreProperty<TInputs>...>::endpoint_count + MemberList<FibreProperty<TOutputs>...>::endpoint_count;
 
-    ProtocolFunction(const char * name, TObj& obj, TRet(TObj::*func_ptr)(TInputs...),
+    FibreFunction(const char * name, TObj& obj, TRet(TObj::*func_ptr)(TInputs...),
             std::array<const char *, sizeof...(TInputs)> input_names,
             std::array<const char *, sizeof...(TOutputs)> output_names) :
         name_(name), obj_(&obj), func_ptr_(func_ptr),
@@ -899,7 +722,7 @@ public:
     // The custom copy constructor is needed because otherwise the
     // input_properties_ and output_properties_ would point to memory
     // locations of the old object.
-    ProtocolFunction(const ProtocolFunction& other) :
+    FibreFunction(const FibreFunction& other) :
         name_(other.name_), obj_(other.obj_), func_ptr_(other.func_ptr_),
         input_names_{other.input_names_}, output_names_{other.output_names_},
         input_properties_(PropertyListFactory<TInputs...>::template make_property_list<0>(input_names_, in_args_)),
@@ -970,33 +793,33 @@ public:
     std::array<const char *, sizeof...(TOutputs)> output_names_; // TODO: remove
     std::tuple<TInputs...> in_args_;
     std::tuple<TOutputs...> out_args_;
-    MemberList<ProtocolProperty<TInputs>...> input_properties_;
-    MemberList<ProtocolProperty<TOutputs>...> output_properties_;
+    MemberList<FibreProperty<TInputs>...> input_properties_;
+    MemberList<FibreProperty<TOutputs>...> output_properties_;
 };
 
 template<typename TObj, typename ... TArgs, typename ... TNames,
         typename = std::enable_if_t<sizeof...(TArgs) == sizeof...(TNames)>>
-ProtocolFunction<TObj, std::tuple<TArgs...>, std::tuple<>> make_protocol_function(const char * name, TObj& obj, void(TObj::*func_ptr)(TArgs...), TNames ... names) {
-    return ProtocolFunction<TObj, std::tuple<TArgs...>, std::tuple<>>(name, obj, func_ptr, {names...}, {});
+FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<>> make_fibre_function(const char * name, TObj& obj, void(TObj::*func_ptr)(TArgs...), TNames ... names) {
+    return FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<>>(name, obj, func_ptr, {names...}, {});
 }
 
 template<typename TObj, typename TRet, typename ... TArgs, typename ... TNames,
         typename = std::enable_if_t<sizeof...(TArgs) == sizeof...(TNames) && !std::is_void<TRet>::value>>
-ProtocolFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>> make_protocol_function(const char * name, TObj& obj, TRet(TObj::*func_ptr)(TArgs...), TNames ... names) {
-    return ProtocolFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>>(name, obj, func_ptr, {names...}, {"result"});
+FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>> make_fibre_function(const char * name, TObj& obj, TRet(TObj::*func_ptr)(TArgs...), TNames ... names) {
+    return FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>>(name, obj, func_ptr, {names...}, {"result"});
 }
 
 
 #define FIBRE_EXPORTS(CLASS, ...) \
     struct fibre_export_t { \
         static CLASS* obj; \
-        using type = decltype(make_protocol_member_list(__VA_ARGS__)); \
+        using type = decltype(make_fibre_member_list(__VA_ARGS__)); \
     }; \
-    fibre_export_t::type make_fibre_definitions() { \
+    typename fibre_export_t::type make_fibre_definitions() { \
         CLASS* obj = this; \
-        return make_protocol_member_list(__VA_ARGS__); \
+        return make_fibre_member_list(__VA_ARGS__); \
     } \
-    fibre_export_t::type fibre_definitions = make_fibre_definitions()
+    typename fibre_export_t::type fibre_definitions = make_fibre_definitions()
 
 
 
@@ -1043,6 +866,8 @@ public:
     void register_endpoints(Endpoint** list, size_t id, size_t length);
     void handle(const uint8_t* input, size_t input_length, StreamSink* output);
 };
+
+#include "types.hpp"
 
 // defined in protocol.cpp
 extern Endpoint** endpoint_list_;
