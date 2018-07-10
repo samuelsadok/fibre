@@ -5,7 +5,7 @@ import platform
 import time
 import traceback
 import fibre.protocol
-from fibre.utils import wait_any
+from fibre.threading_utils import wait_any
 
 # Keepalive from https://stackoverflow.com/questions/12248132/how-to-change-tcp-keepalive-timer-using-python-script
 def set_keepalive_linux(sock, after_idle_sec, interval_sec, max_fails):
@@ -83,6 +83,9 @@ class TCPTransport(fibre.protocol.StreamSource, fibre.protocol.StreamSink):
     if len(result) < n_bytes:
       raise TimeoutError("expected {} bytes but got only {}".format(n_bytes, len(result)))
     return result
+  
+  def get_mtu(self):
+    return None # no MTU
 
 
 
@@ -109,9 +112,9 @@ def discover_channels(path, serial_number, callback, cancellation_token, channel
               stream2packet_input, packet2stream_output,
               channel_termination_token, logger)
     except:
-      #logger.debug("TCP channel init failed. More info: " + traceback.format_exc())
-      pass
+      logger.debug("TCP channel init failed. More info: " + traceback.format_exc())
+      #pass
     else:
       callback(channel)
-      wait_any(None, cancellation_token, channel._channel_broken)
+      channel._channel_broken.wait(cancellation_token=cancellation_token)
     time.sleep(1)

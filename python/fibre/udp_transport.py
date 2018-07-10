@@ -4,7 +4,7 @@ import socket
 import time
 import traceback
 import fibre.protocol
-from fibre.utils import wait_any
+from fibre.threading_utils import wait_any
 
 def noprint(x):
   pass
@@ -70,5 +70,5 @@ def discover_channels(path, serial_number, callback, cancellation_token, channel
       pass
     else:
       callback(channel)
-      wait_any(None, cancellation_token, channel._channel_broken)
+      wait_any(cancellation_token, channel._channel_broken)
     time.sleep(1)

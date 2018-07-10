@@ -10,7 +10,8 @@ import traceback
 import fibre.protocol
 import fibre.utils
 import fibre.remote_object
-from fibre.utils import Event, Logger
+from fibre.utils import Logger
+from fibre.threading_utils import EventWaitHandle
 from fibre.protocol import ChannelBrokenException
 
 # Load all installed transport layers
@@ -64,6 +65,12 @@ def find_all(path, serial_number,
         """
         try:
             logger.debug("Connecting to device on " + channel._name)
+
+            ep = fibre.remote_object.RemoteEndpoint(channel, 0, 0)
+            get_function_json = fibre.remote_object.RemoteFunction(["number"], ["json"])
+            get_function_json._endpoints.append(ep)
+            json_string = get_function_json(0)
+            
             try:
                 json_bytes = channel.remote_endpoint_read_buffer(0)
             except (TimeoutError, ChannelBrokenException):
@@ -115,7 +122,7 @@ def find_any(path="usb", serial_number=None,
     Blocks until the first matching Fibre node is connected and then returns that node
     """
     result = [ None ]
-    done_signal = Event(search_cancellation_token)
+    done_signal = EventWaitHandle(search_cancellation_token)
     def did_discover_object(obj):
         result[0] = obj
         done_signal.set("search succeeded")

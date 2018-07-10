@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))) + "/python")
 
-from fibre import Logger, Event
+from fibre import Logger, EventWaitHandle
 
 # Parse arguments
 parser = argparse.ArgumentParser(description='Connect to a fibre-enabled device to play with it in the IPython interactive shell.')
@@ -45,7 +45,7 @@ parser.set_defaults(path="usb,tcp:localhost:9910")
 args = parser.parse_args()
 
 logger = Logger(verbose=args.verbose)
-app_shutdown_token = Event()
+app_shutdown_token = EventWaitHandle()
 
 def print_banner():
     pass

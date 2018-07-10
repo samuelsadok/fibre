@@ -5,6 +5,7 @@ import threading
 import platform
 import subprocess
 import os
+import selectors
 
 try:
     if platform.system() == 'Windows':
@@ -17,102 +18,14 @@ except ModuleNotFoundError:
     sys.stdout.flush()
     pass
 
+class OperationAbortedError(Exception):
+    pass
+
 def get_serial_number_str(device):
     if hasattr(device, 'serial_number'):
         return format(device.serial_number, 'x').upper()
     else:
         return "[unknown serial number]"
-
-## Threading utils ##
-class Event():
-    """
-    Alternative to threading.Event(), enhanced by the subscribe() function
-    that the original fails to provide.
-    @param Trigger: if supplied, the newly created event will be triggered
-                    as soon as the trigger event becomes set
-    """
-    def __init__(self, trigger=None):
-        self._evt = threading.Event()
-        self._subscribers = []
-        self._mutex = threading.Lock()
-        if not trigger is None:
-            trigger.subscribe(lambda: self.set("subscription"))
-
-    def is_set(self):
-        return self._evt.is_set()
-
-    def set(self, reason="unknown"):
-        """
-        Sets the event and invokes all subscribers if the event was
-        not already set
-        """
-        #print("set because {}".format(reason))
-        self._mutex.acquire()
-        try:
-            if not self._evt.is_set():
-                self._evt.set()
-                for s in self._subscribers:
-                    s()
-        finally:
-            self._mutex.release()
-
-    def subscribe(self, handler):
-        """
-        Invokes the specified handler exactly once as soon as the
-        specified event is set. If the event is already set, the
-        handler is invoked immediately.
-        Returns a function that can be invoked to unsubscribe.
-        """
-        if handler is None:
-            raise TypeError
-        self._mutex.acquire()
-        try:
-            self._subscribers.append(handler)
-            if self._evt.is_set():
-                handler()
-        finally:
-            self._mutex.release()
-        return handler
-    
-    def unsubscribe(self, handler):
-        self._mutex.acquire()
-        try:
-            self._subscribers.pop(self._subscribers.index(handler))
-        finally:
-            self._mutex.release()
-
-    def wait(self, timeout=None):
-        if not self._evt.wait(timeout=timeout):
-            raise TimeoutError()
-
-    def trigger_after(self, timeout):
-        """
-        Triggers the event after the specified timeout.
-        This function returns immediately.
-        """
-        def delayed_trigger():
-            if not self.wait(timeout=timeout):
-                self.set()
-        threading.Thread(name='trigger_after', target=delayed_trigger, daemon=True).start()
-
-def wait_any(timeout=None, *events):
-    """
-    Blocks until any of the specified events are triggered.
-    Returns the index of the event that was triggerd or raises
-    a TimeoutError
-    Param timeout: A timeout in seconds
-    """
-    or_event = threading.Event()
-    subscriptions = []
-    for event in events:
-        subscriptions.append((event, event.subscribe(lambda: or_event.set())))
-    or_event.wait(timeout=timeout)
-    for event, sub in subscriptions:
-        event.unsubscribe(sub)
-    for i in range(len(events)):
-        if events[i].is_set():
-            return i
-    raise TimeoutError()
 
 
 ## Log utils ##

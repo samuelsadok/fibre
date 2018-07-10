@@ -4,32 +4,16 @@ Provides functions for the discovery of ODrive devices
 
 import sys
 import json
-import struct
 import threading
+from threading import Lock
 import fibre.protocol
-
+import fibre.codecs
+from fibre.threading_utils import Semaphore, EventWaitHandle
+import time
+import struct
 
 class ObjectDefinitionError(Exception):
     pass
-
-codecs = {}
-
-class StructCodec():
-    """
-    Generic serializer/deserializer based on struct pack
-    """
-    def __init__(self, struct_format, target_type):
-        self._struct_format = struct_format
-        self._target_type = target_type
-    def get_length(self):
-        return struct.calcsize(self._struct_format)
-    def serialize(self, value):
-        value = self._target_type(value)
-        return struct.pack(self._struct_format, value)
-    def deserialize(self, buffer):
-        value = struct.unpack(self._struct_format, buffer)
-        value = value[0] if len(value) == 1 else value
-        return self._target_type(value)
 
 class RemoteProperty():
     """
@@ -89,80 +73,183 @@ class RemoteProperty():
             val_str = str(self.get_value())
         return "{} = {} ({})".format(self._name, val_str, self._property_type.__name__)
 
-class EndpointRefCodec():
+class RemoteEndpoint():
+    def __init__(self, outbox, endpoint_id, crc):
+        self.outbox = outbox
+        self.endpoint_id = endpoint_id
+        self.crc = crc
+
+class OutputPipe(object):
+    def __init__(self, pipe_id, exit_func):
+        self.pipe_id = pipe_id
+        self._exit_func = exit_func
+        self._active = False
+        self._pending_chunks = []
+        self._pos = 0
+        self._crc = 0
+    def __enter__(self):
+        self._active = True
+        return self
+    def __exit__(self, exception_type, exception_value, traceback):
+        self._exit_func()
+        self._active = False
+    def send_bytes(self, data):
+        chunk = {
+            'data': data,
+            'log_prop_undelivered': 0
+        }
+        # TODO: handle zero or multiple endpoints
+        self._pending_chunks.append(chunk)
+        self._pos += len(chunk)
+        self._crc = fibre.protocol.calc_crc16(self._crc, chunk)
+
+class EndpointConnection(object):
+    def __init__(self, outbox, **kwargs):
+        self._output_pipe = outbox.get_pipe(**kwargs)
+    def __enter__(self):
+        self._output_pipe.__enter__()
+        return self
+    def __exit__(self, exception_type, exception_value, traceback):
+        self._output_pipe.__exit__(exception_type, exception_value, traceback)
+    def _serialize(self, value_type, value):
+        # TODO: the selected codec may depend on the endpoint
+        format_name = fibre.codecs.canonical_formats[value_type]
+        codec = fibre.codecs.get_codec(format_name, type(value))
+        return codec.serialize(value)
+    def flush(self):
+        """
+        Blocks until all previously emitted values have reached
+        the remote endpoint. TODO: support fire-and-forget endpoints
+        """
+        self._output_pipe.send_packet_break()
+    def emit_value(self, value_type, value):
+        self._output_pipe.send_bytes(self._serialize(value_type, value))
+    def receive_value(self, value_type):
+        while True:
+            time.sleep(1)
+        pass
+
+class Outbox(object):
     """
-    Serializer/deserializer for an endpoint reference
+    An outbox multiplexes multiple output pipes onto multiple output channels,
+    all of which lead to the same destination node.
+
+    Channels can be added and removed as needed.
+    All output channels of a specific outbox must lead to the same destination node.
+    Only one outbox must be allocated for a given destination node.
     """
-    def get_length(self):
-        return struct.calcsize("<HH")
-    def serialize(self, value):
-        if value is None:
-            (ep_id, ep_crc) = (0, 0)
-        elif isinstance(value, RemoteProperty):
-            (ep_id, ep_crc) = (value._id, value.__channel__._interface_definition_crc)
-        else:
-            raise TypeError("Expected value of type RemoteProperty or None but got '{}'. En example for a RemoteProperty is this expression: odrv0.axis0.controller._remote_attributes['pos_setpoint']".format(type(value).__name__))
-        return struct.pack("<HH", ep_id, ep_crc)
-    def deserialize(self, buffer):
-        return struct.unpack("<HH", buffer)
 
-codecs[int] = {
-    'int8': StructCodec("<b", int),
-    'uint8': StructCodec("<B", int),
-    'int16': StructCodec("<h", int),
-    'uint16': StructCodec("<H", int),
-    'int32': StructCodec("<i", int),
-    'uint32': StructCodec("<I", int),
-    'int64': StructCodec("<q", int),
-    'uint64': StructCodec("<Q", int)
-}
+    def __init__(self, own_uuid, n_pipes):
+        self._own_uuid = own_uuid
+        self._free_pipes_arr = []
+        self._free_pipes_sem = Semaphore(count=n_pipes)
+        self._data_available = EventWaitHandle(auto_reset=True) # spurious signals possible
+        self._channel_available = EventWaitHandle(auto_reset=True) # spurious signals possible
+        self._cancellation_token = EventWaitHandle()
+        self._scheduler_thread = threading.Thread(target=self._scheduler_thread_loop, name='fibre:sched')
+        self._lock = Lock()
+        self._free_pipes = [True] * n_pipes
+        self._channels = []
+        self._active_pipes = []
 
-codecs[bool] = {
-    'bool': StructCodec("<?", bool)
-}
+    def __enter__(self):
+        """Starts the scheduler thread"""
+        self._scheduler_thread.start()
+        return self
+    def __exit__(self, exception_type, exception_value, traceback):
+        """Stops the scheduler thread"""
+        self._cancellation_token.set()
+        self._scheduler_thread.join()
 
-codecs[float] = {
-    'float': StructCodec("<f", float)
-}
+    def get_pipe(self, ensure_delivery=True, allow_spurious=False):
+        self._free_pipes_sem.acquire() # TODO: allow cancellation
+        with self._lock:
+            pipe_id = self._free_pipes.index(True)
+            pipe = OutputPipe(pipe_id, lambda: self.release_pipe(pipe_id))
+            self._active_pipes.append(pipe)
+        return pipe
 
-codecs[RemoteProperty] = {
-    'endpoint_ref': EndpointRefCodec()
-}
+    def release_pipe(self, pipe_id):
+        with self._lock:
+            self._free_pipes_arr[pipe_id] = False
+            self._active_pipes.remove(lambda p: p.pipe_id == pipe_id)
+        self._free_pipes_sem.release()
+
+    def _scheduler_thread_loop(self):
+        while not self._cancellation_token.is_set():
+            self._data_available.wait(cancellation_token=self._cancellation_token)
+            self._channel_available.wait(cancellation_token=self._cancellation_token)
+
+            for channel in self._channels:
+                packet = bytes()
+                per_packet_overhead = 16 + 2 # 16 bytes source UUID + 2 bytes CRC
+                per_chunk_overhead = 8
+                free_space = channel.get_mtu()
+                free_space = None if free_space is None else (free_space - per_packet_overhead)
+                assert free_space is not None or free_space >= 0
+                packet += self._own_uuid
+
+                for pipe in self._active_pipes:
+                    # Insert a data chunk from one of the pipes into the packet
+                    chunk, offset, crc = pipe.get_bytes(
+                        pipe.available_bytes if free_space is None else (free_space - per_chunk_overhead))
+                    packet += struct.pack('<HHHH', (pipe.pipe_id, offset, crc, len(chunk)))
+                    packet += chunk
+                    free_space = None if free_space is None else (free_space - per_chunk_overhead - len(chunk))
+                    if pipe.get_available_bytes():
+                        self._data_available.set()
+
+                # Dispatch packet
+                channel.process_packet_async(packet)
+
 
 
 class RemoteFunction(object):
     """
-    Represents a callable function that maps to a function call on a remote object
+    Represents a callable function that maps to a function call on a remote node
     """
-    def __init__(self, json_data, parent):
-        self._parent = parent
-        id_str = json_data.get("id", None)
-        if id_str is None:
-            raise ObjectDefinitionError("unspecified endpoint ID")
-        self._trigger_id = int(id_str)
+    def __init__(self, endpoint, input_types, output_types):
+        self._endpoint = endpoint
+        self._input_types = input_types
+        self._output_types = output_types
+        #self._lock = Lock()
 
-        self._name = json_data.get("name", None)
-        if self._name is None:
-            self._name = "[anonymous]"
-
-        self._inputs = []
-        for param_json in json_data.get("arguments", []) + json_data.get("inputs", []): # TODO: deprecate "arguments" keyword
-            param_json["mode"] = "r"
-            self._inputs.append(RemoteProperty(param_json, parent))
-
-        self._outputs = []
-        for param_json in json_data.get("outputs", []): # TODO: deprecate "arguments" keyword
-            param_json["mode"] = "r"
-            self._outputs.append(RemoteProperty(param_json, parent))
+#    def __init__(self, json_data, parent):
+#        self._parent = parent
+#        id_str = json_data.get("id", None)
+#        if id_str is None:
+#            raise ObjectDefinitionError("unspecified endpoint ID")
+#        self._trigger_id = int(id_str)
+#
+#        self._name = json_data.get("name", None)
+#        if self._name is None:
+#            self._name = "[anonymous]"
+#
+#        self._inputs = []
+#        for param_json in json_data.get("arguments", []) + json_data.get("inputs", []): # TODO: deprecate "arguments" keyword
+#            param_json["mode"] = "r"
+#            self._inputs.append(RemoteProperty(param_json, parent))
+#
+#        self._outputs = []
+#        for param_json in json_data.get("outputs", []): # TODO: deprecate "arguments" keyword
+#            param_json["mode"] = "r"
+#            self._outputs.append(RemoteProperty(param_json, parent))
 
     def __call__(self, *args):
-        if (len(self._inputs) != len(args)):
-            raise TypeError("expected {} arguments but have {}".format(len(self._inputs), len(args)))
-        for i in range(len(args)):
-            self._inputs[i].set_value(args[i])
-        self._parent.__channel__.remote_endpoint_operation(self._trigger_id, None, True, 0)
-        if len(self._outputs) > 0:
-            return self._outputs[0].get_value()
+        if (len(self._input_types) != len(args)):
+            raise TypeError("expected {} arguments but have {}".format(len(self._input_types), len(args)))
+        #with self._lock:
+        #    call_instance = self._call_instance
+        #    self._call_instance += 1
+        with EndpointConnection(self._endpoint.outbox, ensure_delivery=True, allow_spurious=False) as connection:
+            connection.emit_value("number", self._endpoint.endpoint_id)
+            for i, input_type in enumerate(self._input_types):
+                connection.emit_value(input_type, args[i])
+            connection.flush()
+            outputs = []
+            for i, output_type in enumerate(self._output_types):
+                outputs.append(connection.receive_value(output_type))
+        return outputs
 
     def dump(self):
         return "{}({})".format(self._name, ", ".join("{}: {}".format(x._name, x._property_type.__name__) for x in self._inputs))
