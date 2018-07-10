@@ -12,7 +12,7 @@ static T calc_crc(T remainder, uint8_t value) {
     constexpr T TOPBIT = ((T)1 << (BIT_WIDTH - 1));
     
     // Bring the next byte into the remainder.
-    remainder ^= (value << (BIT_WIDTH - 8));
+    remainder ^= (static_cast<T>(value) << (BIT_WIDTH - 8));
 
     // Perform modulo-2 division, a bit at a time.
     for (uint8_t bit = 8; bit; --bit) {

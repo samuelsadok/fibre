@@ -42,6 +42,8 @@ int serve_on_udp(unsigned int port) {
     socklen_t slen = sizeof(si_other);
     uint8_t buf[UDP_RX_BUF_LEN];
 
+    fibre::InputChannel<10> input_channel;
+
     if ((s=socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == -1)
         return -1;
 
@@ -61,8 +63,8 @@ int serve_on_udp(unsigned int port) {
         //    inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port), buf);
 
         UDPPacketSender udp_packet_output(s, &si_other);
-        BidirectionalPacketBasedChannel udp_channel(udp_packet_output);
-        udp_channel.process_packet(buf, n_received);
+        // TODO: register output
+        input_channel.process_packet(buf, n_received /*, udp_packet_output*/);
     }
 
     close(s);

@@ -7,6 +7,8 @@
 #include "cpp_utils.hpp"
 #include <utility>
 
+namespace fibre {
+
 /* Base classes --------------------------------------------------------------*/
 
 // @brief Base class for all stream encoders
@@ -306,6 +308,8 @@ private:
 template<typename ... TEncoders>
 EncoderChain<TEncoders...> make_encoder_chain(TEncoders&& ... encoders) {
     return EncoderChain<TEncoders...>(std::forward<TEncoders>(encoders)...);
+}
+
 }
 
 #endif // __ENCODERS_HPP

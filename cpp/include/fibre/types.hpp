@@ -93,7 +93,7 @@ class IntNumberType : FibreRefType {
     > static_encoders;
     // @brief Statically known decoders
     typedef std::tuple<
-        VarintStreamDecoder<T>
+        VarintDecoder<T>
         //FixedIntStreamDecoder<T>,
     > static_decoders;
     typedef std::tuple_element_t<0, static_encoders> default_encoder;

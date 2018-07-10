@@ -39,9 +39,6 @@ int serve_client(int sock_fd) {
     // initialize output stack for this client
     TCPStreamSink tcp_packet_output(sock_fd);
     StreamBasedPacketSink packet2stream(tcp_packet_output);
-    BidirectionalPacketBasedChannel channel(packet2stream);
-
-    StreamToPacketSegmenter stream2packet(channel);
 
     // now listen for it
     for (;;) {
@@ -57,7 +54,7 @@ int serve_client(int sock_fd) {
 
         // input processing stack
         size_t processed = 0;
-        stream2packet.process_bytes(buf, n_received, &processed);
+        fibre::process_bytes(buf, n_received, &processed, packet2stream);
     }
 }
 

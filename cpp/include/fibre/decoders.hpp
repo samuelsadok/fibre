@@ -7,13 +7,18 @@
 #include "cpp_utils.hpp"
 #include <utility>
 
+namespace fibre {
 
 /* Base classes --------------------------------------------------------------*/
 
+/*
 // @brief Base class for stream based decoders.
 // A stream based decoder is a decoder that processes arbitrary length data blocks.
+// TODO: this interface is stupid, fix it.
 class StreamDecoder : public StreamSink {
 public:
+    virtual ~StreamDecoder() {};
+
     // @brief Returns 0 if no error ocurred, otherwise a non-zero error code.
     // Once process_bytes returned an error, subsequent calls to get_status must return the same error.
     // If the decoder is in an error state, the behavior of get_expected_bytes and process_bytes is undefined.
@@ -25,9 +30,9 @@ public:
     // process_bytes() must always process all provided bytes unless the decoder expects no more bytes
     // afterwards
     virtual size_t get_expected_bytes() = 0;
-};
+};*/
 
-// @brief Base class for a decoder that is fed in a block-wise fashion.
+/*// @brief Base class for a decoder that is fed in a block-wise fashion.
 // This base class is provided for convenience when implementing certain types of decoders.
 // A StreamDecoder can be obtained from a BlockDecoder by using StreamDecoder_from_BlockDecoder.
 template<unsigned BLOCKSIZE>
@@ -49,11 +54,11 @@ public:
     virtual int get_status() = 0;
     virtual size_t get_expected_bytes() = 0;
     virtual int process_byte(uint8_t byte) = 0;
-};
+};*/
 
 /* Converter classes ---------------------------------------------------------*/
 
-// @brief Encapsulates a BlockDecoder to make it look like a StreamDecoder
+/*// @brief Encapsulates a BlockDecoder to make it look like a StreamDecoder
 // @tparam T The encapsulated BlockDecoder type.
 //           Must inherit from BlockDecoder.
 template<typename T, ENABLE_IF(TypeChecker<T>::template all_are<BlockDecoder<T::block_size::value>>())>
@@ -156,60 +161,90 @@ public:
         }
         return byte_decoder_.get_status();
     }
-private:
+//private:
     T byte_decoder_;
-};
+};*/
 
 /* Decoder implementations ---------------------------------------------------*/
 
+/**
+ * @brief Decodes a varint.
+ * TODO: don't fail on overflow if desired
+ */
 template<typename T>
-class VarintByteDecoder : public ByteDecoder {
+class VarintDecoder : public StreamSink {
 public:
     static constexpr T BIT_WIDTH = (CHAR_BIT * sizeof(T));
 
-    VarintByteDecoder(T& state_variable) :
-        state_variable_(state_variable)
-    {
-    }
-
-    size_t get_expected_bytes() final {
-        return done_ ? 0 : 1;
-    }
-
-    int get_status() final {
-        return status_;
-    }
-
-    int process_byte(uint8_t input_byte) final {
-        if (bit_pos_ == 0) {
-            LOG_FIBRE("start decoding varint, with 0x%02x => %zx\n", input_byte, (uintptr_t)&state_variable_);
-            state_variable_ = 0;
+    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+        while (length) {
+            uint8_t input_byte = *buffer;
+            state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
+            if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
+                LOG_FIBRE("varint overflow: tried to add %02x << %zu\n", input_byte, bit_pos_);
+                bit_pos_ = BIT_WIDTH;
+                return ERROR; // overflow
+            }
+            bit_pos_ += 7;
+            if (processed_bytes)
+                (*processed_bytes)++;
+            if (!(input_byte & 0x80))
+                return CLOSED;
+            if (bit_pos_ >= BIT_WIDTH)
+                return ERROR;
         }
-        LOG_FIBRE("varint: decode %02x << %zu at %zx\n", input_byte, bit_pos_, &bit_pos_);
-        // we assume bit_pos_ < BIT_WIDTH
-        state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
-        if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
-            LOG_FIBRE("varint overflow: tried to add %02x << %zu\n", input_byte, bit_pos_);
-            return (status_ = -1); // overflow
-        }
-        bit_pos_ += 7;
-        done_ = !(input_byte & 0x80);
-        return (status_ = (done_ || bit_pos_ < BIT_WIDTH) ? 0 : -1);
+        return OK;
+    }
+
+    const T& get_value() {
+        return state_variable_;
     }
 
 private:
-    T& state_variable_;
-    // At all times where status_ != 0 the following statement holds:
-    // (done_ || bit_pos_ < BIT_WIDTH)
-    //size_t bit_pos_ = 0; // bit position
+    T state_variable_ = 0;
+    // TODO: adapt size of this variable to hold BIT_WIDTH+6
     size_t bit_pos_ = 0; // bit position
-    int status_ = 0;
-    bool done_ = false;
-    int data[1024] = {0};
 };
 
-template<typename T>
-using VarintStreamDecoder = StreamDecoder_from_ByteDecoder<VarintByteDecoder<T>>;
+
+template<typename T, bool BigEndian>
+class FixedIntDecoder : public StreamSink {
+public:
+    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+        size_t chunk = std::min(serializer::BYTE_WIDTH - pos_, length);
+        printf("chunk: %zu\n", chunk);
+        memcpy(buffer_ + pos_, buffer, chunk);
+        if (processed_bytes)
+            *processed_bytes += chunk;
+        pos_ += chunk;
+        if (pos_ >= serializer::BYTE_WIDTH) {
+            value_ = serializer::read(buffer_);
+            return CLOSED;
+        } else {
+            return OK;
+        }
+    }
+
+    size_t get_min_useful_bytes() const final {
+        return serializer::BYTE_WIDTH - pos_;
+    };
+
+    size_t get_min_non_blocking_bytes() const final {
+        return serializer::BYTE_WIDTH - pos_;
+    };
+
+    const T& get_value() const {
+        return value_;
+    }
+private:
+    using serializer = SimpleSerializer<T, BigEndian>;
+    uint8_t buffer_[serializer::BYTE_WIDTH];
+    size_t pos_ = 0;
+    T value_ = 0;
+};
+
+//template<typename T>
+//using VarintStreamDecoder = StreamDecoder_from_ByteDecoder<VarintByteDecoder<T>>;
 
 // This double nested type should work identically but makes it way harder for the compiler to optimize
 //template<typename T>
@@ -217,22 +252,10 @@ using VarintStreamDecoder = StreamDecoder_from_ByteDecoder<VarintByteDecoder<T>>
 //template<typename T>
 //using VarintStreamDecoder = StreamDecoder_from_BlockDecoder<VarintBlockDecoder<T>>;
 
-template<typename T>
-inline VarintStreamDecoder<T> make_varint_decoder(T& variable) {
-    return VarintStreamDecoder<T>(variable);
-}
-
-inline VarintStreamDecoder<GET_TYPE_OF(&ReceiverState::endpoint_id)> make_endpoint_id_decoder(ReceiverState& state) {
-    return make_varint_decoder(state.endpoint_id);
-}
-inline VarintStreamDecoder<GET_TYPE_OF(&ReceiverState::length)> make_length_decoder(ReceiverState& state) {
-    return make_varint_decoder(state.length);
-}
 
 
-
-template<uint8_t INIT, uint8_t POLYNOMIAL, typename TDecoder,
-        ENABLE_IF(TypeChecker<TDecoder>::template all_are<StreamDecoder>())>
+/*template<uint8_t INIT, uint8_t POLYNOMIAL, typename TDecoder,
+        ENABLE_IF(TypeChecker<TDecoder>::template all_are<StreamSink>())>
 class CRC8BlockDecoder : public BlockDecoder<CRC8_BLOCKSIZE> {
 public:
     CRC8BlockDecoder(TDecoder&& inner_decoder) :
@@ -247,11 +270,11 @@ public:
         return (inner_decoder_.get_expected_bytes() + CRC8_BLOCKSIZE - 2) / (CRC8_BLOCKSIZE - 1);
     }
 
-    int process_block(const uint8_t input_block[4]) final {
+    status_t process_block(const uint8_t input_block[4]) final {
         current_crc_ = calc_crc8<POLYNOMIAL>(current_crc_, input_block, CRC8_BLOCKSIZE - 1);
         if (current_crc_ != input_block[CRC8_BLOCKSIZE - 1])
-            return status_ = -1;
-        return status_ = inner_decoder_.process_bytes(input_block, CRC8_BLOCKSIZE - 1, nullptr);
+            return ERROR;
+        return inner_decoder_.process_bytes(input_block, CRC8_BLOCKSIZE - 1, nullptr);
     }
 private:
     TDecoder inner_decoder_;
@@ -265,9 +288,9 @@ using CRC8StreamDecoder = StreamDecoder_from_BlockDecoder<CRC8BlockDecoder<INIT,
 template<unsigned INIT, unsigned POLYNOMIAL, typename TDecoder>
 inline CRC8StreamDecoder<INIT, POLYNOMIAL, TDecoder> make_crc8_decoder(TDecoder&& decoder) {
     return CRC8StreamDecoder<INIT, POLYNOMIAL, TDecoder>(std::forward<TDecoder>(decoder));
-}
+}*/
 
-// TODO: ENABLE_IF(TypeChecker<TDecoders...>::template all_are<StreamDecoder>())
+/*// TODO: ENABLE_IF(TypeChecker<TDecoders...>::template all_are<StreamDecoder>())
 template<typename ... TDecoders>
 class DecoderChain;
 
@@ -326,11 +349,9 @@ public:
 private:
     TDecoder this_decoder_;
     DecoderChain<TDecoders...> subsequent_decoders_;
-};
+};*/
 
-template<typename ... TDecoders>
-inline DecoderChain<TDecoders...> make_decoder_chain(TDecoders&& ... decoders) {
-    return DecoderChain<TDecoders...>(std::forward<TDecoders>(decoders)...);
+
 }
 
 #endif // __DECODERS_HPP

@@ -17,7 +17,9 @@ see protocol.md for the protocol specification
 #include <vector>
 //#include <stdint.h>
 #include <string.h>
+#include <unordered_map>
 #include "stream.hpp"
+#include "uuid.hpp"
 #include "crc.hpp"
 #include "cpp_utils.hpp"
 
@@ -68,160 +70,33 @@ constexpr uint16_t PROTOCOL_VERSION = 1;
 // Maximum time we allocate for processing and responding to a request
 constexpr uint32_t PROTOCOL_SERVER_TIMEOUT_MS = 10;
 
-template<typename T>
-inline size_t write_le(T value, uint8_t* buffer);
 
-template<typename T>
-inline size_t read_le(T* value, const uint8_t* buffer);
+namespace fibre {
 
-template<>
-inline size_t write_le<bool>(bool value, uint8_t* buffer) {
-    buffer[0] = value ? 1 : 0;
-    return 1;
-}
-
-template<>
-inline size_t write_le<uint8_t>(uint8_t value, uint8_t* buffer) {
-    buffer[0] = value;
-    return 1;
-}
-
-template<>
-inline size_t write_le<uint16_t>(uint16_t value, uint8_t* buffer) {
-    buffer[0] = (value >> 0) & 0xff;
-    buffer[1] = (value >> 8) & 0xff;
-    return 2;
-}
-
-template<>
-inline size_t write_le<uint32_t>(uint32_t value, uint8_t* buffer) {
-    buffer[0] = (value >> 0) & 0xff;
-    buffer[1] = (value >> 8) & 0xff;
-    buffer[2] = (value >> 16) & 0xff;
-    buffer[3] = (value >> 24) & 0xff;
-    return 4;
-}
-
-template<>
-inline size_t write_le<int32_t>(int32_t value, uint8_t* buffer) {
-    buffer[0] = (value >> 0) & 0xff;
-    buffer[1] = (value >> 8) & 0xff;
-    buffer[2] = (value >> 16) & 0xff;
-    buffer[3] = (value >> 24) & 0xff;
-    return 4;
-}
-
-template<>
-inline size_t write_le<uint64_t>(uint64_t value, uint8_t* buffer) {
-    buffer[0] = (value >> 0) & 0xff;
-    buffer[1] = (value >> 8) & 0xff;
-    buffer[2] = (value >> 16) & 0xff;
-    buffer[3] = (value >> 24) & 0xff;
-    buffer[4] = (value >> 32) & 0xff;
-    buffer[5] = (value >> 40) & 0xff;
-    buffer[6] = (value >> 48) & 0xff;
-    buffer[7] = (value >> 56) & 0xff;
-    return 8;
-}
-
-template<>
-inline size_t write_le<float>(float value, uint8_t* buffer) {
-    static_assert(CHAR_BIT * sizeof(float) == 32, "32 bit floating point expected");
-    static_assert(std::numeric_limits<float>::is_iec559, "IEEE 754 floating point expected");
-    const uint32_t * value_as_uint32 = reinterpret_cast<const uint32_t*>(&value);
-    return write_le<uint32_t>(*value_as_uint32, buffer);
-}
-
-template<>
-inline size_t read_le<bool>(bool* value, const uint8_t* buffer) {
-    *value = buffer[0];
-    return 1;
-}
-
-template<>
-inline size_t read_le<uint8_t>(uint8_t* value, const uint8_t* buffer) {
-    *value = buffer[0];
-    return 1;
-}
-
-template<>
-inline size_t read_le<uint16_t>(uint16_t* value, const uint8_t* buffer) {
-    *value = (static_cast<uint16_t>(buffer[0]) << 0) |
-             (static_cast<uint16_t>(buffer[1]) << 8);
-    return 2;
-}
-
-template<>
-inline size_t read_le<int32_t>(int32_t* value, const uint8_t* buffer) {
-    *value = (static_cast<int32_t>(buffer[0]) << 0) |
-             (static_cast<int32_t>(buffer[1]) << 8) |
-             (static_cast<int32_t>(buffer[2]) << 16) |
-             (static_cast<int32_t>(buffer[3]) << 24);
-    return 4;
-}
-
-template<>
-inline size_t read_le<uint32_t>(uint32_t* value, const uint8_t* buffer) {
-    *value = (static_cast<uint32_t>(buffer[0]) << 0) |
-             (static_cast<uint32_t>(buffer[1]) << 8) |
-             (static_cast<uint32_t>(buffer[2]) << 16) |
-             (static_cast<uint32_t>(buffer[3]) << 24);
-    return 4;
-}
-
-template<>
-inline size_t read_le<uint64_t>(uint64_t* value, const uint8_t* buffer) {
-    *value = (static_cast<uint64_t>(buffer[0]) << 0) |
-             (static_cast<uint64_t>(buffer[1]) << 8) |
-             (static_cast<uint64_t>(buffer[2]) << 16) |
-             (static_cast<uint64_t>(buffer[3]) << 24) |
-             (static_cast<uint64_t>(buffer[4]) << 32) |
-             (static_cast<uint64_t>(buffer[5]) << 40) |
-             (static_cast<uint64_t>(buffer[6]) << 48) |
-             (static_cast<uint64_t>(buffer[7]) << 56);
-    return 8;
-}
-
-template<>
-inline size_t read_le<float>(float* value, const uint8_t* buffer) {
-    static_assert(CHAR_BIT * sizeof(float) == 32, "32 bit floating point expected");
-    static_assert(std::numeric_limits<float>::is_iec559, "IEEE 754 floating point expected");
-    return read_le(reinterpret_cast<uint32_t*>(value), buffer);
-}
-
-// @brief Reads a value of type T from the buffer.
-// @param buffer    Pointer to the buffer to be read. The pointer is updated by the number of bytes that were read.
-// @param length    The number of available bytes in buffer. This value is updated to subtract the bytes that were read.
-template<typename T>
-static inline T read_le(const uint8_t** buffer, size_t* length) {
-    T result;
-    size_t cnt = read_le(&result, *buffer);
-    *buffer += cnt;
-    *length -= cnt;
-    return result;
-}
-
-
-// Implements the StreamSink interface by calculating the CRC16 checksum
-// on the data that is sent to it.
+/**
+ * @brief Implements a StreamSink that calculates the CRC16 checksum
+ * on the data that is sent to it.
+ * This stream never closes.
+ */
 class CRC16Calculator : public StreamSink {
 public:
-    CRC16Calculator(uint16_t crc16_init) :
-        crc16_(crc16_init) {}
+    CRC16Calculator(uint16_t crc16_init) : crc16_(crc16_init) {}
 
-    int process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
+    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) {
         crc16_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(crc16_, buffer, length);
         if (processed_bytes)
             *processed_bytes += length;
-        return 0;
+        return OK;
     }
 
-    size_t get_free_space() { return SIZE_MAX; }
+    size_t get_min_non_blocking_bytes() const final { return SIZE_MAX; }
 
     uint16_t get_crc16() { return crc16_; }
 private:
     uint16_t crc16_;
 };
+
+}
 
 
 // @brief Endpoint request handler
@@ -236,23 +111,23 @@ private:
 // @param output: The stream where to write the output to. Can be null.
 //                The handler shall abort as soon as the stream returns
 //                a non-zero error code on write.
-typedef std::function<void(void* ctx, const uint8_t* input, size_t input_length, StreamSink* output)> EndpointHandler;
+typedef std::function<void(void* ctx, const uint8_t* input, size_t input_length, fibre::StreamSink* output)> EndpointHandler;
 
 
 template<typename T>
-void default_readwrite_endpoint_handler(const T* value, const uint8_t* input, size_t input_length, StreamSink* output) {
+void default_readwrite_endpoint_handler(const T* value, const uint8_t* input, size_t input_length, fibre::StreamSink* output) {
     // If the old value was requested, call the corresponding little endian serialization function
     if (output) {
         // TODO: make buffer size dependent on the type
         uint8_t buffer[sizeof(T)];
         size_t cnt = write_le<T>(*value, buffer);
-        if (cnt <= output->get_free_space())
-            output->process_bytes(buffer, cnt, nullptr);
+        // TODO: force non-blocking
+        output->process_bytes(buffer, cnt, nullptr);
     }
 }
 
 template<typename T>
-void default_readwrite_endpoint_handler(T* value, const uint8_t* input, size_t input_length, StreamSink* output) {
+void default_readwrite_endpoint_handler(T* value, const uint8_t* input, size_t input_length, fibre::StreamSink* output) {
     // Read the endpoint value into output
     default_readwrite_endpoint_handler<T>(const_cast<const T*>(value), input, input_length, output);
     
@@ -327,37 +202,37 @@ inline constexpr const char* get_default_json_modifier<bool>() {
 class Endpoint {
 public:
     //const char* const name_;
-    virtual void handle(const uint8_t* input, size_t input_length, StreamSink* output) = 0;
+    virtual void handle(const uint8_t* input, size_t input_length, fibre::StreamSink* output) = 0;
     virtual bool get_string(char * output, size_t length) { return false; };
     virtual bool set_string(char * buffer, size_t length) { return false; }
 };
 
-static inline int write_string(const char* str, StreamSink* output) {
+static inline int write_string(const char* str, fibre::StreamSink* output) {
     return output->process_bytes(reinterpret_cast<const uint8_t*>(str), strlen(str), nullptr);
 }
 
 
-/* @brief Handles the communication protocol on one channel.
-*
-* When instantiated with a list of endpoints and an output packet sink,
-* objects of this class will handle packets passed into process_packet,
-* pass the relevant data to the corresponding endpoints and dispatch response
-* packets on the output.
-*/
-class BidirectionalPacketBasedChannel : public PacketSink {
-public:
-    BidirectionalPacketBasedChannel(PacketSink& output) :
-        output_(output)
-    { }
-
-    //size_t get_mtu() {
-    //    return SIZE_MAX;
-    //}
-    int process_packet(const uint8_t* buffer, size_t length);
-private:
-    PacketSink& output_;
-    uint8_t tx_buf_[TX_BUF_SIZE];
-};
+///* @brief Handles the communication protocol on one channel.
+//*
+//* When instantiated with a list of endpoints and an output packet sink,
+//* objects of this class will handle packets passed into process_packet,
+//* pass the relevant data to the corresponding endpoints and dispatch response
+//* packets on the output.
+//*/
+//class BidirectionalPacketBasedChannel : public PacketSink {
+//public:
+//    BidirectionalPacketBasedChannel(PacketSink& output) :
+//        output_(output)
+//    { }
+//
+//    //size_t get_mtu() {
+//    //    return SIZE_MAX;
+//    //}
+//    int process_packet(const uint8_t* buffer, size_t length);
+//private:
+//    PacketSink& output_;
+//    uint8_t tx_buf_[TX_BUF_SIZE];
+//};
 
 
 /* ToString / FromString functions -------------------------------------------*/
@@ -446,7 +321,7 @@ struct MemberList<> {
 public:
     static constexpr size_t endpoint_count = 0;
     static constexpr bool is_empty = true;
-    void write_json(size_t id, StreamSink* output) {
+    void write_json(size_t id, fibre::StreamSink* output) {
         // no action
     }
     void register_endpoints(Endpoint** list, size_t id, size_t length) {
@@ -477,7 +352,7 @@ public:
         this_member_(std::move(other.this_member_)),
         subsequent_members_(std::move(other.subsequent_members_)) {}*/
 
-    void write_json(size_t id, StreamSink* output) /*final*/ {
+    void write_json(size_t id, fibre::StreamSink* output) /*final*/ {
         this_member_.write_json(id, output);
         if (!MemberList<TMembers...>::is_empty)
             write_string(",", output);
@@ -513,7 +388,7 @@ public:
 
     static constexpr size_t endpoint_count = MemberList<TMembers...>::endpoint_count;
 
-    void write_json(size_t id, StreamSink* output) {
+    void write_json(size_t id, fibre::StreamSink* output) {
         write_string("{\"name\":\"", output);
         write_string(name_, output);
         write_string("\",\"type\":\"object\",\"members\":[", output);
@@ -576,7 +451,7 @@ public:
         : name_(other.name_), property_(other.property_)
     {}*/
 
-    void write_json(size_t id, StreamSink* output) {
+    void write_json(size_t id, fibre::StreamSink* output) {
         // write name
         write_string("{\"name\":\"", output);
         LOG_FIBRE("json: this at %x, name at %x is s\r\n", (uintptr_t)this, (uintptr_t)name_);
@@ -620,10 +495,10 @@ public:
         if (id < length)
             list[id] = this;
     }
-    void handle(const uint8_t* input, size_t input_length, StreamSink* output) final {
+    void handle(const uint8_t* input, size_t input_length, fibre::StreamSink* output) final {
         default_readwrite_endpoint_handler(property_, input, input_length, output);
     }
-    /*void handle(const uint8_t* input, size_t input_length, StreamSink* output) {
+    /*void handle(const uint8_t* input, size_t input_length, fibre::StreamSink* output) {
         handle(input, input_length, output);
     }*/
 
@@ -679,23 +554,6 @@ struct PropertyListFactory<TProperty, TProperties...> {
     }
 };
 
-/* @brief return_type<TypeList>::type represents the true return type
-* of a function returning 0 or more arguments.
-*
-* For an empty TypeList, the return type is void. For a list with
-* one type, the return type is equal to that type. For a list with
-* more than one items, the return type is a tuple.
-*/
-template<typename ... Types>
-struct return_type;
-
-template<>
-struct return_type<> { typedef void type; };
-template<typename T>
-struct return_type<T> { typedef T type; };
-template<typename T, typename ... Ts>
-struct return_type<T, Ts...> { typedef std::tuple<T, Ts...> type; };
-
 
 template<typename TObj, typename ... TInputsAndOutputs>
 class FibreFunction;
@@ -731,7 +589,7 @@ public:
         LOG_FIBRE("COPIED! my tuple is at %x and of size %u\r\n", (uintptr_t)&in_args_, sizeof(in_args_));
     }
 
-    void write_json(size_t id, StreamSink* output) {
+    void write_json(size_t id, fibre::StreamSink* output) {
         // write name
         write_string("{\"name\":\"", output);
         write_string(name_, output);
@@ -777,7 +635,7 @@ public:
         out_args_ = invoke_function_with_tuple(*obj_, func_ptr_, in_args_);
     }
 
-    void handle(const uint8_t* input, size_t input_length, StreamSink* output) final {
+    void handle(const uint8_t* input, size_t input_length, fibre::StreamSink* output) final {
         (void) input;
         (void) input_length;
         (void) output;
@@ -828,7 +686,7 @@ FibreFunction<TObj, std::tuple<TArgs...>, std::tuple<TRet>> make_fibre_function(
 class EndpointProvider {
 public:
     virtual size_t get_endpoint_count() = 0;
-    virtual void write_json(size_t id, StreamSink* output) = 0;
+    virtual void write_json(size_t id, fibre::StreamSink* output) = 0;
     virtual Endpoint* get_by_name(char * name, size_t length) = 0;
     virtual void register_endpoints(Endpoint** list, size_t id, size_t length) = 0;
 };
@@ -840,7 +698,7 @@ public:
     size_t get_endpoint_count() final {
         return T::endpoint_count;
     }
-    void write_json(size_t id, StreamSink* output) final {
+    void write_json(size_t id, fibre::StreamSink* output) final {
         return member_list_.write_json(id, output);
     }
     void register_endpoints(Endpoint** list, size_t id, size_t length) final {
@@ -862,9 +720,9 @@ public:
 class JSONDescriptorEndpoint : Endpoint {
 public:
     static constexpr size_t endpoint_count = 1;
-    void write_json(size_t id, StreamSink* output);
+    void write_json(size_t id, fibre::StreamSink* output);
     void register_endpoints(Endpoint** list, size_t id, size_t length);
-    void handle(const uint8_t* input, size_t input_length, StreamSink* output);
+    void handle(const uint8_t* input, size_t input_length, fibre::StreamSink* output);
 };
 
 #include "types.hpp"
@@ -876,16 +734,23 @@ extern uint16_t json_crc_;
 extern JSONDescriptorEndpoint json_file_endpoint_;
 extern EndpointProvider* application_endpoints_;
 
+namespace fibre {
+extern std::vector<fibre::FibreRefType*> ref_types_;
+
 // @brief Registers the specified application object list using the provided endpoint table.
 // This function should only be called once during the lifetime of the application. TODO: fix this.
 // @param application_objects The application objects to be registred.
 template<typename T>
-int fibre_publish(T& application_objects) {
-    static constexpr size_t endpoint_list_size = 1 + T::endpoint_count;
-    static Endpoint* endpoint_list[endpoint_list_size];
-    static auto endpoint_provider = EndpointProvider_from_MemberList<T>(application_objects);
-
-    json_file_endpoint_.register_endpoints(endpoint_list, 0, endpoint_list_size);
+int publish_object(T& application_objects) {
+//    static constexpr size_t endpoint_list_size = 1 + T::endpoint_count;
+//    static Endpoint* endpoint_list[endpoint_list_size];
+//    static auto endpoint_provider = EndpointProvider_from_MemberList<T>(application_objects);
+    using ref_type = ::FibreRefType<T>;
+    ref_type& asd = fibre::global_instance_of<ref_type>();
+    //ref_types_.push_back(fibre::global_instance_of<ref_type>());
+    //fibre::FibreRefType& aaa = asd;
+    ref_types_.push_back(&asd);
+/*    json_file_endpoint_.register_endpoints(endpoint_list, 0, endpoint_list_size);
     application_objects.register_endpoints(endpoint_list, 1, endpoint_list_size);
 
     // Update the global endpoint table
@@ -899,9 +764,452 @@ int fibre_publish(T& application_objects) {
     uint8_t offset[4] = { 0 };
     json_file_endpoint_.handle(offset, sizeof(offset), &crc16_calculator);
     json_crc_ = crc16_calculator.get_crc16();
-
+*/
     return 0;
 }
 
+class LocalEndpoint;
+
+class IncomingConnectionDecoder : public DynamicStreamChain<RX_BUF_SIZE - 44> {
+public:
+    IncomingConnectionDecoder() {
+        set_stream<HeaderDecoderChain>(FixedIntDecoder<uint16_t, false>(), FixedIntDecoder<uint16_t, false>());
+    }
+    template<typename TDecoder, typename ... TArgs>
+    void set_stream(TArgs&& ... args) {
+        DynamicStreamChain::set_stream<TDecoder, TArgs...>(std::forward<TArgs>(args)...);
+    }
+    void set_stream(StreamSink* new_stream) {
+        DynamicStreamChain::set_stream(new_stream);
+    }
+    template<typename TDecoder>
+    TDecoder* get_stream() {
+        return DynamicStreamChain::get_stream<TDecoder>();
+    }
+private:
+    enum {
+        RECEIVING_HEADER,
+        RECEIVING_PAYLOAD
+    } state_ = RECEIVING_HEADER;
+    LocalEndpoint* endpoint_ = nullptr;
+
+    using HeaderDecoderChain = StaticStreamChain<
+                FixedIntDecoder<uint16_t, false>,
+                FixedIntDecoder<uint16_t, false>
+            >; // size: 96 bytes
+
+    status_t advance_state() final;
+};
+
+class LocalEndpoint {
+public:
+    //virtual void invoke(StreamSource* input, StreamSink* output) = 0;
+    virtual void open_connection(IncomingConnectionDecoder& input, StreamSink* output) = 0;
+    virtual void decoder_finished(IncomingConnectionDecoder& input) = 0;
+    virtual uint16_t get_hash() = 0;
+    virtual bool get_as_json(char output[256] /* TODO: use a stream as output instead */) = 0;
+};
+
+
+
+extern std::vector<fibre::LocalEndpoint*> functions_;
+
+/*
+template<typename T>
+T deserialize(StreamSource& input);
+
+template<>
+uint32_t deserialize<uint32_t>(StreamSource& input) {
+    return 0;
+}
+
+template<typename ... Ts>
+std::tuple<Ts...> deserialize<std::tuple<Ts...>>(StreamSource& input) {
+    return std::make_tuple<Ts...>(deserialize<Ts>(input)...);
+}*/
+
+
+template<typename T>
+struct Deserializer;
+
+template<>
+struct Deserializer<uint32_t> {
+    static uint32_t deserialize(StreamSource* input) {
+        uint8_t buf[4];
+        input->get_bytes(buf, sizeof(buf), nullptr);
+        return read_le<uint32_t>(buf);
+    }
+};
+
+template<typename ... Ts>
+struct Deserializer<std::tuple<Ts...>> {
+    static std::tuple<Ts...> deserialize(StreamSource* input) {
+        return std::make_tuple<Ts...>(Deserializer<Ts>::deserialize(input)...);
+    }
+};
+
+
+template<typename T>
+struct Serializer;
+
+template<>
+struct Serializer<uint32_t> {
+    static void serialize(uint32_t& value, StreamSink* output) {
+        uint8_t buf[4];
+        write_le<uint32_t>(value, buf);
+        output->process_bytes(buf, sizeof(buf), nullptr);
+    }
+};
+
+template<size_t I>
+struct Serializer<char[I]> {
+    static void serialize(char (&value)[I], StreamSink* output) {
+        uint32_t i = I;
+        Serializer<uint32_t>::serialize(i, output);
+        output->process_bytes(reinterpret_cast<uint8_t*>(value), I, nullptr);
+    }
+};
+
+template<typename ... Ts>
+struct Serializer<std::tuple<Ts...>> {
+    static void serialize(std::tuple<Ts...>& value, StreamSink* output) {
+        //Serializer<std::tuple<T, Ts...>>::serialize
+        serialize_tail<sizeof...(Ts)>(value, output);
+    }
+
+    template<size_t I>
+    static std::enable_if_t<I >= 1>
+    serialize_tail(std::tuple<Ts...>& value, StreamSink* output) {
+        Serializer<std::tuple_element_t<I - 1, std::tuple<Ts...>>>::serialize(std::get<I - 1>(value), output);
+        serialize_tail<I - 1>(value, output);
+    }
+    
+    template<size_t I>
+    static std::enable_if_t<I == 0>
+    serialize_tail(std::tuple<Ts...>& value, StreamSink* output) {
+        // nothing to do
+    }
+};
+
+//template<unsigned IPos, typename Ts...>
+//void deserialize_tuple(std::tuple<Ts...>& values) {
+//    //using TCurrent = decltype(std::get<IPos>(values));
+//    //std::get<0>(values) = deserialize<TCurrent>();
+//    //deserialize_tuple<TPos+1>(values);
+//}
+
+/*
+template<typename... TNames>
+struct FunctionJSONAssembler;
+
+template<typename TFunctionName, typename... TInputNames, typename... TOutputNames>
+struct FunctionJSONAssembler<TFunctionName, std::tuple<TInputNames...>, std::tuple<TOutputNames...>> {
+    template<TFunctionName& function_name, const std::tuple<TInputNames...>& input_names, const std::tuple<TOutputNames...>& output_names>
+    class WithStaticNames {
+        template<size_t I>
+        static constexpr array_string<10 + sizeof(std::get<I+1>(input_names))/sizeof(std::get<I+1>(input_names)[0])>
+        get_input_json() {
+            return const_str_concat(
+                make_const_string("{\"name\":\""),
+                make_const_string(std::get<I+1>(input_names)),
+                make_const_string("\"}")
+            );
+        }
+
+        template<size_t... Is>
+        static constexpr auto get_all_inputs_json(std::index_sequence<Is...>)
+            -> decltype(const_str_join(get_input_json<Is>()...)) {
+            return const_str_join(get_input_json<Is>()...);
+        }
+
+        // @brief Returns a JSON snippet that describes this function
+        static bool get_as_json(char output[256]) {
+            static const constexpr auto json = const_str_concat(
+                make_const_string("{\"name\":\""),
+                make_const_string(function_name),
+                make_const_string("\",\"in\":["),
+                get_all_inputs_json(std::make_index_sequence<sizeof...(TInputNames)>()),
+                make_const_string("]}")
+            );
+            memcpy(output, json.c_str(), std::min((size_t)256, sizeof(json)));
+            return true;
+        }
+    };
+};*/
+
+
+
+template<typename TFunctionProperties>
+struct FunctionJSONAssembler {
+    template<size_t I>
+    static constexpr array_string<10 + sizeof(std::get<I>(TFunctionProperties::get_input_names()))/sizeof(std::get<I>(TFunctionProperties::get_input_names())[0])>
+    get_input_json() {
+        return const_str_concat(
+            make_const_string("{\"name\":\""),
+            make_const_string(std::get<I>(TFunctionProperties::get_input_names())),
+            make_const_string("\"}")
+        );
+    }
+
+    template<size_t... Is>
+    static constexpr auto get_all_inputs_json(std::index_sequence<Is...>)
+        -> decltype(const_str_join(get_input_json<Is>()...)) {
+        return const_str_join(get_input_json<Is>()...);
+    }
+
+    // @brief Returns a JSON snippet that describes this function
+    static bool get_as_json(char output[256]) {
+        static const constexpr auto json = const_str_concat(
+            make_const_string("{\"name\":\""),
+            make_const_string(TFunctionProperties::get_function_name()),
+            make_const_string("\",\"in\":["),
+            get_all_inputs_json(std::make_index_sequence<TFunctionProperties::NInputs>()),
+            make_const_string("]}")
+        );
+        memcpy(output, json.c_str(), std::min((size_t)256, sizeof(json)));
+        return true;
+    }
+};
+
+template<typename TFun, typename TIn, typename TOut>
+struct StaticFunctionProperties;
+
+template<size_t IFun, size_t... IIn, size_t... IOut>
+struct StaticFunctionProperties<const char [IFun], std::tuple<const char(&)[IIn]...>, std::tuple<const char(&)[IOut]...>> {
+    template<
+        const char (&function_name)[IFun],
+        const std::tuple<const char(&)[IIn]...>& input_names,
+        const std::tuple<const char(&)[IOut]...>& output_names
+    >
+    struct WithStaticNames {
+        using TFun = const char (&)[IFun];
+        static constexpr const size_t NInputs = (sizeof...(IIn));
+        static constexpr const size_t NOutputs = (sizeof...(IOut));
+        static constexpr TFun get_function_name() { return function_name; }
+        static constexpr const std::tuple<const char(&)[IIn]...>& get_input_names() { return input_names; }
+        static constexpr const std::tuple<const char(&)[IOut]...>& get_output_names() { return output_names; }
+    };
+};
+
+/*template<size_t... IIn>
+auto make_function_properties(std::tuple<const char(&)[IIn]...> input_names)
+    -> typename StaticFunctionProperties<IIn...>::WithStaticNames<input_names>
+{
+    return StaticFunctionProperties<IIn>::WithStaticNames<input_names>();
+}*/
+
+struct get_value_functor {
+    template<typename T>
+    decltype(std::declval<T>().get_value()) operator () (T&& t) {
+        return t.get_value();
+    }
+};
+
+template<typename ... TInputsAndOutputs>
+struct FunctionStuff;
+
+/*
+* C++ doesn't seem to allow to pass a function pointer with a generic signature
+* as a template argument. Therefore we need to employ nesting of two templated types.
+*/
+template<typename ... TInputs, typename ... TOutputs, typename TFunctionProperties>
+struct FunctionStuff<std::tuple<TInputs...>, std::tuple<TOutputs...>, TFunctionProperties> {
+    static constexpr const size_t NInputs = (sizeof...(TInputs));
+    static constexpr const size_t NOutputs = (sizeof...(TOutputs));
+    //static_assert(NInputs + NOutputs + 1 == sizeof...(TNames),
+    //              "a type must be provided for the function name and each input and output name");
+    static_assert(NInputs == TFunctionProperties::NInputs);
+    static_assert(NOutputs == TFunctionProperties::NOutputs);
+    using TRet = typename return_type<TOutputs...>::type;
+
+/*        template<TRet(*Function)(TInputs...)>
+        class WithStaticFuncPtr : public LocalEndpoint {
+            void invoke(StreamSource* input, StreamSink* output) final {
+                std::tuple<TInputs...> inputs = Deserializer<std::tuple<TInputs...>>::deserialize(input);
+                std::tuple<TOutputs...> outputs =
+                    static_function_traits<std::tuple<TInputs...>, std::tuple<TOutputs...>>::template invoke<Function>(inputs);
+                Serializer<std::tuple<TOutputs...>>::serialize(outputs, output);
+            }
+
+            // @brief Returns a JSON snippet that describes this function
+            bool get_as_json(char output[256]) final {
+                return WithStaticNames::get_as_json(output);
+            }
+        };*/
+
+    template<bool(*Function)(TInputs..., TOutputs&...)>
+    class WithStaticFuncPtr2 : public LocalEndpoint {
+        using decoder_type = StaticStreamChain<FixedIntDecoder<TInputs, false>...>;
+        void open_connection(IncomingConnectionDecoder& incoming_connection_decoder, StreamSink *output) final {
+            incoming_connection_decoder.set_stream<decoder_type>(FixedIntDecoder<TInputs, false>()...);
+        }
+        void decoder_finished(IncomingConnectionDecoder& incoming_connection_decoder) final {
+            decoder_type* decoder = incoming_connection_decoder.get_stream<decoder_type>();
+            printf("arg decoder finished\n");
+            using tuple_type = std::tuple<FixedIntDecoder<TInputs, false>...>;
+            std::tuple<const TInputs&...> inputs = for_each_in_tuple(get_value_functor(), std::forward<tuple_type>(decoder->get_all_streams()));
+            std::tuple<TOutputs...> outputs;
+            //std::tuple<TOutputs&...> output_refs = std::forward_as_tuple(outputs);
+            std::tuple<TOutputs&...> output_refs(std::get<0>(outputs));
+            std::tuple<const TInputs&..., TOutputs&...> in_and_out = std::tuple_cat(inputs, output_refs);
+            std::apply(Function, in_and_out);
+            printf("first arg is %08x\n", std::get<0>(inputs));
+            //Serializer<std::tuple<TOutputs...>>::serialize(outputs, output);
+        }
+
+        /*void invoke(StreamSource* input, StreamSink* output) final {
+            fprintf(stderr, "about to prep endpoint\n");
+            std::tuple<TInputs...> inputs = Deserializer<std::tuple<TInputs...>>::deserialize(input);
+            std::tuple<TOutputs...> outputs;
+            //std::tuple<TOutputs&...> output_refs = std::forward_as_tuple(outputs);
+            std::tuple<TOutputs&...> output_refs(std::get<0>(outputs));
+            std::tuple<TInputs..., TOutputs&...> in_and_out = std::tuple_cat(inputs, output_refs);
+            fprintf(stderr, "about to invoke endpoint\n");
+            static_function_traits<std::tuple<TInputs..., TOutputs&...>, std::tuple<bool>>::template invoke<Function>(in_and_out);
+            Serializer<std::tuple<TOutputs...>>::serialize(outputs, output);
+        }*/
+
+        uint16_t get_hash() {
+            // TODO: implement
+            return 0;
+        }
+
+        // @brief Returns a JSON snippet that describes this function
+        bool get_as_json(char output[256]) final {
+            return FunctionJSONAssembler<TFunctionProperties>::get_as_json(output);
+        }
+    };
+};
+
+
+
+class InputPipe {
+    // don't allow copy/move (we don't know if it's save to relocate the buffer)
+    InputPipe(const InputPipe&) = delete;
+    InputPipe& operator=(const InputPipe&) = delete;
+
+    // TODO: use Decoder infrastructure to process incoming bytes
+    uint8_t rx_buf_[RX_BUF_SIZE];
+    uint8_t tx_buf_[TX_BUF_SIZE]; // TODO: this does not belong here
+    size_t pos_ = 0;
+    size_t crc_ = CANONICAL_CRC16_INIT;
+    size_t total_length_ = 0;
+    bool total_length_known = false;
+    size_t id_;
+    StreamSink* input_handler = nullptr;
+public:
+    InputPipe(size_t id) : id_(id) {}
+
+    template<typename TDecoder>
+    void construct_decoder() {
+        static_assert(sizeof(TDecoder) <= RX_BUF_SIZE, "TDecoder is too large. Increase the buffer size of this pipe.");
+        input_handler = new (rx_buf_) TDecoder();
+    }
+
+    void process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool close_pipe) {
+        if (offset > pos_) {
+            LOG_FIBRE("disjoint chunk reassembly not implemented");
+            // TODO: implement disjoint chunk reassembly
+            return;
+        }
+        if (offset + length <= pos_) {
+            LOG_FIBRE("duplicate data received");
+            return;
+        }
+        // dump the beginning of the chunk if it's already known
+        if (offset < pos_) {
+            size_t diff = pos_ - offset;
+            crc = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(crc, buffer, diff);
+            buffer += diff;
+            offset += diff;
+            length -= diff;
+        }
+        if (crc != crc_) {
+            LOG_FIBRE("received dangling chunk: expected CRC %04zx but got %04x", crc_, crc);
+            return;
+        }
+        //if (offset + length > RX_BUF_SIZE) {
+        //    LOG_FIBRE("input buffer overrun");
+        //    return;
+        //}
+        //memcpy(rx_buf_ + offset, buffer, length);
+        input_handler->process_bytes(buffer, length, nullptr /* TODO: why? */);
+        pos_ = offset + length;
+        // TODO: acknowledge received bytes
+        if (close_pipe) {
+            close();
+        }
+    }
+    void close() {
+        LOG_FIBRE("close pipe not implemented");
+    }
+    void packet_reset() {
+        pos_ = 0;
+        crc_ = CANONICAL_CRC16_INIT;
+    }
+};
+
+class RemoteNode;
+
+class OutputPipe final : public StreamSink {
+    RemoteNode* remote_node = nullptr;
+    uint8_t buffer_[TX_BUF_SIZE];
+    size_t buffer_pos_;
+    size_t pipe_pos_;
+public:
+    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final;
+
+//    get_bytes() {
+//        
+//    }
+};
+
+
+class RemoteNode {
+public:
+    RemoteNode(Uuid uuid) {}
+    InputPipe* get_input_pipe(size_t id);
+
+    /**
+     * @brief Feeds the specified output with chunks from the specified output
+     * pipe until a timeout occurs while waiting for data from the output.
+     */
+    /*void feed_output(OutputPipe *from_pipe, StreamSink *to_output) {
+        size_t chunk = to_output.get_min_non_blocking_bytes();
+        if (!chunk)
+            return;
+        uint8_t buffer[];
+        write_le(from_pipe->id, from_pipe->offset)
+        to_output.process_bytes();
+        to_output.process_bytes(buffer, )
+        to_output.get_available_bytes();
+        to_output.wait_until_free(per_chunk_overhead + 1); // wait until there is some free space
+        to_output.process_packet();
+    }*/
+private:
+    std::unordered_map<size_t, InputPipe> client_input_pipes_;
+    std::unordered_map<size_t, InputPipe> server_input_pipes_;
+    std::unordered_map<size_t, OutputPipe> client_output_pipes_;
+    std::unordered_map<size_t, OutputPipe> server_output_pipes_;
+    std::vector<PacketSink> output_channels_;
+};
+
+//class InputChannel {
+//public:
+//    // TODO: use Decoder infrastructure to process incoming bytes
+//    int process_packet(RemoteNode& origin, const uint8_t* buffer, size_t length);
+//private:
+//    //InputPipe pipes_[N_PIPES];
+//};
+
+
+void init();
+void publish_function(LocalEndpoint* function);
+RemoteNode* get_remote_node(Uuid& uuid);
+// TODO: use Decoder infrastructure to process incoming bytes
+int process_bytes(RemoteNode* origin, const uint8_t *buffer, size_t length, size_t* processed_bytes);
+int process_packet(RemoteNode* origin, const uint8_t* buffer, size_t length);
+
+} // namespace fibre
 
 #endif
