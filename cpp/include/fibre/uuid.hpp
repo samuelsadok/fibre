@@ -1,3 +1,5 @@
+#ifndef __FIBRE_UUID_HPP
+#define __FIBRE_UUID_HPP
 
 #include "crc.hpp" // for std::hash<fibre::Uuid>
 #include "cpp_utils.hpp"
@@ -25,6 +27,7 @@ public:
 	//Uuid() {
     //    get_random(bytes, 16);
     //}
+    Uuid() : bytes_{0} {}
     Uuid(const data_type& bytes)
         : bytes_(bytes) {}
     Uuid(const uint8_t (&bytes)[16])
@@ -120,3 +123,5 @@ namespace std {
 		}
 	};
 }
+
+#endif // __FIBRE_UUID_HPP

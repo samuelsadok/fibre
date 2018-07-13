@@ -247,7 +247,7 @@ CRC8StreamEncoder<INIT, POLYNOMIAL, TEncoder> make_crc8_encoder(TEncoder&& encod
     return CRC8StreamEncoder<INIT, POLYNOMIAL, TEncoder>(std::forward<TEncoder>(encoder));
 }
 
-template<typename ... TEncoders>
+/*template<typename ... TEncoders>
 class EncoderChain;
 
 template<>
@@ -308,7 +308,7 @@ private:
 template<typename ... TEncoders>
 EncoderChain<TEncoders...> make_encoder_chain(TEncoders&& ... encoders) {
     return EncoderChain<TEncoders...>(std::forward<TEncoders>(encoders)...);
-}
+}*/
 
 }
 

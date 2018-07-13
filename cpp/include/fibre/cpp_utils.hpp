@@ -80,6 +80,9 @@ public:
 
 #include <limits.h>
 #include <tuple>
+#include <functional>
+#include <unordered_map>
+#include <cassert>
 
 /* Backport features from C++14 and C++17 ------------------------------------*/
 
@@ -939,5 +942,34 @@ template<typename TInt, size_t ICount>
 bool hex_string_to_int_arr(const char * str, TInt (&output)[ICount]) {
     return hex_string_to_int_arr(str, hex_digits<TInt>() * ICount, output);
 }
+
+__attribute__((unused))
+static void hexdump(const uint8_t* buf, size_t len) {
+    for (size_t pos = 0; pos < len; ++pos) {
+        printf(" %02x", buf[pos]);
+        if ((((pos + 1) % 16) == 0) || ((pos + 1) == len))
+            printf("\r\n");
+        //osDelay(2);
+    }
+}
+
+template<typename TDereferenceable, typename TResult>
+class simple_iterator : std::iterator<std::random_access_iterator_tag, TResult> {
+    TDereferenceable *container_;
+    size_t i_;
+public:
+    using reference = TResult;
+    explicit simple_iterator(TDereferenceable& container, size_t pos) : container_(&container), i_(pos) {}
+    simple_iterator& operator++() { ++i_; return *this; }
+    simple_iterator operator++(int) { simple_iterator retval = *this; ++(*this); return retval; }
+    bool operator==(simple_iterator other) const { return (container_ == other.container_) && (i_ == other.i_); }
+    bool operator!=(simple_iterator other) const { return !(*this == other); }
+    bool operator<(simple_iterator other) const { return i_ < other.i_; }
+    bool operator>(simple_iterator other) const { return i_ > other.i_; }
+    bool operator<=(simple_iterator other) const { return (*this < other) || (*this == other); }
+    bool operator>=(simple_iterator other) const { return (*this > other) || (*this == other); }
+    TResult operator*() const { return (*container_)[i_]; }
+};
+
 
 #endif // __CPP_UTILS_HPP

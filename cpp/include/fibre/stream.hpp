@@ -8,7 +8,7 @@
 #include <string.h>
 
 // This value must not be larger than USB_TX_DATA_SIZE defined in usbd_cdc_if.h
-constexpr uint16_t TX_BUF_SIZE = 128; // does not work with 64 for some reason TODO: is this still valid?
+constexpr uint16_t TX_BUF_SIZE = 512; // does not work with 64 for some reason TODO: is this still valid?
 
 /*
 * One RX buffer per pipe is created.
@@ -21,20 +21,6 @@ constexpr uint16_t RX_BUF_SIZE = 512;
 
 namespace fibre {
 
-class PacketSink {
-public:
-    // @brief Get the maximum packet length (aka maximum transmission unit)
-    // A packet size shall take no action and return an error code if the
-    // caller attempts to send an oversized packet.
-    //virtual size_t get_mtu() = 0;
-
-    // @brief Processes a packet.
-    // The blocking behavior shall depend on the thread-local deadline_ms variable.
-    // @return: 0 on success, otherwise a non-zero error code
-    // TODO: define what happens when the packet is larger than what the implementation can handle.
-    virtual int process_packet(const uint8_t* buffer, size_t length) = 0;
-};
-
 /**
  * @brief Represents a class that can process a continuous stream of bytes.
  */
@@ -42,8 +28,10 @@ class StreamSink {
 public:
     enum status_t {
         OK,
+        // temporary errors
         BUSY,
         FULL,
+        // permanent stati
         CLOSED,
         ERROR
     };
@@ -111,20 +99,64 @@ public:
     virtual size_t get_min_non_blocking_bytes() const { return 0; };
 };
 
+class PacketSink : public StreamSink {
+public:
+    // @brief Get the maximum packet length (aka maximum transmission unit)
+    // A packet size shall take no action and return an error code if the
+    // caller attempts to send an oversized packet.
+    //virtual size_t get_mtu() = 0;
+
+    // @brief Processes a packet.
+    // The blocking behavior shall depend on the thread-local deadline_ms variable.
+    // @return: 0 on success, otherwise a non-zero error code
+    // TODO: define what happens when the packet is larger than what the implementation can handle.
+    virtual int process_packet(const uint8_t* buffer, size_t length) = 0;
+};
+
 class StreamSource {
 public:
+    typedef enum {
+        OK,
+        // temporary errors
+        BUSY,
+        // permanent stati
+        CLOSED,
+        ERROR
+    } status_t;
+
     // @brief Generate a chunk of bytes that are part of a continuous stream.
     // The blocking behavior shall depend on the thread-local deadline_ms variable.
     // @param generated_bytes: if not NULL, shall be incremented by the number of
     //        bytes that were written to buffer.
     // @return: 0 on success, otherwise a non-zero error code
-    virtual int get_bytes(uint8_t* buffer, size_t length, size_t* generated_bytes) = 0;
+
+    /**
+     * The function returns as soon as min_length bytes are available.
+     * If by the time the function would return there are more bytes available
+     * than min_length, the function returns up to max_length bytes.
+     */
+    virtual status_t get_bytes(uint8_t* buffer, size_t min_length, size_t max_length, size_t* generated_bytes) = 0;
 
     // @brief Returns the number of bytes that can still be written to the stream.
     // Shall return SIZE_MAX if the stream has unlimited lenght.
     // TODO: deprecate
     //virtual size_t get_free_space() = 0;
 };
+
+
+///** @brief Returns true if the given status indicates that the stream is
+// * permanently closed, false otherwise */
+//__attribute__((unused))
+//bool is_permanent(StreamSource::status_t status) {
+//    return (status != OK) && (status != BUSY) && (status != FULL);
+//}
+//
+///** @brief Returns true if the given status indicates that the stream is
+// * permanently closed, false otherwise */
+//__attribute__((unused))
+//bool is_permanent(StreamSink::status_t status) {
+//    return (status != OK) && (status != BUSY);
+//}
 
 //class StreamToPacketSegmenter : public StreamSink {
 //public:
@@ -202,14 +234,16 @@ public:
 
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
         size_t chunk = std::min(length, buffer_length_);
+        //LOG_FIBRE("copy %08zx bytes from %08zx to %08zx\n", length, buffer, buffer_);
         memcpy(buffer_, buffer, chunk);
         buffer_length_ -= chunk;
+        buffer_ += chunk;
         if (processed_bytes)
             *processed_bytes += chunk;
         return buffer_length_ ? OK : CLOSED;
     }
 
-    size_t get_min_non_blocking_bytes() { return buffer_length_; }
+    size_t get_min_non_blocking_bytes() const final { return buffer_length_; }
 
 private:
     uint8_t * buffer_;
@@ -224,14 +258,16 @@ public:
         buffer_(buffer),
         buffer_length_(length) {}
 
-    int get_bytes(uint8_t* buffer, size_t length, size_t* generated_bytes) final {
-        size_t chunk = std::min(length, buffer_length_);
+    status_t get_bytes(uint8_t* buffer, size_t min_length, size_t max_length, size_t* generated_bytes) final {
+        size_t chunk = std::min(max_length, buffer_length_);
+        if (chunk < min_length)
+            return BUSY;
         memcpy(buffer, buffer_, chunk);
         if (generated_bytes)
             *generated_bytes += chunk;
         buffer_ += chunk;
         buffer_length_ -= chunk;
-        return 0;
+        return OK;
     }
 
 private:
@@ -259,7 +295,7 @@ public:
         return skip_ ? OK : CLOSED;
     }
 
-    size_t get_min_non_blocking_bytes() { return skip_; }
+    size_t get_min_non_blocking_bytes() const final { return skip_; }
 
 private:
     size_t skip_;
@@ -326,6 +362,9 @@ public:
         return std::get<I>(decoders_);
     }
 
+    const std::tuple<TStreams...>& get_all_streams() const {
+        return decoders_;
+    }
     std::tuple<TStreams...>& get_all_streams() {
         return decoders_;
     }
@@ -407,9 +446,15 @@ protected:
 
     template<typename TDecoder>
     TDecoder* get_stream() {
-        if (!current_stream_)
-            return nullptr;
-        return static_cast<TDecoder*>(current_stream_);
+        return current_stream_ ?
+               static_cast<TDecoder*>(current_stream_) :
+               nullptr;
+    }
+    template<typename TDecoder>
+    const TDecoder* get_stream() const {
+        return current_stream_ ?
+               static_cast<TDecoder*>(current_stream_) :
+               nullptr;
     }
 
 private:

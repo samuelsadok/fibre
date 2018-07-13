@@ -86,13 +86,17 @@ class ChannelBrokenException(Exception):
 
 class StreamSource(ABC):
     @abc.abstractmethod
-    def get_bytes(self, n_bytes, deadline):
+    def get_bytes(self, n_min, n_max, timeout=None, cancellation_token=None):
         pass
 
 class StreamSink(ABC):
     @abc.abstractmethod
-    def process_bytes(self, bytes):
+    def process_bytes(self, buffer, timeout=None, cancellation_token=None):
         pass
+    def get_min_useful_bytes(self):
+        return 1
+    def get_min_non_blocking_bytes(self):
+        return 0
 
 class PacketSource(ABC):
     @abc.abstractmethod
@@ -209,106 +213,113 @@ class PacketFromStreamConverter(PacketSource):
             return packet[:-2]
 
 
-class Channel():
-    # Choose these parameters to be sensible for a specific transport layer
-    _resend_timeout = 5.0     # [s]
-    _send_attempts = 5
-    _pipe_count = 20
+class OutputChannel(StreamSink):
+    pass
+    #@abc.abstractmethod
+    #def get_properties(self, parameter_list):
+    #    pass
 
-    class Pipe():
-        def __init__(self, data_available_event, pool):
-            self.available_bytes = 0
-            self._buffer = bytes()
-            self._active = False
-            self._data_available_event = data_available_event
-            self._lock = threading.Lock()
-            self._pool = pool
-        def __enter__(self):
-            self._active = True
-            return self
-        def __exit__(self, exception_type, exception_value, traceback):
-            with self._lock:
-                self._active = False
-                if not self._buffer: # put pipe back into the pool if fully flushed
-                    self._pool.put(self)
-        def send_bytes(self, buffer):
-            with self._lock:
-                self._buffer += buffer
-                self.available_bytes = len(self._buffer)
-                self._data_available_event.set()
-        def send_packet_break(self):
-            pass # TODO
-        def _get_bytes(self, count):
-            with self._lock:
-                result = self._buffer[:count]
-                self._buffer = self._buffer[count:]
-                self.available_bytes = len(self._buffer)
-                if not self._active: # put pipe back into the pool if no longer in use
-                    self._pool.put(self)
-            return result
-
-    def __init__(self, name, input, output, cancellation_token, logger):
-        """
-        Params:
-        input: A PacketSource where this channel will source packets from on
-               demand. Alternatively packets can be provided to this channel
-               directly by calling process_packet on this instance.
-        output: A PacketSink where this channel will put outgoing packets.
-        """
-        self._name = name
-        self._input = input
-        self._output = output
-        self._logger = logger
-        self._outbound_seq_no = 0
-        self._interface_definition_crc = 0
-        self._expected_acks = {}
-        self._responses = {}
-        self._my_lock = threading.Lock()
-        self._pipes_not_empty_event = EventWaitHandle(auto_reset=True)
-        self._channel_broken = EventWaitHandle(cancellation_token)
-        self.start_receiver_thread(self._channel_broken)
-        self.start_sender_thread(self._channel_broken)
-
-        self._pipes = []
-        self._pipe_pool = Queue()
-        # TODO: pipe_count should depend on the counterparty's capabilities
-        for i in range(self._pipe_count):
-            pipe = Channel.Pipe(self._pipes_not_empty_event, self._pipe_pool)
-            self._pipes.append(pipe)
-            self._pipe_pool.put(pipe)
-
-    def start_receiver_thread(self, cancellation_token):
-        """
-        Starts the receiver thread that processes incoming messages.
-        The thread quits as soon as the channel enters a broken state.
-        """
-        def receiver_thread():
-            error_ctr = 0
-            try:
-                while not cancellation_token.is_set():
-                    if error_ctr >= 10:
-                        raise ChannelBrokenException("too many consecutive receive errors")
-                    # Set an arbitrary deadline because the get_packet function
-                    # currently doesn't support a cancellation_token
-                    deadline = time.monotonic() + 1.0
-                    try:
-                        response = self._input.get_packet(deadline)
-                    except TimeoutError:
-                        continue # try again
-                    except ChannelDamagedException:
-                        error_ctr += 1
-                        continue # try again
-                    if (error_ctr > 0):
-                        error_ctr -= 1
-                    # Process response
-                    # This should not throw an exception, otherwise the channel breaks
-                    self.process_packet(response)
-                #print("receiver thread is exiting")
-            except Exception:
-                self._logger.debug("receiver thread is exiting: " + traceback.format_exc())
-            finally:
-                self._channel_broken.set("recv thread died")
-        threading.Thread(name='fibre-receiver:'+self._name, target=receiver_thread).start()
+#class OutputChannel():
+#    # Choose these parameters to be sensible for a specific transport layer
+#    _resend_timeout = 5.0     # [s]
+#    _send_attempts = 5
+#    _pipe_count = 20
+#
+#
+#    class Pipe():
+#        def __init__(self, data_available_event, pool):
+#            self.available_bytes = 0
+#            self._buffer = bytes()
+#            self._active = False
+#            self._data_available_event = data_available_event
+#            self._lock = threading.Lock()
+#            self._pool = pool
+#        def __enter__(self):
+#            self._active = True
+#            return self
+#        def __exit__(self, exception_type, exception_value, traceback):
+#            with self._lock:
+#                self._active = False
+#                if not self._buffer: # put pipe back into the pool if fully flushed
+#                    self._pool.put(self)
+#        def send_bytes(self, buffer):
+#            with self._lock:
+#                self._buffer += buffer
+#                self.available_bytes = len(self._buffer)
+#                self._data_available_event.set()
+#        def send_packet_break(self):
+#            pass # TODO
+#        def _get_bytes(self, count):
+#            with self._lock:
+#                result = self._buffer[:count]
+#                self._buffer = self._buffer[count:]
+#                self.available_bytes = len(self._buffer)
+#                if not self._active: # put pipe back into the pool if no longer in use
+#                    self._pool.put(self)
+#            return result
+#
+#    def __init__(self, name, input, output, cancellation_token, logger):
+#        """
+#        Params:
+#        input: A PacketSource where this channel will source packets from on
+#               demand. Alternatively packets can be provided to this channel
+#               directly by calling process_packet on this instance.
+#        output: A PacketSink where this channel will put outgoing packets.
+#        """
+#        self._name = name
+#        self._input = input
+#        self._output = output
+#        self._logger = logger
+#        self._outbound_seq_no = 0
+#        self._interface_definition_crc = 0
+#        self._expected_acks = {}
+#        self._responses = {}
+#        self._my_lock = threading.Lock()
+#        self._pipes_not_empty_event = EventWaitHandle(auto_reset=True)
+#        self._channel_broken = EventWaitHandle(cancellation_token)
+#        self.start_receiver_thread(self._channel_broken)
+#        #self.start_sender_thread(self._channel_broken)
+#
+#        self._pipes = []
+#        self._pipe_pool = Queue()
+#        # TODO: pipe_count should depend on the counterparty's capabilities
+#        for i in range(self._pipe_count):
+#            pipe = Channel.Pipe(self._pipes_not_empty_event, self._pipe_pool)
+#            self._pipes.append(pipe)
+#            self._pipe_pool.put(pipe)
+#
+#    def start_receiver_thread(self, cancellation_token):
+#        """
+#        Starts the receiver thread that processes incoming messages.
+#        The thread quits as soon as the channel enters a broken state.
+#        """
+#        def receiver_thread():
+#            error_ctr = 0
+#            try:
+#                while not cancellation_token.is_set():
+#                    if error_ctr >= 10:
+#                        raise ChannelBrokenException("too many consecutive receive errors")
+#                    # Set an arbitrary deadline because the get_packet function
+#                    # currently doesn't support a cancellation_token
+#                    deadline = time.monotonic() + 1.0
+#                    try:
+#                        response = self._input.get_packet(deadline)
+#                    except TimeoutError:
+#                        continue # try again
+#                    except ChannelDamagedException:
+#                        error_ctr += 1
+#                        continue # try again
+#                    if (error_ctr > 0):
+#                        error_ctr -= 1
+#                    # Process response
+#                    # This should not throw an exception, otherwise the channel breaks
+#                    self.process_packet(response)
+#                #print("receiver thread is exiting")
+#            except Exception:
+#                self._logger.debug("receiver thread is exiting: " + traceback.format_exc())
+#            finally:
+#                self._channel_broken.set("recv thread died")
+#        threading.Thread(name='fibre-receiver:'+self._name, target=receiver_thread).start()
     
 #    def start_sender_thread(self, cancellation_token):
 #        def sender_thread():

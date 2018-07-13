@@ -56,7 +56,8 @@
         "codecvt": "cpp",
         "iomanip": "cpp",
         "typeindex": "cpp",
-        "variant": "cpp"
+        "variant": "cpp",
+        "complex": "cpp"
     },
     "C_Cpp.default.cppStandard": "c++11"
 }

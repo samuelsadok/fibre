@@ -66,10 +66,12 @@ def find_all(path, serial_number,
         try:
             logger.debug("Connecting to device on " + channel._name)
 
-            ep = fibre.remote_object.RemoteEndpoint(channel, 0, 0)
-            get_function_json = fibre.remote_object.RemoteFunction(["number"], ["json"])
-            get_function_json._endpoints.append(ep)
-            json_string = get_function_json(0)
+            uuid = bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+            node = fibre.remote_object.RemoteNode(uuid, 5)
+            node.add_output_channel(channel)
+            with node:
+                get_function_json = fibre.remote_object.RemoteFunction(node, 0, 0, ["number"], ["json"])
+                json_string = get_function_json(5)
             
             try:
                 json_bytes = channel.remote_endpoint_read_buffer(0)
@@ -109,6 +111,7 @@ def find_all(path, serial_number,
         prefix = search_spec.split(':')[0]
         the_rest = ':'.join(search_spec.split(':')[1:])
         if prefix in channel_types:
+            logger.debug("start discovery on {}".format(prefix))
             threading.Thread(target=channel_types[prefix],
                              args=(the_rest, serial_number, did_discover_channel, search_cancellation_token, channel_termination_token, logger)).start()
         else:

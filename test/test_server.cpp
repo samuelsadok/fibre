@@ -63,7 +63,17 @@ uint32_t test_func_b(uint32_t arg) {
     return 8;
 }
 
+
+void test_wait_handle() {
+    fibre::AutoResetEvent evt;
+    evt.set();
+    LOG_FIBRE("waiting...");
+    evt.wait();
+    LOG_FIBRE("done");
+}
+
 int main() {
+    test_wait_handle();
     fibre::init();
     //auto a = fibre::FunctionStuff<std::tuple<uint32_t, uint32_t>, std::tuple<>, std::tuple<const char (&)[12], const char (&)[5], const char (&)[5]>>
     //    ::WithStaticNames<names_a>
@@ -83,27 +93,38 @@ int main() {
     uint8_t in_buf[] = {
         0x00, 0x00, // pipe-no
         0x00, 0x00, // offset
-        ((CANONICAL_CRC16_INIT >> 8) & 0xff), ((CANONICAL_CRC16_INIT >> 0) & 0xff), // crc
-        0x00, 0x10, // length * 2 | close_pipe
+        ((CANONICAL_CRC16_INIT >> 0) & 0xff), ((CANONICAL_CRC16_INIT >> 8) & 0xff), // crc
+        0x10, 0x00, // length * 2 | close_pipe
         0x00, 0x00, // endpoint id
         0x00, 0x00, // endpoint hash
-        0x56, 0x78, 0xab, 0xcd, // payload
+        0x00, 0x00, 0x00, 0x00, // payload
         0x01, 0x02, 0x03, 0x04, // payload
         0x01, 0x00 // trailer
     };
     uint8_t out_buf[512];
-    fibre::MemoryStreamSink output(out_buf, sizeof(out_buf));
-    fibre::StreamBasedPacketSink packet_output(output);
+    //fibre::MemoryStreamSink output(out_buf, sizeof(out_buf));
+    //fibre::StreamBasedPacketSink packet_output(output);
     //fibre::InputChannel<5> input_channel;
+    
     fibre::Uuid pseudo_remote_node_uuid = fibre::Uuid::from_string("d0dbe1f9-cba4-4a40-89f9-2f76da898746");
     fibre::RemoteNode* remote_node = fibre::get_remote_node(pseudo_remote_node_uuid);
-    fibre::process_packet(remote_node, in_buf, sizeof(in_buf));
+
+    fibre::MemoryStreamSink output_stream(out_buf, sizeof(out_buf));
+    fibre::OutputChannelFromStream output_channel(&output_stream);
+    remote_node->add_output_channel(&output_channel);
+
+    fibre::InputChannelDecoder input_decoder(remote_node);
+    input_decoder.process_bytes(in_buf, sizeof(in_buf), nullptr);
+
+    usleep(1000000 / 5);
+    hexdump(out_buf, sizeof(out_buf));
+    
 
     //using ref_type = FibreRefType<TestClass>;
     //auto asd = fibre::global_instance_of<ref_type>();
 
     // Expose Fibre objects on TCP and UDP
-    //std::thread server_thread_tcp(serve_on_tcp, 9910);
+    std::thread server_thread_tcp(fibre::serve_on_tcp, 9910);
     //std::thread server_thread_udp(serve_on_udp, 9910);
     printf("Fibre server started.\n");
 

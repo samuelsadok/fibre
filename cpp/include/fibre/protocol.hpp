@@ -10,11 +10,13 @@ see protocol.md for the protocol specification
 #endif
 
 // TODO: resolve assert
-#define assert(expr)
+//#define assert(expr)
 
 #include <functional>
 #include <limits>
 #include <vector>
+#include <optional>
+#include <algorithm>
 //#include <stdint.h>
 #include <string.h>
 #include <unordered_map>
@@ -735,44 +737,13 @@ extern JSONDescriptorEndpoint json_file_endpoint_;
 extern EndpointProvider* application_endpoints_;
 
 namespace fibre {
-extern std::vector<fibre::FibreRefType*> ref_types_;
-
-// @brief Registers the specified application object list using the provided endpoint table.
-// This function should only be called once during the lifetime of the application. TODO: fix this.
-// @param application_objects The application objects to be registred.
-template<typename T>
-int publish_object(T& application_objects) {
-//    static constexpr size_t endpoint_list_size = 1 + T::endpoint_count;
-//    static Endpoint* endpoint_list[endpoint_list_size];
-//    static auto endpoint_provider = EndpointProvider_from_MemberList<T>(application_objects);
-    using ref_type = ::FibreRefType<T>;
-    ref_type& asd = fibre::global_instance_of<ref_type>();
-    //ref_types_.push_back(fibre::global_instance_of<ref_type>());
-    //fibre::FibreRefType& aaa = asd;
-    ref_types_.push_back(&asd);
-/*    json_file_endpoint_.register_endpoints(endpoint_list, 0, endpoint_list_size);
-    application_objects.register_endpoints(endpoint_list, 1, endpoint_list_size);
-
-    // Update the global endpoint table
-    endpoint_list_ = endpoint_list;
-    n_endpoints_ = endpoint_list_size;
-    application_endpoints_ = &endpoint_provider;
-    
-    // Calculate the CRC16 of the JSON file.
-    // The init value is the protocol version.
-    CRC16Calculator crc16_calculator(PROTOCOL_VERSION);
-    uint8_t offset[4] = { 0 };
-    json_file_endpoint_.handle(offset, sizeof(offset), &crc16_calculator);
-    json_crc_ = crc16_calculator.get_crc16();
-*/
-    return 0;
-}
 
 class LocalEndpoint;
+class OutputPipe;
 
-class IncomingConnectionDecoder : public DynamicStreamChain<RX_BUF_SIZE - 44> {
+class IncomingConnectionDecoder : public DynamicStreamChain<RX_BUF_SIZE - 52> {
 public:
-    IncomingConnectionDecoder() {
+    IncomingConnectionDecoder(OutputPipe& output_pipe) : output_pipe_(&output_pipe) {
         set_stream<HeaderDecoderChain>(FixedIntDecoder<uint16_t, false>(), FixedIntDecoder<uint16_t, false>());
     }
     template<typename TDecoder, typename ... TArgs>
@@ -786,12 +757,17 @@ public:
     TDecoder* get_stream() {
         return DynamicStreamChain::get_stream<TDecoder>();
     }
+    template<typename TDecoder>
+    const TDecoder* get_stream() const {
+        return DynamicStreamChain::get_stream<TDecoder>();
+    }
 private:
     enum {
         RECEIVING_HEADER,
         RECEIVING_PAYLOAD
     } state_ = RECEIVING_HEADER;
     LocalEndpoint* endpoint_ = nullptr;
+    OutputPipe* output_pipe_ = nullptr;
 
     using HeaderDecoderChain = StaticStreamChain<
                 FixedIntDecoder<uint16_t, false>,
@@ -804,15 +780,12 @@ private:
 class LocalEndpoint {
 public:
     //virtual void invoke(StreamSource* input, StreamSink* output) = 0;
-    virtual void open_connection(IncomingConnectionDecoder& input, StreamSink* output) = 0;
-    virtual void decoder_finished(IncomingConnectionDecoder& input) = 0;
+    virtual void open_connection(IncomingConnectionDecoder& input) = 0;
+    virtual void decoder_finished(const IncomingConnectionDecoder& input, OutputPipe* output) = 0;
     virtual uint16_t get_hash() = 0;
     virtual bool get_as_json(char output[256] /* TODO: use a stream as output instead */) = 0;
 };
 
-
-
-extern std::vector<fibre::LocalEndpoint*> functions_;
 
 /*
 template<typename T>
@@ -828,7 +801,7 @@ std::tuple<Ts...> deserialize<std::tuple<Ts...>>(StreamSource& input) {
     return std::make_tuple<Ts...>(deserialize<Ts>(input)...);
 }*/
 
-
+/*
 template<typename T>
 struct Deserializer;
 
@@ -846,7 +819,7 @@ struct Deserializer<std::tuple<Ts...>> {
     static std::tuple<Ts...> deserialize(StreamSource* input) {
         return std::make_tuple<Ts...>(Deserializer<Ts>::deserialize(input)...);
     }
-};
+};*/
 
 
 template<typename T>
@@ -866,7 +839,14 @@ struct Serializer<char[I]> {
     static void serialize(char (&value)[I], StreamSink* output) {
         uint32_t i = I;
         Serializer<uint32_t>::serialize(i, output);
-        output->process_bytes(reinterpret_cast<uint8_t*>(value), I, nullptr);
+        LOG_FIBRE("will write string len %zu", I);
+        size_t processed_bytes = 0;
+        StreamSink::status_t status = output->process_bytes(reinterpret_cast<uint8_t*>(value), I, &processed_bytes);
+        if (processed_bytes != I) {
+            LOG_FIBRE("not everything processed: %zu", processed_bytes);
+        }
+        LOG_FIBRE("status %d", status);
+        hexdump(reinterpret_cast<uint8_t*>(value), I);
     }
 };
 
@@ -1040,21 +1020,22 @@ struct FunctionStuff<std::tuple<TInputs...>, std::tuple<TOutputs...>, TFunctionP
     template<bool(*Function)(TInputs..., TOutputs&...)>
     class WithStaticFuncPtr2 : public LocalEndpoint {
         using decoder_type = StaticStreamChain<FixedIntDecoder<TInputs, false>...>;
-        void open_connection(IncomingConnectionDecoder& incoming_connection_decoder, StreamSink *output) final {
+        void open_connection(IncomingConnectionDecoder& incoming_connection_decoder) final {
             incoming_connection_decoder.set_stream<decoder_type>(FixedIntDecoder<TInputs, false>()...);
         }
-        void decoder_finished(IncomingConnectionDecoder& incoming_connection_decoder) final {
-            decoder_type* decoder = incoming_connection_decoder.get_stream<decoder_type>();
+        void decoder_finished(const IncomingConnectionDecoder& incoming_connection_decoder, OutputPipe* output) final {
+            const decoder_type* decoder = incoming_connection_decoder.get_stream<decoder_type>();
             printf("arg decoder finished\n");
             using tuple_type = std::tuple<FixedIntDecoder<TInputs, false>...>;
-            std::tuple<const TInputs&...> inputs = for_each_in_tuple(get_value_functor(), std::forward<tuple_type>(decoder->get_all_streams()));
+            std::tuple<const TInputs&...> inputs = for_each_in_tuple(get_value_functor(), std::forward<const tuple_type>(decoder->get_all_streams()));
             std::tuple<TOutputs...> outputs;
             //std::tuple<TOutputs&...> output_refs = std::forward_as_tuple(outputs);
             std::tuple<TOutputs&...> output_refs(std::get<0>(outputs));
             std::tuple<const TInputs&..., TOutputs&...> in_and_out = std::tuple_cat(inputs, output_refs);
             std::apply(Function, in_and_out);
             printf("first arg is %08x\n", std::get<0>(inputs));
-            //Serializer<std::tuple<TOutputs...>>::serialize(outputs, output);
+            LOG_FIBRE("will write output of type %s", typeid(TOutputs).name()...);
+            Serializer<std::tuple<TOutputs...>>::serialize(outputs, output);
         }
 
         /*void invoke(StreamSource* input, StreamSink* output) final {
@@ -1096,14 +1077,14 @@ class InputPipe {
     size_t total_length_ = 0;
     bool total_length_known = false;
     size_t id_;
-    StreamSink* input_handler = nullptr;
+    StreamSink* input_handler = nullptr; // TODO: destructor
 public:
     InputPipe(size_t id) : id_(id) {}
 
-    template<typename TDecoder>
-    void construct_decoder() {
+    template<typename TDecoder, typename ... TArgs>
+    void construct_decoder(TArgs&& ... args) {
         static_assert(sizeof(TDecoder) <= RX_BUF_SIZE, "TDecoder is too large. Increase the buffer size of this pipe.");
-        input_handler = new (rx_buf_) TDecoder();
+        input_handler = new (rx_buf_) TDecoder(std::forward<TArgs>(args)...);
     }
 
     void process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool close_pipe) {
@@ -1151,47 +1132,209 @@ public:
 
 class RemoteNode;
 
+/**
+ * @brief Represents a pipe into which the local node can pump data to send it
+ * to the corresponding remote node's input pipe.
+ * 
+ * An output pipe optionally keep track of the chunks of data that were not yet
+ * acknowledged.
+ */
 class OutputPipe final : public StreamSink {
-    RemoteNode* remote_node = nullptr;
+    /*
+    * For now we say that the probability of successful delivery is monotonically
+    * decreasing with increasing stream offset.
+    * This means if a chunk is acknowledged before all of its preceeding bytes
+    * are acknogledged, we simply ignore this.
+    */
+
+    RemoteNode* remote_node_;
     uint8_t buffer_[TX_BUF_SIZE];
-    size_t buffer_pos_;
-    size_t pipe_pos_;
+    size_t buffer_pos_ = 0; /** write position relative to the buffer start */
+    size_t pipe_pos_ = 0; /** position of the beginning of the buffer within the byte stream */
+    uint16_t crc_init_ = CANONICAL_CRC16_INIT;
+    monotonic_time_t next_due_time_ = monotonic_time_t::min();
+    size_t id_;
 public:
+    bool guaranteed_delivery = false;
+
+    OutputPipe(RemoteNode* remote_node, size_t id) :
+        remote_node_(remote_node),
+        id_(id) { }
+
+    size_t get_id() const { return id_; }
+
+    class chunk_t {
+    public:
+        chunk_t(OutputPipe *pipe) : pipe_(pipe) {}
+        bool get_properties(size_t* offset, size_t* length, uint16_t* crc_init) {
+            if (offset) *offset = pipe_ ? pipe_->pipe_pos_ : 0;
+            if (length) *length = pipe_ ? pipe_->buffer_pos_ : 0;
+            if (crc_init) *crc_init = pipe_ ? pipe_->crc_init_ : 0;
+            return true;
+        }
+        bool write_to(StreamSink* output, size_t length) {
+            if (length > pipe_->buffer_pos_)
+                return false;
+            size_t processed_bytes = 0;
+            status_t status = output->process_bytes(pipe_->buffer_, pipe_->buffer_pos_, &processed_bytes);
+            if (processed_bytes != length)
+                return false;
+            return status != ERROR;
+        }
+    private:
+        OutputPipe *pipe_;
+    };
+
+    class chunk_list {
+    public:
+        chunk_list(OutputPipe* pipe) : pipe_(pipe) {}
+        //chunk_t operator[] (size_t index);
+        chunk_t operator[] (size_t index) {
+            if (!pipe_) {
+                return { 0 }; // TODO: empty iterator
+            } else if (index == 0) {
+                return chunk_t(pipe_);
+            } else {
+                return { 0 };
+            }
+        }
+
+        using iterator = simple_iterator<chunk_list, chunk_t>;
+        iterator begin() { return iterator(*this, 0); }
+        iterator end() { return iterator(*this, pipe_->buffer_pos_ ? 1 : 0); }
+    private:
+        OutputPipe *pipe_;
+    };
+
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final;
 
-//    get_bytes() {
-//        
-//    }
+    //size_t get_n_due_bytes
+    void get_available_non_blocking_bytes(size_t* offset, size_t* length, uint16_t* crc) {
+        
+    }
+
+    chunk_list get_pending_chunks() {
+        return chunk_list(this);
+    }
+
+    void drop_chunk(size_t offset, size_t length) {
+        if (offset > pipe_pos_) {
+            LOG_FIBRE("attempt to drop chunk at 0x%08zx but there's pending data before that at 0x%08zx", offset, pipe_pos_);
+            return;
+        }
+        if (offset + length <= pipe_pos_) {
+            LOG_FIBRE("already acknowledged");
+            return;
+        }
+        if (offset < pipe_pos_) {
+            offset += (pipe_pos_ - offset);
+            length -= (pipe_pos_ - offset);
+        }
+        if (length > buffer_pos_) {
+            LOG_FIBRE("ackowledged bytes that werent even available");
+            return;
+        }
+
+        // shift buffer
+        crc_init_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(crc_init_, buffer_, length);
+        memmove(buffer_, buffer_ + length, buffer_pos_ - length);
+        pipe_pos_ += length;
+        buffer_pos_ = 0;
+    }
+
+    monotonic_time_t get_due_time() {
+        return next_due_time_;
+    }
+    void set_due_time(size_t offset, size_t length, monotonic_time_t next_due_time) {
+        // TODO: set due time for specific chunks
+        next_due_time_ = next_due_time;
+    }
+};
+
+/*namespace std {
+    template<>
+    void begin)=
+}*/
+
+/*OutputPipe::chunk_t OutputPipe::chunk_iterator::operator[] (size_t index) {
+    if (index == 0) {
+        return {
+            .offset = pipe_->pipe_pos_,
+            .crc = pipe_->crc_,
+            .ptr = pipe_->buffer_,
+            .length = pipe_->buffer_pos_,
+        };
+    } else {
+        return { 0 };
+    }
+};*/
+
+class OutputChannel : public StreamSink {
+public:
+    std::chrono::duration<uint32_t, std::milli> resend_interval = std::chrono::milliseconds(100);
+    //StreamSink operator & () { return }
+    //virtual StreamSink* get_stream_sink() = 0;
+};
+
+
+//template<typename TStream>
+class OutputChannelFromStream : public OutputChannel {
+    StreamSink* output_stream_;
+public:
+    OutputChannelFromStream(StreamSink* stream) : output_stream_(stream) {}
+    //operator TStream&() const { return output_stream_; }
+    //StreamSink* get_stream_sink() { return output_stream_; }
+    //const StreamSink* get_stream_sink() const { return output_stream_; }
+    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+        return output_stream_->process_bytes(buffer, length, processed_bytes);
+    }
+    size_t get_min_useful_bytes() const final {
+        return output_stream_->get_min_useful_bytes();
+    }
+    size_t get_min_non_blocking_bytes() const final {
+        return output_stream_->get_min_non_blocking_bytes();
+    }
 };
 
 
 class RemoteNode {
 public:
-    RemoteNode(Uuid uuid) {}
-    InputPipe* get_input_pipe(size_t id);
+    RemoteNode(Uuid uuid) : uuid_(uuid) {}
+    InputPipe* get_input_pipe(size_t id, bool* is_new);
+    OutputPipe* get_output_pipe(size_t id);
 
-    /**
-     * @brief Feeds the specified output with chunks from the specified output
-     * pipe until a timeout occurs while waiting for data from the output.
-     */
-    /*void feed_output(OutputPipe *from_pipe, StreamSink *to_output) {
-        size_t chunk = to_output.get_min_non_blocking_bytes();
-        if (!chunk)
-            return;
-        uint8_t buffer[];
-        write_le(from_pipe->id, from_pipe->offset)
-        to_output.process_bytes();
-        to_output.process_bytes(buffer, )
-        to_output.get_available_bytes();
-        to_output.wait_until_free(per_chunk_overhead + 1); // wait until there is some free space
-        to_output.process_packet();
-    }*/
+    void schedule();
+
+    void notify_output_pipe_ready();
+
+    void notify_output_channel_ready();
+
+    void add_output_channel(OutputChannel* channel) {
+        output_channels_.push_back(channel);
+    }
+    void remove_output_channel(OutputChannel* channel) {
+        output_channels_.erase(std::remove(output_channels_.begin(), output_channels_.end(), channel), output_channels_.end());
+    }
 private:
     std::unordered_map<size_t, InputPipe> client_input_pipes_;
     std::unordered_map<size_t, InputPipe> server_input_pipes_;
     std::unordered_map<size_t, OutputPipe> client_output_pipes_;
     std::unordered_map<size_t, OutputPipe> server_output_pipes_;
-    std::vector<PacketSink> output_channels_;
+    std::vector<OutputChannel*> output_channels_;
+    Uuid uuid_;
+
+#if CONFIG_SCHEDULER_MODE == SCHEDULER_MODE_PER_NODE_THREAD
+    AutoResetEvent output_pipe_ready_;
+    AutoResetEvent output_channel_ready_;
+    
+    void scheduler_loop() {
+        for (;;) {
+            output_pipes_ready_.wait();
+            output_channels_ready_.wait();
+            schedule();
+        }
+    }
+#endif
 };
 
 //class InputChannel {
@@ -1203,12 +1346,150 @@ private:
 //};
 
 
+class InputChannelDecoder : public StreamSink {
+public:
+    InputChannelDecoder(RemoteNode* remote_node) :
+        remote_node_(remote_node),
+        header_decoder_(make_header_decoder())
+        {}
+    
+    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+        while (length) {
+            size_t chunk = 0;
+            if (in_header) {
+                status_t status = header_decoder_.process_bytes(buffer, length, &chunk);
+
+                buffer += chunk;
+                length -= chunk;
+                if (processed_bytes)
+                    *processed_bytes += chunk;
+
+                // finished receiving chunk header
+                if (status == CLOSED) {
+                    LOG_FIBRE("received chunk header: pipe %04x, offset %04x, length %04x, crc %04x", get_pipe_no(), get_chunk_offset(), get_chunk_length(), get_chunk_crc());
+                    in_header = false;
+                    bool is_new = false;
+                    uint16_t pipe_no = get_pipe_no();
+                    input_pipe_ = remote_node_->get_input_pipe(pipe_no, &is_new);
+                    if (!input_pipe_) {
+                        LOG_FIBRE("no pipe %d associated with this source", pipe_no);
+                        //reset();
+                        continue;
+                    }
+                    if (is_new) {
+                        OutputPipe* output_pipe = remote_node_->get_output_pipe(pipe_no & 0x8000);
+                        input_pipe_->construct_decoder<IncomingConnectionDecoder>(*output_pipe);
+                    }
+                }
+            } else {
+                uint16_t& chunk_offset = get_chunk_offset();
+                uint16_t& chunk_length = get_chunk_length();
+                uint16_t& chunk_crc = get_chunk_crc();
+
+                size_t actual_length = std::min(static_cast<size_t>(chunk_length), length);
+                if (input_pipe_)
+                    input_pipe_->process_chunk(buffer, get_chunk_offset(), actual_length, get_chunk_crc(), false);
+                //status_t status = input_pipe_.process_bytes(buffer, std::min(length, remaining_payload_bytes_), &chunk);
+
+                chunk_crc = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(chunk_crc, buffer, actual_length);
+                buffer += actual_length;
+                length -= actual_length;
+                chunk_offset += actual_length;
+                chunk_length -= actual_length;
+
+                if (processed_bytes)
+                    *processed_bytes += actual_length;
+
+                if (!chunk_length) {
+                    reset();
+                }
+            }
+        }
+        return OK;
+    }
+private:
+    using HeaderDecoder = StaticStreamChain<
+            FixedIntDecoder<uint16_t, false>,
+            FixedIntDecoder<uint16_t, false>,
+            FixedIntDecoder<uint16_t, false>,
+            FixedIntDecoder<uint16_t, false>>;
+    RemoteNode* remote_node_;
+    InputPipe* input_pipe_;
+    HeaderDecoder header_decoder_;
+    bool in_header = true;
+
+    static HeaderDecoder make_header_decoder() {
+        return HeaderDecoder(
+                FixedIntDecoder<uint16_t, false>(),
+                FixedIntDecoder<uint16_t, false>(),
+                FixedIntDecoder<uint16_t, false>(),
+                FixedIntDecoder<uint16_t, false>()
+        );
+    }
+
+    uint16_t& get_pipe_no() {
+        return header_decoder_.get_stream<0>().get_value();
+    }
+    uint16_t& get_chunk_offset() {
+        return header_decoder_.get_stream<1>().get_value();
+    }
+    uint16_t& get_chunk_crc() {
+        return header_decoder_.get_stream<2>().get_value();
+    }
+    uint16_t& get_chunk_length() {
+        return header_decoder_.get_stream<3>().get_value();
+    }
+
+    void reset() {
+        input_pipe_ = nullptr;
+        header_decoder_ = make_header_decoder();
+        in_header = true;
+    }
+};
+
+
 void init();
 void publish_function(LocalEndpoint* function);
-RemoteNode* get_remote_node(Uuid& uuid);
+void publish_ref_type(FibreRefType* type);
+RemoteNode* get_remote_node(Uuid uuid);
 // TODO: use Decoder infrastructure to process incoming bytes
-int process_bytes(RemoteNode* origin, const uint8_t *buffer, size_t length, size_t* processed_bytes);
-int process_packet(RemoteNode* origin, const uint8_t* buffer, size_t length);
+//bool process_bytes(RemoteNode* origin, const uint8_t *buffer, size_t length);
+//bool process_packet(RemoteNode* origin, const uint8_t* buffer, size_t length);
+
+
+
+
+// @brief Registers the specified application object list using the provided endpoint table.
+// This function should only be called once during the lifetime of the application. TODO: fix this.
+// @param application_objects The application objects to be registred.
+template<typename T>
+int publish_object(T& application_objects) {
+//    static constexpr size_t endpoint_list_size = 1 + T::endpoint_count;
+//    static Endpoint* endpoint_list[endpoint_list_size];
+//    static auto endpoint_provider = EndpointProvider_from_MemberList<T>(application_objects);
+    using ref_type = ::FibreRefType<T>;
+    ref_type& asd = fibre::global_instance_of<ref_type>();
+    //ref_types_.push_back(fibre::global_instance_of<ref_type>());
+    //fibre::FibreRefType& aaa = asd;
+    publish_ref_type(&asd);
+/*    json_file_endpoint_.register_endpoints(endpoint_list, 0, endpoint_list_size);
+    application_objects.register_endpoints(endpoint_list, 1, endpoint_list_size);
+
+    // Update the global endpoint table
+    endpoint_list_ = endpoint_list;
+    n_endpoints_ = endpoint_list_size;
+    application_endpoints_ = &endpoint_provider;
+    
+    // Calculate the CRC16 of the JSON file.
+    // The init value is the protocol version.
+    CRC16Calculator crc16_calculator(PROTOCOL_VERSION);
+    uint8_t offset[4] = { 0 };
+    json_file_endpoint_.handle(offset, sizeof(offset), &crc16_calculator);
+    json_crc_ = crc16_calculator.get_crc16();
+*/
+    return 0;
+}
+
 
 } // namespace fibre
 

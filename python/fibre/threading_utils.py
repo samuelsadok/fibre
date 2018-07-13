@@ -135,8 +135,9 @@ class Semaphore(Waitable):
         self.name = name
         self._read_fd, self._write_fd = os.pipe()
         os.set_blocking(self._read_fd, False)
-        self._count = count
         self._lock = threading.Lock()
+        self._count = 0
+        self.release(count=count)
 
     def get_count(self):
         with self._lock:
@@ -157,15 +158,15 @@ class Semaphore(Waitable):
         """for internal use by wait_any"""
         return self._read_fd
 
-    def release(self, reason="unknown"):
+    def release(self, count=1, reason="unknown"):
         """
         Sets the event and invokes all subscribers if the event was
         not already set
         """
         #print("released because {}".format(reason))
         with self._lock:
-            self._count += 1
-            os.write(self._write_fd, b'1')
+            self._count += count
+            os.write(self._write_fd, b'1' * count)
 
     def acquire(self, timeout=None, cancellation_token=None):
         wait_any(self, timeout=timeout, cancellation_token=cancellation_token)

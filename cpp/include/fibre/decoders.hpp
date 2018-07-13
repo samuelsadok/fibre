@@ -233,9 +233,8 @@ public:
         return serializer::BYTE_WIDTH - pos_;
     };
 
-    const T& get_value() const {
-        return value_;
-    }
+    const T& get_value() const { return value_; }
+    T& get_value() { return value_; }
 private:
     using serializer = SimpleSerializer<T, BigEndian>;
     uint8_t buffer_[serializer::BYTE_WIDTH];

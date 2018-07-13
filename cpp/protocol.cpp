@@ -1,10 +1,11 @@
 
 /* Includes ------------------------------------------------------------------*/
 
+#include <fibre/fibre.hpp>
+
 #include <memory>
 #include <stdlib.h>
-
-#include <fibre/fibre.hpp>
+#include <random>
 
 /* Private defines -----------------------------------------------------------*/
 /* Private macros ------------------------------------------------------------*/
@@ -19,49 +20,28 @@ JSONDescriptorEndpoint json_file_endpoint_ = JSONDescriptorEndpoint();
 EndpointProvider* application_endpoints_;
 
 namespace fibre {
-std::vector<fibre::FibreRefType*> ref_types_ = std::vector<fibre::FibreRefType*>();
-std::vector<fibre::LocalEndpoint*> functions_ = std::vector<fibre::LocalEndpoint*>();
+    global_state_t global_state;
 }
 
 /* Private constant data -----------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
 /* Private function prototypes -----------------------------------------------*/
 
-static void hexdump(const uint8_t* buf, size_t len);
 static inline int write_string(const char* str, fibre::StreamSink* output);
 
 /* Function implementations --------------------------------------------------*/
-
-#if 0
-void hexdump(const uint8_t* buf, size_t len) {
-    for (size_t pos = 0; pos < len; ++pos) {
-        printf(" %02x", buf[pos]);
-        if ((((pos + 1) % 16) == 0) || ((pos + 1) == len))
-            printf("\r\n");
-        osDelay(2);
-    }
-}
-#else
-void hexdump(const uint8_t* buf, size_t len) {
-    (void) buf;
-    (void) len;
-}
-#endif
 
 
 namespace fibre {
 
 // TODO: remove global variables
-uint8_t header_buffer_[3];
+/*uint8_t header_buffer_[3];
 size_t header_index_ = 0;
 uint8_t packet_buffer_[RX_BUF_SIZE];
 size_t packet_index_ = 0;
 size_t packet_length_ = 0;
 
-template<typename TInputChannel>
-int process_bytes(TInputChannel& input_channel, const uint8_t *buffer, size_t length, size_t* processed_bytes, PacketSink& output) {
-    int result = 0;
-
+bool process_bytes(RemoteNode* node, const uint8_t *buffer, size_t length) {
     while (length--) {
         if (header_index_ < sizeof(header_buffer_)) {
             // Process header byte
@@ -80,20 +60,19 @@ int process_bytes(TInputChannel& input_channel, const uint8_t *buffer, size_t le
             packet_buffer_[packet_index_++] = *buffer;
         }
 
-        // If both header and packet are fully received, hand it on to the packet processor
+        // If both header and packet are BUSYy received, hand it on to the packet processor
         if (header_index_ == 3 && packet_index_ == packet_length_) {
             if (calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(CANONICAL_CRC16_INIT, packet_buffer_, packet_length_) == 0) {
-                result |= input_channel.process_packet(packet_buffer_, packet_length_ - 2);
+                if (!process_packet(node, packet_buffer_, packet_length_ - 2))
+                    return false;
             }
             header_index_ = packet_index_ = packet_length_ = 0;
         }
         buffer++;
-        if (processed_bytes)
-            (*processed_bytes)++;
     }
 
-    return result;
-}
+    return true;
+}*/
 
 int StreamBasedPacketSink::process_packet(const uint8_t *buffer, size_t length) {
     // TODO: support buffer size >= 128
@@ -167,7 +146,11 @@ void JSONDescriptorEndpoint::handle(const uint8_t* input, size_t input_length, f
 
 namespace fibre {
 void publish_function(LocalEndpoint* function) {
-    functions_.push_back(function);
+    global_state.functions_.push_back(function);
+}
+
+void publish_ref_type(FibreRefType* type) {
+    global_state.ref_types_.push_back(type);
 }
 
 /* Built-in published functions ---------------------------------------------*/
@@ -175,10 +158,14 @@ bool get_function_json(uint32_t endpoint_id, char (&output)[256]) {
     printf("%s called with 0x%08x\n", __func__, endpoint_id);
 
     // TODO: behold, a race condition
-    if (endpoint_id >= fibre::functions_.size())
+    if (endpoint_id >= global_state.functions_.size()) {
+        LOG_FIBRE("endpoint_id out of range: %u >= %zu", endpoint_id, global_state.functions_.size());
         return false;
-    fibre::LocalEndpoint* endpoint = fibre::functions_[endpoint_id];
+    }
+    fibre::LocalEndpoint* endpoint = global_state.functions_[endpoint_id];
     endpoint->get_as_json(output);
+    LOG_FIBRE("json in hex:");
+    hexdump(reinterpret_cast<uint8_t*>(output), 256);
     return true;
 }
 
@@ -195,29 +182,70 @@ auto a = FunctionStuff<std::tuple<uint32_t>, std::tuple<char[256]>, get_function
         //::template WithStaticNames<get_function_json_names>
         ::template WithStaticFuncPtr2<get_function_json>();
 
+/**
+ * @brief Runs one scheduler iteration for all remote nodes.
+ */
+void schedule_all() {
+    // TODO: make thread-safe
+    LOG_FIBRE("running global scheduler");
+    for (std::pair<const Uuid, RemoteNode>& kv : global_state.remote_nodes_) {
+        kv.second.schedule();
+    }
+}
+
+void scheduler_loop() {
+    LOG_FIBRE("global scheduler thread started");
+    for (;;) {
+        global_state.output_pipe_ready.wait();
+        //global_state.output_channel_ready.wait();
+        schedule_all();
+    }
+}
+
 /* @brief Initializes Fibre */
 void init() {
-    static bool initialized = false;
-    if (!initialized) {
-        fibre::publish_function(&a);
-        initialized = true;
+    if (global_state.initialized) {
+        LOG_FIBRE("already initialized");
+        return;
     }
+
+    // TODO: global_state should not be constructed statically
+
+    fibre::publish_function(&a);
+
+    std::random_device rd;
+    std::uniform_int_distribution<uint8_t> dist;
+    uint8_t buffer[16] = { 0 };
+    for (size_t i = 0; i < sizeof(buffer); ++i)
+        buffer[i] = dist(rd);
+    global_state.own_uuid = Uuid(buffer);
+
+#if CONFIG_SCHEDULER_MODE == SCHEDULER_MODE_GLOBAL_THREAD
+    global_state.scheduler_thread = std::thread(scheduler_loop);
+    LOG_FIBRE("launched scheduler thread");
+    //global_state.scheduler_thread.start();
+    // TODO: support shutdown
+#else
+#error "not implemented"
+#endif
+
+    global_state.initialized = true;
 }
 
 
 /*
-* @brief Processes a packet originating form a known remote note
+* @brief Processes a packet originating form a known remote node
 * This function returns immediately if all published functions return immediately.
 */
-int process_packet(RemoteNode* origin, const uint8_t* buffer, size_t length) {
+/*bool process_packet(RemoteNode* origin, const uint8_t* buffer, size_t length) {
     if (!origin) {
         LOG_FIBRE("unknown origin");
-        return -1;
+        return false;
     }
     LOG_FIBRE("got packet of length %zu: \r\n", length);
     hexdump(buffer, length);
     if (length < 4)
-        return -1;
+        return false;
 
     // TODO: check CRC
     const size_t per_chunk_overhead = 4;
@@ -229,14 +257,10 @@ int process_packet(RemoteNode* origin, const uint8_t* buffer, size_t length) {
         bool close_pipe = (chunk_length & 1);
         chunk_length >>= 1;
         LOG_FIBRE("pipe %d, chunk %x - %x\n", pipe_no, chunk_offset, chunk_offset + chunk_length - 1);
-        InputPipe* pipe = origin->get_input_pipe(pipe_no);
-        if (!pipe) {
-            LOG_FIBRE("no pipe %d associated with this source", pipe_no);
-            return -1;
-        }
+
         if (chunk_length > length) {
             LOG_FIBRE("chunk longer than packet");
-            return -1;
+            return false;
         }
         //InputPipe& pipe = pipes_[pipe_no];
         pipe->process_chunk(buffer, chunk_offset, chunk_length, chunk_crc, close_pipe);
@@ -246,9 +270,12 @@ int process_packet(RemoteNode* origin, const uint8_t* buffer, size_t length) {
 
     // The packet should be fully consumed now
     if (length)
-        return -1;
+        return false;
 
-    return 0;
+    return true;*/
+
+
+
 /*    uint16_t seq_no = read_le<uint16_t>(&buffer, &length);
 
     if (seq_no & 0x8000) {
@@ -306,7 +333,7 @@ int process_packet(RemoteNode* origin, const uint8_t* buffer, size_t length) {
     }
 
     return 0;*/
-}
+//}
 
 
 
@@ -329,9 +356,9 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 LOG_FIBRE("finished receiving header: endpoint %04x, hash %04x", endpoint_id, endpoint_hash);
                 
                 // TODO: behold, a race condition
-                if (endpoint_id >= fibre::functions_.size())
+                if (endpoint_id >= global_state.functions_.size())
                     return ERROR;
-                endpoint_ = fibre::functions_[endpoint_id];
+                endpoint_ = global_state.functions_[endpoint_id];
 
                 if (!endpoint_) {
                     LOG_FIBRE("critical: no endpoint at %d", endpoint_id);
@@ -348,7 +375,7 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 }
                 LOG_FIBRE("hash ok for endpoint %d\r\n", endpoint_id);
 
-                endpoint_->open_connection(*this, nullptr);
+                endpoint_->open_connection(*this);
                 //set_stream(nullptr);
                 // TODO: make sure the start_connection call invokes set_stream
                 state_ = RECEIVING_PAYLOAD;
@@ -357,7 +384,7 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
         case RECEIVING_PAYLOAD:
             LOG_FIBRE("finished receiving payload");
             if (endpoint_)
-                endpoint_->decoder_finished(*this);
+                endpoint_->decoder_finished(*this, output_pipe_);
             set_stream(nullptr);
             return CLOSED;
         default:
@@ -366,37 +393,149 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
     }
 }
 
+// o -----------> o
+// o <----------- o
+
+// outgoing: input...output
+// incoming: input...output
+
+
 //int asd() {
 //incomplete<sizeof(IncomingConnectionDecoder)> a;
 //}
 static_assert(sizeof(IncomingConnectionDecoder) == RX_BUF_SIZE, "Something is off. Please fix.");
 
-InputPipe* RemoteNode::get_input_pipe(size_t id) {
+InputPipe* RemoteNode::get_input_pipe(size_t id, bool* is_new) {
+    std::unordered_map<size_t, InputPipe>& input_pipes = server_input_pipes_;
     // TODO: limit number of concurrent pipes
-    auto emplace_result = server_input_pipes_.emplace(id, id);
+    auto emplace_result = input_pipes.emplace(id, id);
     InputPipe& input_pipe = emplace_result.first->second;
-    if (emplace_result.second) {
-        // the pipe was just constructed
-        input_pipe.construct_decoder<IncomingConnectionDecoder>();
-    }
+    if (is_new)
+        *is_new = emplace_result.second;
     return &input_pipe;
 }
 
-std::unordered_map<Uuid, RemoteNode> remote_nodes_;
-RemoteNode* get_remote_node(Uuid& uuid) {
+OutputPipe* RemoteNode::get_output_pipe(size_t id) {
+    std::unordered_map<size_t, OutputPipe>& output_pipes = server_output_pipes_;
+    // TODO: only return unused pipes
+    auto emplace_result = output_pipes.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(id),
+        std::forward_as_tuple(this, id));
+    OutputPipe& output_pipe = emplace_result.first->second;
+    return &output_pipe;
+}
+
+void RemoteNode::schedule() {
+    constexpr size_t per_packet_overhead = 16 + 2;
+    constexpr size_t per_chunk_overhead = 8;
+    
+    LOG_FIBRE("dispatching output chunks...");
+
+    for (OutputChannel* channel : output_channels_) {
+        //output_stream = channel;
+        size_t free_space = channel->get_min_non_blocking_bytes();
+        if (free_space < per_packet_overhead)
+            continue;
+        size_t processed_bytes = 0;
+
+        for (std::pair<const size_t, OutputPipe>& pipe_entry : server_output_pipes_) { // TODO: include client
+            OutputPipe& pipe = pipe_entry.second;
+
+            monotonic_time_t due_time = pipe.get_due_time();
+            if (due_time > now())
+                continue;
+
+            for (OutputPipe::chunk_t chunk : pipe.get_pending_chunks()) {
+                size_t max_chunk_len = channel->get_min_non_blocking_bytes();
+                if (max_chunk_len < per_chunk_overhead)
+                    break;
+                max_chunk_len = max_chunk_len != SIZE_MAX ? max_chunk_len - per_chunk_overhead : max_chunk_len;
+
+                // send chunk header
+                size_t offset = 0, length = 0;
+                uint16_t crc_init = 0;
+                if (!chunk.get_properties(&offset, &length, &crc_init)) {
+                    LOG_FIBRE("get_properties failed");
+                }
+                length = std::min(length, max_chunk_len);
+                uint8_t buffer[8];
+                write_le<uint16_t>(pipe.get_id(), buffer, 2);
+                write_le<uint16_t>(offset, buffer + 2, 2);
+                write_le<uint16_t>(crc_init, buffer + 4, 2);
+                write_le<uint16_t>(length, buffer + 6, 2);
+                LOG_FIBRE("emitting pipe id %04zx chunk %04zx - %04zx, crc %04x", pipe.get_id(), offset, length - 1, crc_init);
+                size_t processed_bytes = 0;
+                if (channel->process_bytes(buffer, sizeof(buffer), &processed_bytes) != StreamSink::OK) {
+                    LOG_FIBRE("channel failed");
+                    // TODO: remove channel
+                    break;
+                }
+                if (processed_bytes != sizeof(buffer)) {
+                    LOG_FIBRE("expected to process %08zx bytes but only processed %08zx bytes", sizeof(buffer), processed_bytes);
+                    break;
+                }
+
+                // send chunk paylaod
+                if (!chunk.write_to(channel, length)) {
+                    LOG_FIBRE("the chunk could not be fully sent - get_min_non_blocking_bytes lied to us.");
+                    break;
+                }
+
+                if (!pipe.guaranteed_delivery) {
+                    pipe.drop_chunk(offset, length);
+                } else {
+                    due_time = std::max(due_time + channel->resend_interval, now());
+                    pipe.set_due_time(offset, length, due_time);
+                }
+            }
+
+            auto chunks = pipe.get_pending_chunks();
+            if (chunks.begin() < chunks.end())
+                notify_output_pipe_ready();
+        }
+    }
+}
+
+/**
+ * @brief Notifies the scheduler that there is data in at least one output
+ * pipe.
+ */
+void RemoteNode::notify_output_pipe_ready() {
+#if CONFIG_SCHEDULER_MODE == SCHEDULER_MODE_GLOBAL_THREAD
+    global_state.output_pipe_ready.set();
+#elif CONFIG_SCHEDULER_MODE == SCHEDULER_MODE_PER_NODE_THREAD
+    output_pipe_ready_.set();
+#endif
+}
+
+/**
+ * @brief Notifies the scheduler that at least one output channel can
+ * consume data without blocking.
+ */
+void RemoteNode::notify_output_channel_ready() {
+#if CONFIG_SCHEDULER_MODE == SCHEDULER_MODE_GLOBAL_THREAD
+    global_state.output_channel_ready.set();
+#elif CONFIG_SCHEDULER_MODE == SCHEDULER_MODE_PER_NODE_THREAD
+    output_channel_ready_.set();
+#endif
+}
+
+RemoteNode* get_remote_node(Uuid uuid) {
     // TODO: limit number of concurrent nodes and garbage collect abandonned nodes
-    std::pair<const Uuid, RemoteNode>& remote_node = *(remote_nodes_.emplace(uuid, uuid).first);
+    std::pair<const Uuid, RemoteNode>& remote_node = *(global_state.remote_nodes_.emplace(uuid, uuid).first);
     return &(remote_node.second);
 }
 
 OutputPipe::status_t OutputPipe::process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) {
+    LOG_FIBRE("processing %zx bytes", length);
     size_t chunk = std::min(length, sizeof(buffer_) - buffer_pos_);
     memcpy(buffer_ + buffer_pos_, buffer, chunk);
     buffer_pos_ += chunk;
     if (processed_bytes)
         *processed_bytes += chunk;
-    //remote_node->feed_outputs(this);
-    return chunk < length ? FULL : OK;
+    remote_node_->notify_output_pipe_ready();
+    return chunk < length ? BUSY : OK;
 }
 
 }

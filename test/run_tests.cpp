@@ -4,21 +4,8 @@
 #include <limits.h>
 #include <stdio.h>
 
-//#define DEBUG_PROTOCOL
-void hexdump(const uint8_t* buf, size_t len);
 
-#include <fibre/crc.hpp>
-#include <fibre/decoders.hpp>
-#include <fibre/encoders.hpp>
-
-void hexdump(const uint8_t* buf, size_t len) {
-    for (size_t pos = 0; pos < len; ++pos) {
-        printf(" %02x", buf[pos]);
-        if ((((pos + 1) % 16) == 0) || ((pos + 1) == len))
-            printf("\r\n");
-        //osDelay(2);
-    }
-}
+#include <fibre/fibre.hpp>
 
 
 
