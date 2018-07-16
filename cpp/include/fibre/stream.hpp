@@ -7,18 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// This value must not be larger than USB_TX_DATA_SIZE defined in usbd_cdc_if.h
-constexpr uint16_t TX_BUF_SIZE = 512; // does not work with 64 for some reason TODO: is this still valid?
-
-/*
-* One RX buffer per pipe is created.
-* The RX buffer should be large enough to accomodate the function
-* with the largest total immediate argument size.
-*/
-// larger values than 128 have currently no effect because of protocol limitations
-// TODO: is this still the case?
-constexpr uint16_t RX_BUF_SIZE = 512;
-
 namespace fibre {
 
 /**
@@ -315,7 +303,7 @@ public:
     }
 
     status_t process_bytes(const uint8_t *buffer, size_t length, size_t* processed_bytes) final {
-        LOG_FIBRE("static stream chain: process %016zx bytes\n", length);
+        LOG_FIBRE(SERDES, "static stream chain: process ", length, " bytes");
         while (length) {
             StreamSink *stream = get_stream(current_stream_idx_);
             if (!stream)
@@ -407,7 +395,7 @@ public:
     }
 
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
-        LOG_FIBRE("dynamic stream chain: process %016zx bytes\n", length);
+        LOG_FIBRE(SERDES, "dynamic stream chain: process ", length, " bytes");
         while (length && current_stream_) {
             size_t chunk = 0;
             status_t result = current_stream_->process_bytes(buffer, length, &chunk);

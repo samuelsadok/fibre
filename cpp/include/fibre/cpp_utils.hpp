@@ -78,11 +78,13 @@ public:
 #ifndef __CPP_UTILS_HPP
 #define __CPP_UTILS_HPP
 
-#include <limits.h>
+#include <limits>
 #include <tuple>
 #include <functional>
 #include <unordered_map>
 #include <cassert>
+#include <iostream>
+#include <iomanip>
 
 /* Backport features from C++14 and C++17 ------------------------------------*/
 
@@ -118,6 +120,7 @@ namespace std {
     };
 
     /// Alias template make_integer_sequence
+    // TODO: __integer_pack is a GCC built-in => use template metaprogramming
     template<typename _Tp, _Tp _Num>
     using make_integer_sequence = integer_sequence<_Tp, __integer_pack(_Num)...>;
 
@@ -130,6 +133,16 @@ namespace std {
     using make_index_sequence = make_integer_sequence<size_t, _Num>;
 }
 #endif
+
+namespace fibre {
+    template<typename _Tp, _Tp IFrom, _Tp ITo, _Tp ... I>
+    struct make_integer_sequence_from_to
+        : public make_integer_sequence_from_to<_Tp, IFrom, ITo - 1, I...> {};
+
+    template<typename _Tp, _Tp IFrom, _Tp ... I>
+    struct make_integer_sequence_from_to<_Tp, IFrom, IFrom, I...>
+        : public std::index_sequence<I...> {};
+}
 
 #if __cplusplus < 201703L
 namespace std {
@@ -457,6 +470,13 @@ class array_string
 {
     char _array[N + 1];
 
+    template<size_t... PACK>
+    constexpr array_string(const char string_literal[N+1],
+                           std::index_sequence<PACK...>)
+    : _array{string_literal[PACK]..., '\0'}
+    {
+    }
+
     template<size_t N1, size_t... PACK1, size_t... PACK2>
     constexpr array_string(const array_string<N1>&     s1,
                            const array_string<N - N1>& s2,
@@ -466,10 +486,10 @@ class array_string
     {
     }
 
-    template<size_t... PACK>
-    constexpr array_string(const char string_literal[N+1],
+    template<size_t NOther, size_t... PACK>
+    constexpr array_string(const array_string<NOther>& other,
                            std::index_sequence<PACK...>)
-    : _array{string_literal[PACK]..., '\0'}
+    : _array{other[PACK]..., '\0'}
     {
     }
  
@@ -494,9 +514,34 @@ public:
     {
     }
 
+//    template<size_t NOther, size_t START_IDX, size_t END_IDX, ENABLE_IF(END_IDX - START_IDX == N)>
+//    constexpr array_string(const array_string<NOther>& other, std::index_sequence<START_IDX, END_IDX>)
+//        : array_string{other, fibre::make_integer_sequence_from_to<size_t, START_IDX, END_IDX>{}}
+//    {
+//    }
+
     constexpr const char * c_str() const {
         return _array;
     }
+
+    /**
+     * @brief Returns the last index plus one of the specified char in the string
+     * Returns 0 if the char was not found.
+     */
+    constexpr size_t after_last_index_of(char c, size_t idx = N) const {
+        return idx == 0 ? 0 :
+                (_array[idx] == c) ? (idx + 1) :
+                after_last_index_of(c, idx - 1);
+    }
+
+    template<size_t IFrom, size_t ITo = N>
+    constexpr array_string<ITo - IFrom> substring() const {
+        return array_string<ITo - IFrom>(*this, fibre::make_integer_sequence_from_to<size_t, IFrom, ITo>{});
+    }
+
+    //constexpr array_string<N - last_index_of('/')> get_last_part(char c) {
+    //    return substring<file_path.last_index_of('/')>();
+    //}
 };
 
 // @brief Constructs a fixed length string from a string literal
@@ -646,7 +691,7 @@ struct SimpleSerializer<T, BigEndian, typename std::enable_if_t<std::is_integral
     }
 };
 
-/*
+/**
 * @brief Serializer/deserializer for bool
 *
 * True is serialized as 1, false is serialized as 0.
@@ -667,7 +712,7 @@ struct SimpleSerializer<bool, BigEndian, void> {
     }
 };
 
-/*
+/**
 * @brief Writes a generic value to a buffer in little endian order.
 * @param value The value to be serialized
 * @param buffer Reference to a buffer of the exact correct size.
@@ -678,7 +723,7 @@ inline void write_le(T value, uint8_t (&buffer)[LittleEndianSerializer<T>::BYTE_
     LittleEndianSerializer<T>::write(value, buffer);
 }
 
-/*
+/**
 * @brief Writes a value to a buffer in big endian order.
 * @param value The value to be serialized
 * @param buffer Reference to a buffer of the exact correct size.
@@ -689,7 +734,7 @@ inline void write_be(T value, uint8_t (&buffer)[BigEndianSerializer<T>::BYTE_WID
     BigEndianSerializer<T>::write(value, buffer);
 }
 
-/*
+/**
 * @brief Writes a value to a buffer in little endian order.
 * @param value The value to be serialized
 * @param buffer A pointer to the buffer where to write the value
@@ -712,7 +757,7 @@ inline bool write_le(T value, uint8_t* buffer, size_t length /*= LittleEndianSer
     return true;
 }
 
-/*
+/**
 * @brief Writes a value to a buffer in big endian order.
 * @copydetails write_le
 */
@@ -726,7 +771,7 @@ inline bool write_be(T value, uint8_t* buffer, size_t length = BigEndianSerializ
     return true;
 }
 
-/*
+/**
 * @brief Reads a generic value from a buffer in little endian order.
 * @param buffer Reference to a buffer of the exact correct size.
 * @returns The value that was read.
@@ -737,7 +782,7 @@ T read_le(const uint8_t (&buffer)[LittleEndianSerializer<T>::BYTE_WIDTH]) {
     return LittleEndianSerializer<T>::read(buffer);
 }
 
-/*
+/**
 * @brief Reads a generic value from a buffer in big endian order.
 * @param buffer Reference to a buffer of the exact correct size.
 * @returns The value that was read.
@@ -748,7 +793,7 @@ T read_be(const uint8_t (&buffer)[BigEndianSerializer<T>::BYTE_WIDTH]) {
     return BigEndianSerializer<T>::read(buffer);
 }
 
-/*
+/**
 * @brief Reads a generic value from a buffer in little endian order.
 * @param buffer Pointer to the first byte that should be read.
 * @param length Length of the buffer to be read from.
@@ -772,7 +817,7 @@ bool read_le(const uint8_t * buffer, size_t length = LittleEndianSerializer<T>::
     return true;
 }
 
-/*
+/**
 * @brief Reads a generic value from a buffer in little endian order.
 * @param buffer_ptr Pointer to a variable holding the pointer to the first byte that should be read.
 *        The variable is incremented by the number of bytes read.
@@ -794,88 +839,20 @@ T read_le(const uint8_t** buffer_ptr, size_t* length_ptr) {
     return result;
 }
 
-/*
+/**
+* @brief Reads a generic value from a buffer in little endian order.
+* @copydetails read_le
+*/
 template<typename T>
-inline size_t read_le(T* value, const uint8_t* buffer);
-
-
-//template<typename T, ENABLE_IF(std::is_integral_v<T>)>
-//inline size_t write_le<float>(float value, uint8_t* buffer) {
-//    static_assert(CHAR_BIT * sizeof(float) == 32, "32 bit floating point expected");
-//    static_assert(std::numeric_limits<float>::is_iec559, "IEEE 754 floating point expected");
-//    const uint32_t * value_as_uint32 = reinterpret_cast<const uint32_t*>(&value);
-//    return write_le<uint32_t>(*value_as_uint32, buffer);
-//}
-
-template<>
-inline size_t read_le<bool>(bool* value, const uint8_t* buffer) {
-    *value = buffer[0];
-    return 1;
-}
-
-template<>
-inline size_t read_le<uint8_t>(uint8_t* value, const uint8_t* buffer) {
-    *value = buffer[0];
-    return 1;
-}
-
-template<>
-inline size_t read_le<uint16_t>(uint16_t* value, const uint8_t* buffer) {
-    *value = (static_cast<uint16_t>(buffer[0]) << 0) |
-             (static_cast<uint16_t>(buffer[1]) << 8);
-    return 2;
-}
-
-template<>
-inline size_t read_le<int32_t>(int32_t* value, const uint8_t* buffer) {
-    *value = (static_cast<int32_t>(buffer[0]) << 0) |
-             (static_cast<int32_t>(buffer[1]) << 8) |
-             (static_cast<int32_t>(buffer[2]) << 16) |
-             (static_cast<int32_t>(buffer[3]) << 24);
-    return 4;
-}
-
-template<>
-inline size_t read_le<uint32_t>(uint32_t* value, const uint8_t* buffer) {
-    *value = (static_cast<uint32_t>(buffer[0]) << 0) |
-             (static_cast<uint32_t>(buffer[1]) << 8) |
-             (static_cast<uint32_t>(buffer[2]) << 16) |
-             (static_cast<uint32_t>(buffer[3]) << 24);
-    return 4;
-}
-
-template<>
-inline size_t read_le<uint64_t>(uint64_t* value, const uint8_t* buffer) {
-    *value = (static_cast<uint64_t>(buffer[0]) << 0) |
-             (static_cast<uint64_t>(buffer[1]) << 8) |
-             (static_cast<uint64_t>(buffer[2]) << 16) |
-             (static_cast<uint64_t>(buffer[3]) << 24) |
-             (static_cast<uint64_t>(buffer[4]) << 32) |
-             (static_cast<uint64_t>(buffer[5]) << 40) |
-             (static_cast<uint64_t>(buffer[6]) << 48) |
-             (static_cast<uint64_t>(buffer[7]) << 56);
-    return 8;
-}*/
-
-/*
-template<>
-inline size_t read_le<float>(float* value, const uint8_t* buffer) {
-    static_assert(CHAR_BIT * sizeof(float) == 32, "32 bit floating point expected");
-    static_assert(std::numeric_limits<float>::is_iec559, "IEEE 754 floating point expected");
-    return read_le(reinterpret_cast<uint32_t*>(value), buffer);
-}
-
-// @brief Reads a value of type T from the buffer.
-// @param buffer    Pointer to the buffer to be read. The pointer is updated by the number of bytes that were read.
-// @param length    The number of available bytes in buffer. This value is updated to subtract the bytes that were read.
-template<typename T>
-static inline T read_le(const uint8_t** buffer, size_t* length) {
-    T result;
-    size_t cnt = read_le(&result, *buffer);
-    *buffer += cnt;
-    *length -= cnt;
+T read_be(const uint8_t** buffer_ptr, size_t* length_ptr) {
+    static_assert(is_complete<BigEndianSerializer<T>>(), "no BigEndianSerializer is defined for type T");
+    if (*length_ptr < BigEndianSerializer<T>::BYTE_WIDTH)
+        return T();
+    T result = BigEndianSerializer<T>::read(*buffer_ptr);
+    *buffer_ptr += BigEndianSerializer<T>::BYTE_WIDTH;
+    *length_ptr -= BigEndianSerializer<T>::BYTE_WIDTH;
     return result;
-}*/
+}
 
 
 /* Hex to numbers ------------------------------------------------------------*/
@@ -943,15 +920,47 @@ bool hex_string_to_int_arr(const char * str, TInt (&output)[ICount]) {
     return hex_string_to_int_arr(str, hex_digits<TInt>() * ICount, output);
 }
 
-__attribute__((unused))
-static void hexdump(const uint8_t* buf, size_t len) {
-    for (size_t pos = 0; pos < len; ++pos) {
-        printf(" %02x", buf[pos]);
-        if ((((pos + 1) % 16) == 0) || ((pos + 1) == len))
-            printf("\r\n");
-        //osDelay(2);
-    }
+namespace fibre {
+
+template<typename T>
+class HexPrinter {
+public:
+    HexPrinter(T val) : val_(val) {}
+    T val_;
+};
+
+template<typename T>
+std::ostream& operator<<(std::ostream& stream, const HexPrinter<T>& printer) {
+    // TODO: specialize for char
+    return stream << std::hex << std::setw(hex_digits<T>()) << std::setfill('0') << static_cast<uint64_t>(printer.val_);
 }
+
+template<typename T>
+HexPrinter<T> as_hex(T val) { return HexPrinter<T>(val); }
+
+template<typename T>
+class HexPrinter<T*> {
+public:
+    HexPrinter(T* ptr, size_t length) : ptr_(ptr), length_(length) {}
+    T* ptr_;
+    size_t length_;
+};
+
+template<typename T>
+std::ostream& operator<<(std::ostream& stream, const HexPrinter<T*>& printer) {
+    for (size_t pos = 0; pos < printer.length_; ++pos) {
+        stream << " " << as_hex(printer.ptr_[pos]);
+        if (((pos + 1) % 16) == 0)
+            stream << std::endl;
+    }
+    return stream;
+}
+
+template<typename T, size_t ILength>
+HexPrinter<T*> as_hex(T (&val)[ILength]) { return HexPrinter<T*>(val, ILength); }
+
+}
+
 
 template<typename TDereferenceable, typename TResult>
 class simple_iterator : std::iterator<std::random_access_iterator_tag, TResult> {

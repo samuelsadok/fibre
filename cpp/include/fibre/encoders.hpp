@@ -179,11 +179,11 @@ public:
 
     int get_byte(uint8_t *output_byte) final {
         if (bit_pos_ == 0)
-            LOG_FIBRE("start encoding varint, from pos %d\n", bit_pos_);
+            LOG_FIBRE(SERDES, "start encoding varint, from pos %d\n", bit_pos_);
         *output_byte = (state_variable_ >> bit_pos_) & 0x7f;
         bit_pos_ += 7;
         if (bit_pos_ < BIT_WIDTH && (state_variable_ >> bit_pos_)) {
-            LOG_FIBRE("remainder: %x\n", state_variable_ >> bit_pos_);
+            LOG_FIBRE(SERDES, "remainder: %x\n", state_variable_ >> bit_pos_);
             *output_byte |= 0x80;
         }else
             done_ = true;

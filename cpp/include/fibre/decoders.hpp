@@ -181,7 +181,7 @@ public:
             uint8_t input_byte = *buffer;
             state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
             if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
-                LOG_FIBRE("varint overflow: tried to add %02x << %zu\n", input_byte, bit_pos_);
+                LOG_FIBRE_W(SERDES, "varint overflow: tried to add ", std::hex, input_byte, " << ", bit_pos_);
                 bit_pos_ = BIT_WIDTH;
                 return ERROR; // overflow
             }
@@ -212,7 +212,6 @@ class FixedIntDecoder : public StreamSink {
 public:
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
         size_t chunk = std::min(serializer::BYTE_WIDTH - pos_, length);
-        printf("chunk: %zu\n", chunk);
         memcpy(buffer_ + pos_, buffer, chunk);
         if (processed_bytes)
             *processed_bytes += chunk;

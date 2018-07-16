@@ -67,14 +67,15 @@ uint32_t test_func_b(uint32_t arg) {
 void test_wait_handle() {
     fibre::AutoResetEvent evt;
     evt.set();
-    LOG_FIBRE("waiting...");
+    LOG_FIBRE(GENERAL, "waiting...");
     evt.wait();
-    LOG_FIBRE("done");
+    LOG_FIBRE(GENERAL, "done");
 }
 
 int main() {
     test_wait_handle();
     fibre::init();
+    LOG_FIBRE(GENERAL, "hello");
     //auto a = fibre::FunctionStuff<std::tuple<uint32_t, uint32_t>, std::tuple<>, std::tuple<const char (&)[12], const char (&)[5], const char (&)[5]>>
     //    ::WithStaticNames<names_a>
     //    ::WithStaticFuncPtr<test_func_a>();
@@ -86,9 +87,9 @@ int main() {
 
     TestClass test_object = TestClass();
 
-    // publish the object on Fibre
-    //auto definitions = test_object.make_fibre_definitions;
-    fibre::publish_object(test_object);
+//    // publish the object on Fibre
+//    //auto definitions = test_object.make_fibre_definitions;
+//    fibre::publish_object(test_object);
 
     uint8_t in_buf[] = {
         0x00, 0x00, // pipe-no
@@ -117,7 +118,8 @@ int main() {
     input_decoder.process_bytes(in_buf, sizeof(in_buf), nullptr);
 
     usleep(1000000 / 5);
-    hexdump(out_buf, sizeof(out_buf));
+    //LOG_FIBRE(GENERAL, "output buffer:", std::endl, fibre::as_hex(out_buf));
+    LOG_FIBRE(GENERAL, "test\n", fibre::as_hex(out_buf));
     
 
     //using ref_type = FibreRefType<TestClass>;

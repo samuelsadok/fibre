@@ -23,11 +23,11 @@ public:
         int val = 0;
         socklen_t val_len = sizeof(val);
         if (getsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &val, &val_len) != 0) {
-            LOG_FIBRE("failed to get socket send buffer size");
+            LOG_FIBRE_W(TCP, "failed to get socket send buffer size");
             throw "TCP connection init failed";
         }
         if (val < 0) {
-            LOG_FIBRE("invalid socket send buffer size");
+            LOG_FIBRE_W(TCP, "invalid socket send buffer size");
             throw "TCP connection init failed";
         }
         kernel_send_buffer_size_ = val;
@@ -48,10 +48,10 @@ public:
         int pending_bytes = 0;
         ioctl(socket_fd_, TIOCOUTQ, &pending_bytes);
         if (pending_bytes < 0) {
-            LOG_FIBRE("less than zero pending bytes");
+            LOG_FIBRE_W(TCP, "less than zero pending bytes");
             return kernel_send_buffer_size_;
         } else if (static_cast<unsigned int>(pending_bytes) > kernel_send_buffer_size_) {
-            LOG_FIBRE("a lot of pending bytes");
+            LOG_FIBRE_W(TCP, "a lot of pending bytes");
             return 0;
         } else {
             return kernel_send_buffer_size_ - pending_bytes;
@@ -64,18 +64,18 @@ public:
         ssize_t n_received_signed = recv(socket_fd_, buffer, length, flags);
 
         if (n_received_signed == 0) {
-            LOG_FIBRE("TCP connection closed by remote host");
+            LOG_FIBRE(TCP, "TCP connection closed by remote host");
             return StreamSource::CLOSED;
         }
 
         if (n_received_signed < 0) {
-            LOG_FIBRE("TCP connection broke unexpectedly: %s", strerror(errno));
+            LOG_FIBRE_W(TCP, "TCP connection broke unexpectedly: ", strerror(errno));
             return StreamSource::ERROR;
         }
 
         size_t n_received = static_cast<size_t>(n_received_signed);
         if (n_received > length) {
-            LOG_FIBRE("too many bytes received");
+            LOG_FIBRE_W(TCP, "too many bytes received");
             return StreamSource::ERROR;
         }
 
@@ -118,19 +118,19 @@ bool serve_client(int socket_fd) {
     TCPConnection connection(socket_fd);
     uint8_t uuid_buf[16];
 
-    LOG_FIBRE("sending own UUID");
+    LOG_FIBRE(TCP, "sending own UUID");
     if (connection.process_bytes(global_state.own_uuid.get_bytes().data(), 16, nullptr) != StreamSink::OK) {
-        LOG_FIBRE("failed to send own UUID");
+        LOG_FIBRE(TCP, "failed to send own UUID");
         return false;
     }
 
-    LOG_FIBRE("waiting for remote UUID");
+    LOG_FIBRE(TCP, "waiting for remote UUID");
     if (connection.get_bytes(uuid_buf, 16, 16, nullptr) != StreamSource::OK) {
-        LOG_FIBRE("failed to get remote UUID");
+        LOG_FIBRE(TCP, "failed to get remote UUID");
         return false;
     }
 
-    LOG_FIBRE("handshake complete");
+    LOG_FIBRE(TCP, "handshake complete");
 
     RemoteNode* remote_node = fibre::get_remote_node(Uuid(uuid_buf));
     remote_node->add_output_channel(&connection);
@@ -142,7 +142,7 @@ bool serve_client(int socket_fd) {
         StreamSource::status_t status =
                 connection.get_bytes(buf, 1, sizeof(buf), &n_received);
         if (status != StreamSource::OK) {
-            LOG_FIBRE("connection closed");
+            LOG_FIBRE(TCP, "connection closed");
             break;
         }
         input_decoder.process_bytes(buf, n_received, nullptr);
@@ -167,7 +167,7 @@ int serve_on_tcp(unsigned int port) {
 
 
     if ((s=socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP)) == -1) {
-        LOG_FIBRE("failed to create socket");
+        LOG_FIBRE_W(TCP, "failed to create socket");
         return -1;
     }
 
@@ -177,17 +177,17 @@ int serve_on_tcp(unsigned int port) {
     si_me.sin6_flowinfo = 0;
     si_me.sin6_addr = in6addr_any;
     if (bind(s, reinterpret_cast<struct sockaddr *>(&si_me), sizeof(si_me)) == -1) {
-        LOG_FIBRE("failed to bind socket");
+        LOG_FIBRE_W(TCP, "failed to bind socket");
         return -1;
     }
 
     // make this socket a passive socket
     if (listen(s, 128) != 0) {
-        LOG_FIBRE("failed to listen on TCP");
+        LOG_FIBRE_W(TCP, "failed to listen on TCP");
         return -1;
     }
 
-    LOG_FIBRE("listening");
+    LOG_FIBRE(TCP, "listening");
     std::vector<std::future<bool>> serv_pool;
     for (;;) {
         memset(&si_other, 0, sizeof(si_other));
@@ -195,7 +195,7 @@ int serve_on_tcp(unsigned int port) {
         socklen_t silen = sizeof(si_other);
         // TODO: Add a limit on accepting connections
         int client_portal_fd = accept(s, reinterpret_cast<sockaddr *>(&si_other), &silen); // blocking call
-        LOG_FIBRE("accepted connection");
+        LOG_FIBRE(TCP, "accepted connection");
         serv_pool.push_back(std::async(std::launch::async, serve_client, client_portal_fd));
         // do a little clean up on the pool
         for (std::vector<std::future<bool>>::iterator it = serv_pool.end()-1; it >= serv_pool.begin(); --it) {

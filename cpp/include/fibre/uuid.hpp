@@ -44,7 +44,6 @@ public:
                           uint16_t time_hi_and_version,
                           uint16_t clk_seq,
                           const uint8_t node[6]) {
-        //printf("%08x-%04x-%04x-%04x-%02x%02x%02x%02x%02x%02x\n", time_low, time_mid, time_hi_and_version, clk_seq, node[0], node[1], node[2], node[3], node[4], node[5]);
         uint8_t bytes[16];
         write_be(time_low, bytes + 0);
         write_be(time_mid, bytes + 4);
@@ -63,11 +62,6 @@ public:
         uint16_t part2[3];
         uint8_t part3[6];
 
-        //printf("p1 = %d\n", hex_string_to_int<uint32_t>(str + 0, &part1));
-        //printf("p2 = %d\n", hex_string_to_int<uint16_t>(str + 9, &part2[0]));
-        //printf("p3 = %d\n", hex_string_to_int<uint16_t>(str + 14, &part2[1]));
-        //printf("p4 = %d\n", hex_string_to_int<uint16_t>(str + 19, &part2[2]));
-        //printf("asd = %d\n", hex_string_to_int_arr<uint8_t, 6>(str + 24, part3));
         if ((strlen(str) == 36) &&
             (str[8] == '-') && (str[13] == '-') && (str[18] == '-') && (str[23] == '-') &&
             hex_string_to_int<uint32_t>(str + 0, &part1) &&
@@ -109,8 +103,21 @@ private:
 	//friend bool operator<(const Uuid &lhs, const Uuid &rhs);
 };
 
-using Uuid = Uuid; // Dude, it's the same thing.
+using Guid = Uuid; // Dude, it's the same thing.
+
+__attribute__((unused))
+static std::ostream& operator<<(std::ostream& stream, const Uuid& uuid) {
+    const uint8_t * buffer = uuid.get_bytes().data();
+    size_t length = 16;
+    return stream << as_hex(read_be<uint32_t>(&buffer, &length)) << "-"
+        << as_hex(read_be<uint16_t>(&buffer, &length)) << "-"
+        << as_hex(read_be<uint16_t>(&buffer, &length)) << "-"
+        << as_hex(read_be<uint16_t>(&buffer, &length)) << "-"
+        << as_hex(buffer[0]) << as_hex(buffer[1]) << as_hex(buffer[2]) << as_hex(buffer[3]) << as_hex(buffer[4]) << as_hex(buffer[5]);
 }
+
+}
+
 
 namespace std {
     // @brief Specialization for std::hash<fibre::Uuid>
