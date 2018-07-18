@@ -155,7 +155,7 @@ As an example we give three policies:
 
 Examples 1 and 2 are both compliant, however example 1 may use more bandwidth than necessary. Example 3 is compliant if and only if the result or NACK is returned over a reliable channel.
 
-**Avoiding duplicate actions:** Let a **pure** request be a request that, when processed multiple times, has the same effect (but not necessarily result) as a when processed one single time. [TODO: not sure if this is precise enough] Duplicate write requests that are not pure MUST NOT be processed more than once.
+**Avoiding duplicate actions:** Let an **idempotent** request be a request that, when processed multiple times, has the same effect (but not necessarily result) as a when processed one single time. [TODO: not sure if this is precise enough] Duplicate write requests that are not idempotent MUST NOT be processed more than once.
 
 
 Example:
