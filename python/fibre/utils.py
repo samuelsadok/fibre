@@ -18,9 +18,6 @@ except ModuleNotFoundError:
     sys.stdout.flush()
     pass
 
-class OperationAbortedError(Exception):
-    pass
-
 def get_serial_number_str(device):
     if hasattr(device, 'serial_number'):
         return format(device.serial_number, 'x').upper()

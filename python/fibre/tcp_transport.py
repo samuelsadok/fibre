@@ -6,7 +6,10 @@ import time
 import traceback
 import struct
 import fcntl
-import fibre.protocol
+import uuid
+
+import fibre
+from fibre import OperationAbortedError
 from fibre.threading_utils import wait_any, EventWaitHandle
 
 # Linux ioctl commands
@@ -14,6 +17,7 @@ TIOCOUTQ = 0x5411
 
 CANCELLATION_POLL_INTERVAL = 1
 
+RX_PUMP_BUFFER_SIZE = 4192
 
 # Keepalive from https://stackoverflow.com/questions/12248132/how-to-change-tcp-keepalive-timer-using-python-script
 def set_keepalive_linux(sock, after_idle_sec, interval_sec, max_fails):
@@ -49,40 +53,35 @@ def set_keepalive(sock, after_idle_sec=30, interval_sec=10, max_fails=5):
         set_keepalive_linux(sock, after_idle_sec, interval_sec, max_fails)
 
 
-class TCPTransport(fibre.protocol.StreamSource, fibre.protocol.OutputChannel):
-    def __init__(self, dest_addr, dest_port, logger):
-        self._name = "tcp:" + str(dest_addr) + ":" + str(dest_port)
+class TCPTransport(fibre.StreamSource, fibre.OutputChannel):
+    def __init__(self, sock, name, logger):
+        super().__init__(resend_interval=1)
+        self._sock = sock
+        self._name = name
         self._logger = logger
+        set_keepalive(self._sock)
+        #self._channel_broken = EventWaitHandle()
+        self._kernel_send_buffer_size = self._sock.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
+        self._total_received = 0
 
-        # TODO: FIXME: use IPv6
-        # Problem: getaddrinfo fails if the resolver returns an
-        # IPv4 address, but we are using AF_INET6
-        #family = socket.AF_INET6 if socket.has_ipv6 else socket.AF_INET
-        family = socket.AF_INET
-        self.sock = socket.socket(family, socket.SOCK_STREAM)
-        # TODO: Determine the right address to use from the list
-        self.target = socket.getaddrinfo(dest_addr, dest_port, family)[0][4]
-        # TODO: this blocks until a connection is established, or the system cancels it
-        self.sock.connect(self.target)
-        set_keepalive(self.sock)
-
-        self._channel_broken = EventWaitHandle()
-        self.kernel_send_buffer_size_ = self.sock.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
+    def close(self):
+        self._logger.debug("closing " + self._name)
+        self._sock.close()
 
     def _close_and_raise(self):
-        self._logger.debug(self._name + " broke")
-        self._channel_broken.set()
-        raise fibre.protocol.ChannelBrokenException()
+        self.close()
+        #self._channel_broken.set()
+        raise fibre.ChannelBrokenException()
 
     def get_min_non_blocking_bytes(self):
         buf = struct.pack('@l', 0)
-        ret = fcntl.ioctl(self.sock, TIOCOUTQ, buf)
+        ret = fcntl.ioctl(self._sock, TIOCOUTQ, buf)
         pending_bytes, = struct.unpack('@l', ret)
-        if pending_bytes > self.kernel_send_buffer_size_:
+        if pending_bytes > self._kernel_send_buffer_size:
             raise Exception("lots of pending bytes")
         elif pending_bytes < 0:
             raise Exception("vacuum")
-        return self.kernel_send_buffer_size_ - pending_bytes
+        return self._kernel_send_buffer_size - pending_bytes
 
     def process_bytes(self, buffer, timeout=None, cancellation_token=None):
         fibre.assert_bytes_type(buffer)
@@ -91,13 +90,13 @@ class TCPTransport(fibre.protocol.StreamSource, fibre.protocol.OutputChannel):
         while (n_sent < len(buffer)) and ((cancellation_token is None) or (not cancellation_token.set())):
             now = time.monotonic()
             if deadline is None:
-                self.sock.settimeout(CANCELLATION_POLL_INTERVAL)
+                self._sock.settimeout(CANCELLATION_POLL_INTERVAL)
             elif deadline <= now:
-                self.sock.settimeout(0)
+                self._sock.settimeout(0)
             else:
-                self.sock.settimeout(min(now - deadline, CANCELLATION_POLL_INTERVAL))
+                self._sock.settimeout(min(now - deadline, CANCELLATION_POLL_INTERVAL))
             try:
-                n_sent += self.sock.send(buffer[n_sent:])
+                n_sent += self._sock.send(buffer[n_sent:])
             except socket.error:
                 self._close_and_raise()
         return n_sent
@@ -105,60 +104,85 @@ class TCPTransport(fibre.protocol.StreamSource, fibre.protocol.OutputChannel):
     def get_bytes(self, n_min, n_max, timeout=None, cancellation_token=None):
         """
         Returns n bytes unless the deadline is reached, in which case the bytes
-        that were read up to that point are returned. If deadline is None the
-        function blocks forever. A deadline before the current time corresponds
-        to non-blocking mode.
+        that were read up to that point are returned. If timeout is None the
+        function blocks forever.
         """
-        received = []
+        received = b''
         deadline = None if (timeout is None) else (time.monotonic() + timeout)
-        while (n_min > len(received)) and ((cancellation_token is None) or (not cancellation_token.set())):
+        first_iteration = True
+        while (n_min > len(received)):
+            if (cancellation_token is not None) and cancellation_token.is_set():
+                raise OperationAbortedError()
             now = time.monotonic()
             if deadline is None:
-                self.sock.settimeout(CANCELLATION_POLL_INTERVAL)
+                self._sock.settimeout(CANCELLATION_POLL_INTERVAL)
             elif deadline <= now:
-                self.sock.settimeout(0)
+                self._sock.settimeout(0)
+                if not first_iteration:
+                    raise TimeoutError()
             else:
-                self.sock.settimeout(min(now - deadline, CANCELLATION_POLL_INTERVAL))
+                self._sock.settimeout(min(now - deadline, CANCELLATION_POLL_INTERVAL))
+
             try:
-                received += self.sock.recv(n_min - len(received), socket.MSG_WAITALL)
+                received += self._sock.recv(n_min - len(received), socket.MSG_WAITALL)
+            except socket.timeout:
+                # receive everything that is immediately available
+                try:
+                    self._sock.settimeout(0)
+                    received += self._sock.recv(n_min - len(received), 0)
+                except socket.timeout:
+                    pass
+                except socket.error as ex:
+                    if ex.errno != 11: # Resource temporarily unavailable
+                        self._close_and_raise()
             except socket.error:
                 self._close_and_raise()
+
+            first_iteration = False
+
         if (n_max > n_min):
             try:
-                received += self.sock.recv(n_max - len(received), socket.MSG_DONTWAIT)
-            except socket.error:
-                self._close_and_raise()
+                self._sock.settimeout(0)
+                received += self._sock.recv(n_max - len(received), socket.MSG_DONTWAIT)
+            except socket.error as ex:
+                if ex.errno != 11: # Resource temporarily unavailable
+                    self._close_and_raise()
+        
+        self._total_received += len(received)
         return received
-
-        ## convert deadline to seconds (floating point)
-        #timeout = None if deadline is None else max(deadline - time.monotonic(), 0)
-        #try:
-        #    self.sock.settimeout(timeout)
-        #    data = self.sock.recv(n_bytes) # receive n_bytes
-        #    return data
-        #except socket.timeout:
-        #    # if we got a timeout data will still be none, so we call recv again
-        #    # this time in non blocking state and see if we can get some data
-        #    #return self.sock.recv(n_bytes, socket.MSG_DONTWAIT)
-        #    #try:
-        #    #  return self.sock.recv(n_bytes, socket.MSG_DONTWAIT)
-        #    #except socket.timeout:
-        #    raise TimeoutError
-        #except:
-        #    self._close_and_raise()
 
     def get_bytes_or_fail(self, n_bytes, deadline):
         result = self.get_bytes(n_bytes, deadline)
         if len(result) < n_bytes:
             raise TimeoutError("expected {} bytes but got only {}".format(n_bytes, len(result)))
         return result
-  
-#  def get_mtu(self):
-#    return None # no MTU
+
+def handle_connection(sock, cancellation_token, logger):
+    channel = TCPTransport(sock, str(sock), logger)
+    try:
+        hand_shake = fibre.global_state.own_uuid.bytes
+        logger.debug("sending own UUID")
+        channel.process_bytes(hand_shake, timeout=None)
+        logger.debug("waiting for remote UUID")
+        remote_uuid_buf = channel.get_bytes(16, 16, timeout=None)
+        remote_uuid = uuid.UUID(bytes=remote_uuid_buf)
+        logger.debug("handshake with {} complete".format(remote_uuid))
+        remote_node = fibre.get_remote_node(uuid)
+        decoder = fibre.InputChannelDecoder(remote_node)
+
+        remote_node.add_output_channel(channel)
+        try:
+            while not cancellation_token.is_set():
+                n_min = min(decoder.get_min_useful_bytes(), RX_PUMP_BUFFER_SIZE)
+                buf = channel.get_bytes(n_min, 4192, timeout=None, cancellation_token=cancellation_token)
+                decoder.process_bytes(buf)
+        finally:
+            remote_node.remove_output_channel(channel)
+    finally:
+        channel.close()
 
 
-
-def discover_channels(path, serial_number, callback, cancellation_token, channel_termination_token, logger):
+def discover_channels(path, cancellation_token, logger):
     """
     Tries to connect to a TCP server based on the path spec.
     This function blocks until cancellation_token is set.
@@ -172,25 +196,31 @@ def discover_channels(path, serial_number, callback, cancellation_token, channel
                         .format(path))
 
     while not cancellation_token.is_set():
+        logger.debug("TCP discover loop on {}".format(path))
+
+        targets = []
+        targets += socket.getaddrinfo(dest_addr, dest_port, socket.AF_INET6, socket.SOCK_STREAM)
+        targets += socket.getaddrinfo(dest_addr, dest_port, socket.AF_INET, socket.SOCK_STREAM)
+        target = targets[0] # TODO: try targets one by one
+        # target is a tuple (address_family, socket_kind, ?, ?, (addr, port))
+
         try:
-            logger.debug("TCP discover loop")
-            channel = fibre.tcp_transport.TCPTransport(dest_addr, dest_port, logger)
-            hand_shake = fibre.global_state.own_uuid.bytes
-            logger.debug("sending own UUID")
-            channel.process_bytes(hand_shake, timeout=None)
-            logger.debug("waiting for remote UUID")
-            channel.get_bytes(16, 16, timeout=None)
-            logger.debug("handshake complete")
-            #stream2packet_input = fibre.protocol.PacketFromStreamConverter(tcp_transport)
-            #packet2stream_output = fibre.protocol.StreamBasedPacketSink(tcp_transport)
-            #channel = fibre.protocol.Channel(
+            sock = socket.socket(target[0], target[1])
+            # TODO: this blocks until a connection is established, or the system cancels it
+            sock.connect(target[4])
+            handle_connection(sock, cancellation_token, logger)
+            #stream2packet_input = fibre.PacketFromStreamConverter(tcp_transport)
+            #packet2stream_output = fibre.StreamBasedPacketSink(tcp_transport)
+            #channel = fibre.Channel(
             #        "TCP device {}:{}".format(dest_addr, dest_port),
             #        stream2packet_input, packet2stream_output,
             #        channel_termination_token, logger)
         except:
-            logger.debug("TCP channel init failed. More info: " + traceback.format_exc())
+            logger.debug("TCP channel failed. More info: " + traceback.format_exc())
             #pass
             time.sleep(1)
         else:
-            callback(channel)
-            channel._channel_broken.wait(cancellation_token=cancellation_token)
+            pass
+            #callback(channel)
+            #channel._channel_broken.wait(cancellation_token=cancellation_token)
+    logger.debug("TCP discover loop on {} is exiting".format(path))

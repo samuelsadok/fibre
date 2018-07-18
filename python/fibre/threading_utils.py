@@ -12,7 +12,7 @@ import sys
 import time
 import threading
 import selectors
-from fibre.utils import OperationAbortedError
+from fibre import OperationAbortedError
 
 import abc
 if sys.version_info >= (3, 4):
@@ -189,7 +189,37 @@ class Semaphore(Waitable):
         os.close(self._read_fd)
         os.close(self._write_fd)
 
+class Future(Waitable):
+    """
+    All public member functions of this class are thread-safe
+    """
+    def __init__(self):
+        self._evt = EventWaitHandle(auto_reset=False)
+        self._lock = threading.Lock()
+        self._has_value = False
+        self._value = None
 
+    
+    def try_acquire(self):
+        return self._evt.try_acquire()
+    def fileno(self):
+        return self._evt.fileno()
+
+    def has_value(self):
+        with self._lock:
+            return self._has_value
+
+    def get_value(self):
+        self._evt.wait()
+        return self._value
+        
+    def set_value(self, value):
+        with self._lock:
+            if self._has_value:
+                raise Exception("this future already has a value")
+            self._value = value
+            self._has_value = True
+        self._evt.set()
 
 def wait_any(*events, **kwargs):
     """

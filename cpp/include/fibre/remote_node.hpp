@@ -13,8 +13,7 @@ public:
 
     Uuid get_uuid() const { return uuid_; }
 
-    InputPipe* get_input_pipe(size_t id, bool* is_new);
-    OutputPipe* get_output_pipe(size_t id);
+    std::pair<InputPipe*, OutputPipe*> get_pipe_pair(size_t id, bool server_pool, bool* is_new);
     
     void add_output_channel(OutputChannel* channel);
     void remove_output_channel(OutputChannel* channel);
@@ -25,10 +24,8 @@ public:
     void schedule();
 
 private:
-    std::unordered_map<size_t, InputPipe> client_input_pipes_;
-    std::unordered_map<size_t, InputPipe> server_input_pipes_;
-    std::unordered_map<size_t, OutputPipe> client_output_pipes_;
-    std::unordered_map<size_t, OutputPipe> server_output_pipes_;
+    std::unordered_map<size_t, std::pair<InputPipe, OutputPipe>> client_pipe_pairs_;
+    std::unordered_map<size_t, std::pair<InputPipe, OutputPipe>> server_pipe_pairs_;
     std::vector<OutputChannel*> output_channels_;
     Uuid uuid_;
 

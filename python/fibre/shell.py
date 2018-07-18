@@ -57,11 +57,11 @@ def launch_shell(args,
 
     # Connect to device
     logger.debug("Waiting for {}...".format(branding_long))
-    fibre.find_all(args.path, args.serial_number,
-                    lambda dev: did_discover_device(dev, interactive_variables, discovered_devices, branding_short, branding_long, logger, app_shutdown_token),
-                    app_shutdown_token,
-                    app_shutdown_token,
-                    logger=logger)
+    #fibre.find_all(args.path, args.serial_number,
+    #                lambda dev: did_discover_device(dev, interactive_variables, discovered_devices, branding_short, branding_long, logger, app_shutdown_token),
+    #                app_shutdown_token,
+    #                app_shutdown_token,
+    #                logger=logger)
 
     # Check if IPython is installed
     if args.no_ipython:

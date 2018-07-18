@@ -14,7 +14,7 @@ import fibre
 # TODO: make this customizable
 DEFAULT_BAUDRATE = 115200
 
-class SerialStreamTransport(fibre.protocol.StreamSource, fibre.protocol.StreamSink):
+class SerialStreamTransport(fibre.StreamSource, fibre.StreamSink):
     def __init__(self, port, baud):
         self._dev = serial.Serial(port, baud, timeout=1)
 
@@ -84,9 +84,9 @@ def discover_channels(path, serial_number, callback, cancellation_token, channel
         for port_name in new_ports:
             try:
                 serial_device = SerialStreamTransport(port_name, DEFAULT_BAUDRATE)
-                input_stream = fibre.protocol.PacketFromStreamConverter(serial_device)
-                output_stream = fibre.protocol.StreamBasedPacketSink(serial_device)
-                channel = fibre.protocol.Channel(
+                input_stream = fibre.PacketFromStreamConverter(serial_device)
+                output_stream = fibre.StreamBasedPacketSink(serial_device)
+                channel = fibre.Channel(
                         "serial port {}@{}".format(port_name, DEFAULT_BAUDRATE),
                         input_stream, output_stream, channel_termination_token, logger)
                 channel.serial_device = serial_device

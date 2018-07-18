@@ -5,9 +5,10 @@ import usb.core
 import usb.util
 import sys
 import time
-import fibre.protocol
+#import fibre
 import traceback
 import platform
+import fibre
 
 # Currently we identify fibre-enabled devices by VID,PID
 # TODO: identify by USB descriptors
@@ -17,7 +18,7 @@ WELL_KNOWN_VID_PID_PAIRS = [
   (0x1209, 0x0D33)
 ]
 
-class USBBulkTransport(fibre.protocol.PacketSource, fibre.protocol.PacketSink):
+class USBBulkTransport(fibre.PacketSource, fibre.PacketSink):
   def __init__(self, dev, logger):
     self._logger = logger
     self.dev = dev
@@ -101,7 +102,7 @@ class USBBulkTransport(fibre.protocol.PacketSource, fibre.protocol.PacketSink):
       return ret
     except usb.core.USBError as ex:
       if ex.errno == 19 or ex.errno == 32: # "no such device", "pipe error"
-        raise fibre.protocol.ChannelBrokenException()
+        raise fibre.ChannelBrokenException()
       elif ex.errno is None or ex.errno == 60 or ex.errno == 110: # timeout
         raise TimeoutError()
       else:
@@ -114,10 +115,10 @@ class USBBulkTransport(fibre.protocol.PacketSource, fibre.protocol.PacketSink):
           self.deinit()
           self.init()
         except usb.core.USBError:
-          raise fibre.protocol.ChannelBrokenException()
+          raise fibre.ChannelBrokenException()
         # Retry transfer
         self._was_damaged = True
-        raise fibre.protocol.ChannelDamagedException()
+        raise fibre.ChannelDamagedException()
 
   def get_packet(self, deadline):
     try:
@@ -130,7 +131,7 @@ class USBBulkTransport(fibre.protocol.PacketSource, fibre.protocol.PacketSink):
       return bytearray(ret)
     except usb.core.USBError as ex:
       if ex.errno == 19 or ex.errno == 32: # "no such device", "pipe error"
-        raise fibre.protocol.ChannelBrokenException()
+        raise fibre.ChannelBrokenException()
       elif ex.errno is None or ex.errno == 60 or ex.errno == 110: # timeout
         raise TimeoutError()
       else:
@@ -143,10 +144,10 @@ class USBBulkTransport(fibre.protocol.PacketSource, fibre.protocol.PacketSink):
           self.deinit()
           self.init()
         except usb.core.USBError:
-          raise fibre.protocol.ChannelBrokenException()
+          raise fibre.ChannelBrokenException()
         # Retry transfer
         self._was_damaged = True
-        raise fibre.protocol.ChannelDamagedException()
+        raise fibre.ChannelDamagedException()
 
 
 def discover_channels(path, serial_number, callback, cancellation_token, channel_termination_token, logger):
@@ -193,7 +194,7 @@ def discover_channels(path, serial_number, callback, cancellation_token, channel
         bulk_device = USBBulkTransport(usb_device, logger)
         logger.debug(bulk_device.info())
         bulk_device.init()
-        channel = fibre.protocol.Channel(
+        channel = fibre.Channel(
                 "USB device bus {} device {}".format(usb_device.bus, usb_device.address),
                 bulk_device, bulk_device, channel_termination_token, logger)
         channel.usb_device = usb_device # for debugging only

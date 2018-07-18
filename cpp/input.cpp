@@ -25,6 +25,9 @@ void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t lengt
         LOG_FIBRE_W(INPUT, "received dangling chunk: expected CRC ", as_hex(crc_), " but got ", as_hex(crc));
         return;
     }
+    if (!input_handler) {
+        LOG_FIBRE_W(INPUT, "the pipe ", id_, " has no input handler");
+    }
     input_handler->process_bytes(buffer, length, nullptr /* TODO: why? */);
     pos_ = offset + length;
     // TODO: acknowledge received bytes
@@ -50,15 +53,17 @@ InputChannelDecoder::status_t InputChannelDecoder::process_bytes(const uint8_t* 
                 LOG_FIBRE(INPUT, "received chunk header: pipe ", get_pipe_no(), ", offset ", as_hex(get_chunk_offset()), ", length ", as_hex(get_chunk_length()), ", crc ", as_hex(get_chunk_crc()));
                 in_header = false;
                 bool is_new = false;
-                uint16_t pipe_no = get_pipe_no();
-                input_pipe_ = remote_node_->get_input_pipe(pipe_no, &is_new);
+                uint16_t pipe_id = get_pipe_no();
+                std::pair<InputPipe*, OutputPipe*> pipe_pair
+                    = remote_node_->get_pipe_pair(pipe_id, !(pipe_id & 1), &is_new);
+                input_pipe_ = pipe_pair.first;
+                OutputPipe* output_pipe = pipe_pair.second;
                 if (!input_pipe_) {
-                    LOG_FIBRE_W(INPUT, "no pipe ", pipe_no, " associated with this source", pipe_no);
+                    LOG_FIBRE_W(INPUT, "no pipe ", pipe_id, " associated with this source");
                     //reset();
                     continue;
                 }
                 if (is_new) {
-                    OutputPipe* output_pipe = remote_node_->get_output_pipe(pipe_no & 0x8000);
                     input_pipe_->construct_decoder<IncomingConnectionDecoder>(*output_pipe);
                 }
             }
@@ -87,6 +92,14 @@ InputChannelDecoder::status_t InputChannelDecoder::process_bytes(const uint8_t* 
         }
     }
     return OK;
+}
+
+size_t InputChannelDecoder::get_min_useful_bytes() const {
+    if (in_header) {
+        return header_decoder_.get_min_useful_bytes();
+    } else {
+        return 1; // non-trivial to get a better lower bound here
+    }
 }
 
 

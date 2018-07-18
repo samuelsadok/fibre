@@ -17,7 +17,8 @@ namespace fibre {
 
 class TCPConnection : public OutputChannel, public StreamSource {
 public:
-    TCPConnection(int socket_fd) :
+    TCPConnection(const char * name, int socket_fd) :
+        name_(name),
         socket_fd_(socket_fd)
     {
         int val = 0;
@@ -105,17 +106,22 @@ public:
         }
     }
 
+    const char * get_name() const final {
+        return name_;
+    }
+
     void terminate() {
         shutdown(socket_fd_, SHUT_RDWR);
     }
 
 private:
+    const char * name_;
     int socket_fd_;
     size_t kernel_send_buffer_size_;
 };
 
-bool serve_client(int socket_fd) {
-    TCPConnection connection(socket_fd);
+bool handle_connection(int socket_fd) {
+    TCPConnection connection("TCP connection", socket_fd);
     uint8_t uuid_buf[16];
 
     LOG_FIBRE(TCP, "sending own UUID");
@@ -139,8 +145,9 @@ bool serve_client(int socket_fd) {
     for (;;) {
         uint8_t buf[TCP_RX_BUF_LEN];
         size_t n_received = 0;
+        size_t n_min = std::min(input_decoder.get_min_useful_bytes(), sizeof(buf));
         StreamSource::status_t status =
-                connection.get_bytes(buf, 1, sizeof(buf), &n_received);
+                connection.get_bytes(buf, n_min, sizeof(buf), &n_received);
         if (status != StreamSource::OK) {
             LOG_FIBRE(TCP, "connection closed");
             break;
@@ -196,7 +203,7 @@ int serve_on_tcp(unsigned int port) {
         // TODO: Add a limit on accepting connections
         int client_portal_fd = accept(s, reinterpret_cast<sockaddr *>(&si_other), &silen); // blocking call
         LOG_FIBRE(TCP, "accepted connection");
-        serv_pool.push_back(std::async(std::launch::async, serve_client, client_portal_fd));
+        serv_pool.push_back(std::async(std::launch::async, handle_connection, client_portal_fd));
         // do a little clean up on the pool
         for (std::vector<std::future<bool>>::iterator it = serv_pool.end()-1; it >= serv_pool.begin(); --it) {
             if (future_is_ready(*it)) {

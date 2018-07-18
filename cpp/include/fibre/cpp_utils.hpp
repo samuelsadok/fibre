@@ -645,9 +645,9 @@ TRet* dynamic_get(size_t i, const std::tuple<Ts...>& t) {
 template<typename T, bool BigEndian, typename = void>
 struct SimpleSerializer;
 template<typename T>
-using LittleEndianSerializer = SimpleSerializer<T, true>;
+using LittleEndianSerializer = SimpleSerializer<T, false>;
 template<typename T>
-using BigEndianSerializer = SimpleSerializer<T, false>;
+using BigEndianSerializer = SimpleSerializer<T, true>;
 
 //template<T, typename = Serializer<T>>
 //using serializer_exists = std::true_t;

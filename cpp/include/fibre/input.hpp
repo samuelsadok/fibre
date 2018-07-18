@@ -19,10 +19,13 @@ class InputPipe {
     size_t crc_ = CANONICAL_CRC16_INIT;
     size_t total_length_ = 0;
     bool total_length_known = false;
-    size_t id_;
+    size_t id_; // last bit indicates server (0) or client (1)
     StreamSink* input_handler = nullptr; // TODO: destructor
 public:
-    InputPipe(size_t id) : id_(id) {}
+    InputPipe(RemoteNode* remote_node, size_t idx, bool is_server)
+        : id_((idx << 1) | (is_server ? 0 : 1)) {}
+
+    size_t get_id() const { return id_; }
 
     template<typename TDecoder, typename ... TArgs>
     void construct_decoder(TArgs&& ... args) {
@@ -49,6 +52,7 @@ public:
         {}
     
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final;
+    size_t get_min_useful_bytes() const final;
 private:
     using HeaderDecoder = StaticStreamChain<
             FixedIntDecoder<uint16_t, false>,

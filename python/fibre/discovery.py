@@ -7,40 +7,95 @@ import json
 import time
 import threading
 import traceback
-import fibre.protocol
-import fibre.utils
+
+from fibre import Logger, EventWaitHandle, ChannelBrokenException, RemoteNode, calc_crc16
 import fibre.remote_object
-from fibre.utils import Logger
-from fibre.threading_utils import EventWaitHandle
-from fibre.protocol import ChannelBrokenException
+from fibre import global_state, DEFAULT_SCAN_PATHS
 
 # Load all installed transport layers
 
-channel_types = {}
+#scan_providers = {}
 
 try:
     import fibre.usbbulk_transport
-    channel_types['usb'] = fibre.usbbulk_transport.discover_channels
+    global_state.scan_providers['usb'] = fibre.usbbulk_transport.discover_channels
 except ModuleNotFoundError:
     pass
 
 try:
     import fibre.serial_transport
-    channel_types['serial'] = fibre.serial_transport.discover_channels
+    global_state.scan_providers['serial'] = fibre.serial_transport.discover_channels
 except ModuleNotFoundError:
     pass
 
 try:
     import fibre.tcp_transport
-    channel_types['tcp'] = fibre.tcp_transport.discover_channels
+    global_state.scan_providers['tcp:client'] = fibre.tcp_transport.discover_channels
 except ModuleNotFoundError:
     pass
 
 try:
     import fibre.udp_transport
-    channel_types['udp'] = fibre.udp_transport.discover_channels
+    global_state.scan_providers['udp'] = fibre.udp_transport.discover_channels
 except ModuleNotFoundError:
     pass
+
+class Scan():
+    def __init__(self, cancellation_token):
+        self.ref_count = 0
+        self.cancellation_token = cancellation_token
+
+def get_scan_provider(path):
+    """
+    Returns the scan provider with the longest matching name.
+    I.e. if there is are scan providers with the name "tcp" and
+    "tcp:dht", the path spec "tcp:dht:NODE_ID" would match the
+    latter.
+    """
+    path_elements = path.split(':')
+    while path_elements:
+        scanner_name = ':'.join(path_elements)
+        if scanner_name in global_state.scan_providers:
+            return global_state.scan_providers[scanner_name], path[len(scanner_name):].lstrip(':')
+        path_elements = path_elements[:-1]
+    raise Exception("no scan provider installed for path spec {}".format(path))
+
+def start_scan(path):
+    with global_state.active_scans_lock:
+        if path in global_state.active_scans:
+            scan = global_state.active_scans[path]
+        else:
+            scan_provider, remaining_path = get_scan_provider(path)
+            scan_cancellation_token = EventWaitHandle(name='fibre:scan-cancellation-token:'+str(path))
+            threading.Thread(
+                target=scan_provider,
+                name='fibre:scanner:'+str(path),
+                args=(remaining_path, scan_cancellation_token, global_state.logger)).start()
+            scan = Scan(scan_cancellation_token)
+            global_state.active_scans[path] = scan
+        scan.ref_count += 1
+
+def stop_scan(path):
+    with global_state.active_scans_lock:
+        if not path in global_state.active_scans:
+            raise Exception("attempt to stop scanning on {} but there is no active scan with such a path".format(path))
+        else:
+            kv = global_state.active_scans.pop(path)
+            kv.ref_count -= 1
+            if not kv.ref_count:
+                kv.cancellation_token.set()
+
+def init(logger):
+    if logger is None:
+        logger = Logger(verbose=False)
+
+    global_state.logger = logger
+    for path in DEFAULT_SCAN_PATHS:
+        start_scan(path)
+
+def exit():
+    for path in DEFAULT_SCAN_PATHS:
+        stop_scan(path)
 
 def noprint(text):
     pass
@@ -67,7 +122,7 @@ def find_all(path, serial_number,
             logger.debug("Connecting to device on " + channel._name)
 
             uuid = bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-            node = fibre.remote_object.RemoteNode(uuid, 5)
+            node = fibre.RemoteNode(uuid, 5)
             node.add_output_channel(channel)
             with node:
                 get_function_json = fibre.remote_object.RemoteFunction(node, 0, 0, ["number"], ["json"])
@@ -78,7 +133,7 @@ def find_all(path, serial_number,
             except (TimeoutError, ChannelBrokenException):
                 logger.debug("no response - probably incompatible")
                 return
-            json_crc16 = fibre.protocol.calc_crc16(fibre.protocol.PROTOCOL_VERSION, json_bytes)
+            json_crc16 = fibre.calc_crc16(fibre.PROTOCOL_VERSION, json_bytes)
             channel._interface_definition_crc = json_crc16
             try:
                 json_string = json_bytes.decode("ascii")

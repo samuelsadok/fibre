@@ -5,25 +5,22 @@
 
 using namespace fibre;
 
-InputPipe* RemoteNode::get_input_pipe(size_t id, bool* is_new) {
-    std::unordered_map<size_t, InputPipe>& input_pipes = server_input_pipes_;
+std::pair<InputPipe*, OutputPipe*> RemoteNode::get_pipe_pair(size_t id, bool server_pool, bool* is_new) {
+    std::unordered_map<size_t, std::pair<InputPipe, OutputPipe>>& pipe_pool =
+        server_pool ? server_pipe_pairs_ : client_pipe_pairs_;
     // TODO: limit number of concurrent pipes
-    auto emplace_result = input_pipes.emplace(id, id);
-    InputPipe& input_pipe = emplace_result.first->second;
+    auto emplace_result = pipe_pool.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(id >> 1),
+        std::forward_as_tuple(
+            std::piecewise_construct,
+            std::forward_as_tuple(this, id >> 1, server_pool),
+            std::forward_as_tuple(this, id >> 1, server_pool)
+            ));
+    std::pair<InputPipe, OutputPipe>& pipes = emplace_result.first->second;
     if (is_new)
         *is_new = emplace_result.second;
-    return &input_pipe;
-}
-
-OutputPipe* RemoteNode::get_output_pipe(size_t id) {
-    std::unordered_map<size_t, OutputPipe>& output_pipes = server_output_pipes_;
-    // TODO: only return unused pipes
-    auto emplace_result = output_pipes.emplace(
-        std::piecewise_construct,
-        std::forward_as_tuple(id),
-        std::forward_as_tuple(this, id));
-    OutputPipe& output_pipe = emplace_result.first->second;
-    return &output_pipe;
+    return std::make_pair(&pipes.first, &pipes.second);
 }
 
 void RemoteNode::add_output_channel(OutputChannel* channel) {
@@ -62,16 +59,21 @@ void RemoteNode::schedule() {
     constexpr size_t per_packet_overhead = 16 + 2;
     constexpr size_t per_chunk_overhead = 8;
     
-    LOG_FIBRE(OUTPUT, "dispatching output chunks...");
+    LOG_FIBRE(OUTPUT, "schedule for remote node ", uuid_);
 
     for (OutputChannel* channel : output_channels_) {
-        //output_stream = channel;
         size_t free_space = channel->get_min_non_blocking_bytes();
-        if (free_space < per_packet_overhead)
+        if (free_space < per_packet_overhead) {
+            LOG_FIBRE(OUTPUT, "channel ", (*channel), " is busy");
             continue;
+        }
+        LOG_FIBRE(OUTPUT, "channel ", (*channel), " has ", free_space, " free bytes");
 
-        for (std::pair<const size_t, OutputPipe>& pipe_entry : server_output_pipes_) { // TODO: include client
-            OutputPipe& pipe = pipe_entry.second;
+        LOG_FIBRE(GENERAL, "array at ", as_hex(reinterpret_cast<uintptr_t>(&server_pipe_pairs_)));
+        using pipe_entry_t = std::pair<const size_t, std::pair<InputPipe, OutputPipe>>;
+        for (pipe_entry_t& pipe_entry : server_pipe_pairs_) { // TODO: include client
+            OutputPipe& pipe = pipe_entry.second.second;
+            LOG_FIBRE(OUTPUT, "looking at pipe ", pipe.get_id());
 
             monotonic_time_t due_time = pipe.get_due_time();
             if (due_time > now())

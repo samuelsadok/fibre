@@ -92,14 +92,14 @@ private:
 Logger* get_logger();
 
 template<log_topic_t TOPIC, log_level_t LEVEL, typename... Ts>
-void log(const char *filename, size_t line_no, const char *funcname, Ts ... values) {
+void log(const char *filename, size_t line_no, const char *funcname, Ts&& ... values) {
     if (get_config<TOPIC>() == OFF) {
         return;
     }
 
     Logger* logger = get_logger();
     Logger::new_entry entry = logger->log(get_topic_name<TOPIC>(), filename, line_no, funcname);
-    send_to_stream(entry.get_stream(), values...);
+    send_to_stream(entry.get_stream(), std::forward<Ts>(values)...);
 }
 
 

@@ -13,6 +13,7 @@ import time
 import struct
 import uuid
 #from fibre import global_state
+from fibre import OutgoingConnection
 
 class ObjectDefinitionError(Exception):
     pass
@@ -82,146 +83,6 @@ class RemoteProperty():
 #        self.endpoint_id = endpoint_id
 #        self.crc = crc
 
-class Chunk():
-    def __init__(self, offset, crc_init, data):
-        self.offset = offset
-        self.crc_init = crc_init
-        self.data = data
-
-class OutputPipe(object):
-    def __init__(self, pipe_id, exit_func, data_available_event):
-        self.pipe_id = pipe_id
-        self._exit_func = exit_func
-        self._active = False
-        self._pending_bytes = b''
-        self._pos = 0
-        self._crc = 0x1337
-        self._data_available_event = data_available_event
-    def __enter__(self):
-        self._active = True
-        return self
-    def __exit__(self, exception_type, exception_value, traceback):
-        self._exit_func()
-        self._active = False
-    def send_bytes(self, data):
-        fibre.assert_bytes_type(data)
-        # TODO: handle zero or multiple endpoints
-        self._pending_bytes += data
-        #self._pos += len(data)
-        #self._crc = fibre.protocol.calc_crc16(self._crc, data)
-        self._data_available_event.set()
-    def get_chunks(self):
-        yield Chunk(self._pos, self._crc, self._pending_bytes)
-
-class Connection(object):
-    def __init__(self, remote_node, **kwargs):
-        self._output_pipe = remote_node.get_output_pipe(**kwargs)
-    def __enter__(self):
-        self._output_pipe.__enter__()
-        return self
-    def __exit__(self, exception_type, exception_value, traceback):
-        self._output_pipe.__exit__(exception_type, exception_value, traceback)
-    def _serialize(self, value_type, value):
-        # TODO: the selected codec may depend on the endpoint
-        format_name = fibre.codecs.canonical_formats[value_type]
-        codec = fibre.codecs.get_codec(format_name, type(value))
-        return codec.serialize(value)
-    def flush(self):
-        """
-        Blocks until all previously emitted values have reached
-        the remote endpoint. TODO: support fire-and-forget endpoints
-        """
-        pass
-        #self._output_pipe.send_packet_break()
-    def emit_value(self, value_type, value):
-        self._output_pipe.send_bytes(self._serialize(value_type, value))
-    def receive_value(self, value_type):
-        while True:
-            time.sleep(1)
-        pass
-
-class RemoteNode(object):
-    """
-    An outbox multiplexes multiple output pipes onto multiple output channels,
-    all of which lead to the same destination node.
-
-    Channels can be added and removed as needed.
-    All output channels of a specific outbox must lead to the same destination node.
-    Only one outbox must be allocated for a given destination node.
-    """
-
-    def __init__(self, uuid, n_pipes):
-        self._uuid = uuid
-        self._active_pipes = [None] * n_pipes
-        self._free_pipes_sem = Semaphore(count=n_pipes)
-        self._data_available = EventWaitHandle(auto_reset=True) # spurious signals possible
-        self._channel_available = EventWaitHandle(auto_reset=True) # spurious signals possible
-        self._cancellation_token = EventWaitHandle()
-        self._scheduler_thread = threading.Thread(target=self._scheduler_thread_loop, name='fibre:sched')
-        self._lock = Lock()
-        self._output_channels = []
-
-    def __enter__(self):
-        """Starts the scheduler thread"""
-        self._scheduler_thread.start()
-        return self
-    def __exit__(self, exception_type, exception_value, traceback):
-        """Stops the scheduler thread"""
-        self._cancellation_token.set()
-        self._scheduler_thread.join()
-
-    def get_output_pipe(self, ensure_delivery=True, allow_spurious=False):
-        self._free_pipes_sem.acquire() # TODO: allow cancellation
-        with self._lock:
-            pipe_id = self._active_pipes.index(None)
-            pipe = OutputPipe(pipe_id, lambda: self.release_pipe(pipe_id), self._data_available)
-            #pipe._data_available_event.subscribe(self._set_data_available)
-            self._active_pipes[pipe_id] = pipe
-        return pipe
-
-    def release_pipe(self, pipe_id):
-        with self._lock:
-            pipe = self._active_pipes[pipe_id]
-            self._active_pipes[pipe_id] = None
-        #    pipe._data_available_event.unsubscribe(self._set_data_available)
-        self._free_pipes_sem.release()
-
-    def add_output_channel(self, channel):
-        self._output_channels.append(channel)
-    
-    def remove_output_channel(self, channel):
-        self._output_channels.remove(channel)
-
-    def _scheduler_thread_loop(self):
-        while not self._cancellation_token.is_set():
-            self._data_available.wait(cancellation_token=self._cancellation_token)
-            #self._channel_available.wait(cancellation_token=self._cancellation_token)
-
-            for channel in self._output_channels:
-                packet = bytes()
-                per_packet_overhead = 16 + 2 # 16 bytes source UUID + 2 bytes CRC
-                per_chunk_overhead = 8
-                free_space = channel.get_min_non_blocking_bytes()
-                free_space = None if free_space is None else (free_space - per_packet_overhead)
-                assert free_space is not None or free_space >= 0
-
-                for pipe in self._active_pipes:
-                    if pipe is None:
-                        continue
-                    for chunk in pipe.get_chunks():
-                        if free_space is not None:
-                            chunk.data = chunk.data[:free_space]
-                            free_space -= per_chunk_overhead + len(chunk.data)
-                        chunk_header = struct.pack('<HHHH', pipe.pipe_id, chunk.offset, chunk.crc_init, len(chunk.data))
-                        print(chunk_header)
-                        channel.process_bytes(chunk_header, timeout=0)
-                        channel.process_bytes(chunk.data, timeout=0)
-                        #if pipe.get_available_bytes():
-                        #    self._data_available.set()
-
-                # Dispatch packet
-                #channel.process_packet_async(packet)
-
 
 class RemoteFunction(object):
     """
@@ -262,15 +123,26 @@ class RemoteFunction(object):
         #with self._lock:
         #    call_instance = self._call_instance
         #    self._call_instance += 1
-        with Connection(self._remote_node, ensure_delivery=True, allow_spurious=False) as connection:
+        #with OutgoingConnection(self._remote_node, ensure_delivery=True, allow_spurious=False) as connection:
+        with OutgoingConnection(self._remote_node, ensure_delivery=True) as connection:
+            output_futures = []
+            for i, output_type in enumerate(self._output_types):
+                output_futures.append(connection.receive_value(output_type))
+
             connection.emit_value("number", self._endpoint_id)
             for i, input_type in enumerate(self._input_types):
                 connection.emit_value(input_type, args[i])
-            connection.flush()
+#            connection.flush()
+
             outputs = []
-            for i, output_type in enumerate(self._output_types):
-                outputs.append(connection.receive_value(output_type))
-        return outputs
+            for output in output_futures:
+                outputs.append(output.get_value())
+        if len(outputs) > 1:
+            return tuple(outputs)
+        elif len(outputs) == 1:
+            return outputs[0]
+        else:
+            return None
 
     def dump(self):
         return "{}({})".format(self._name, ", ".join("{}: {}".format(x._name, x._property_type.__name__) for x in self._inputs))

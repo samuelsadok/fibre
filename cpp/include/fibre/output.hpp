@@ -28,13 +28,13 @@ class OutputPipe final : public StreamSink {
     size_t pipe_pos_ = 0; /** position of the beginning of the buffer within the byte stream */
     uint16_t crc_init_ = CANONICAL_CRC16_INIT;
     monotonic_time_t next_due_time_ = monotonic_time_t::min();
-    size_t id_;
+    size_t id_; // last bit indicates server (1) or client (0)
 public:
     bool guaranteed_delivery = false;
 
-    OutputPipe(RemoteNode* remote_node, size_t id) :
-        remote_node_(remote_node),
-        id_(id) { }
+    OutputPipe(RemoteNode* remote_node, size_t idx, bool is_server)
+        : remote_node_(remote_node),
+        id_((idx << 1) | (is_server ? 1 : 0)) {}
 
     size_t get_id() const { return id_; }
 
@@ -84,12 +84,15 @@ public:
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final;
 
     //size_t get_n_due_bytes
-    void get_available_non_blocking_bytes(size_t* offset, size_t* length, uint16_t* crc) {
-        
-    }
+    //void get_available_non_blocking_bytes(size_t* offset, size_t* length, uint16_t* crc) {
+    //    
+    //}
 
     chunk_list get_pending_chunks() {
-        return chunk_list(this);
+        if (now() >= next_due_time_)
+            return chunk_list(this);
+        else
+            return chunk_list(nullptr);
     }
 
     void drop_chunk(size_t offset, size_t length) {
@@ -131,7 +134,23 @@ public:
     std::chrono::duration<uint32_t, std::milli> resend_interval = std::chrono::milliseconds(100);
     //StreamSink operator & () { return }
     //virtual StreamSink* get_stream_sink() = 0;
+    
+    /**
+     * @brief Returns the human readable name of the stream.
+     * 
+     * May return NULL.
+     * 
+     * The returned pointer shall not be freed by the caller and shall be valid
+     * as long as the object exists.
+     */
+    virtual const char * get_name() const { return nullptr; }
 };
+
+__attribute__((unused))
+static std::ostream& operator<<(std::ostream& stream, const OutputChannel& channel) {
+    const char * name = channel.get_name();
+    return stream << (name ? name : "[unnamed channel]");
+}
 
 
 //template<typename TStream>

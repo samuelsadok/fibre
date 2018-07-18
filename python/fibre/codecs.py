@@ -5,7 +5,9 @@ encoded in raw bytes.
 """
 
 import struct
-import fibre.remote_object
+#import fibre.remote_object
+import fibre
+#from fibre import StreamStatus
 
 codecs = {}
 
@@ -43,6 +45,60 @@ class StructCodec():
 #    def deserialize(self, buffer):
 #        return struct.unpack("<HH", buffer)
 
+class StructDecoder(fibre.StreamSink):
+    def __init__(self, struct_format, target_type):
+        self._struct_format = struct_format
+        self._target_type = target_type
+        self._size = struct.calcsize(self._struct_format)
+        self._buffer = b''
+        self._future = fibre.Future()
+
+    def get_future(self):
+        return self._future
+
+    def process_bytes(self, buffer):
+        remaining_bytes = self._size - len(self._buffer)
+        self._buffer += buffer[:remaining_bytes]
+        buffer = buffer[remaining_bytes:]
+
+        if len(self._buffer) < self._size:
+            return fibre.StreamStatus.OK, buffer
+        else:
+            value = struct.unpack(self._struct_format, self._buffer)
+            value = value[0] if len(value) == 1 else value
+            self._future.set_value(self._target_type(value))
+            return fibre.StreamStatus.CLOSED, buffer
+
+class StringDecoder(fibre.StreamSink):
+    def __init__(self, encoding):
+        self._length_known = False
+        self._raw_bytes = b''
+        self._future = fibre.Future()
+        self._length_decoder = StructDecoder("<I", int)
+
+    def get_future(self):
+        return self._future
+
+    def process_bytes(self, buffer):
+        if not self._length_decoder.get_future().has_value():
+            status, buffer = self._length_decoder.process_bytes(buffer)
+            if status != fibre.StreamStatus.CLOSED:
+                return status, buffer
+
+        if self._length_decoder.get_future().has_value():
+            remaining_bytes = self._length_decoder.get_future().get_value() - len(self._raw_bytes)
+            self._raw_bytes += buffer[:remaining_bytes]
+            buffer = buffer[remaining_bytes:]
+
+            if len(self._raw_bytes) >= self._length_decoder.get_future().get_value():
+                self._future.set_value(self._raw_bytes.decode('ascii'))
+
+        if buffer:
+            return fibre.StreamStatus.OK, buffer
+        else:
+            return fibre.StreamStatus.CLOSED, buffer
+
+
 codecs = {
     'i8le': { int: StructCodec("<b", int) },
     'u8le': { int: StructCodec("<B", int) },
@@ -53,14 +109,19 @@ codecs = {
     'i64le': { int: StructCodec("<q", int) },
     'u64le': { int: StructCodec("<Q", int) },
     'bool': { bool: StructCodec("<?", bool) },
-    'float': { float: StructCodec("<f", float) }
+    'float': { float: StructCodec("<f", float) },
+    'ascii_string': { str: ((lambda: StringDecoder("ascii")), None) }
 }
 
 def get_codec(format_name, python_type):
     """
     Returns a suitable codec for a given (format_name, python_type) pair
     """
-    return codecs[format_name][python_type]
+    all_codecs = codecs[format_name]
+    if python_type is None:
+        return list(all_codecs.values())[0]
+    else:
+        return all_codecs[python_type]
 
 def get_python_type(format_name):
     """
