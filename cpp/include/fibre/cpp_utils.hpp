@@ -466,20 +466,20 @@ for_each_in_tuple_result_t<Fn, Tuple> for_each_in_tuple(Fn&& f, Tuple&& t) {
 */
 
 template <size_t N>
-class array_string
+class static_string
 {
     char _array[N + 1];
 
     template<size_t... PACK>
-    constexpr array_string(const char string_literal[N+1],
+    constexpr static_string(const char string_literal[N+1],
                            std::index_sequence<PACK...>)
     : _array{string_literal[PACK]..., '\0'}
     {
     }
 
     template<size_t N1, size_t... PACK1, size_t... PACK2>
-    constexpr array_string(const array_string<N1>&     s1,
-                           const array_string<N - N1>& s2,
+    constexpr static_string(const static_string<N1>&     s1,
+                           const static_string<N - N1>& s2,
                            std::index_sequence<PACK1...>,
                            std::index_sequence<PACK2...>)
     : _array{s1[PACK1]..., s2[PACK2]..., '\0'}
@@ -487,7 +487,7 @@ class array_string
     }
 
     template<size_t NOther, size_t... PACK>
-    constexpr array_string(const array_string<NOther>& other,
+    constexpr static_string(const static_string<NOther>& other,
                            std::index_sequence<PACK...>)
     : _array{other[PACK]..., '\0'}
     {
@@ -503,20 +503,20 @@ public:
     }
 
     template<size_t N1, ENABLE_IF(N1 <= N)>
-    constexpr array_string(const array_string<N1>& s1, const array_string<N - N1>& s2)
-        : array_string{ s1, s2, std::make_index_sequence<N1>{},
+    constexpr static_string(const static_string<N1>& s1, const static_string<N - N1>& s2)
+        : static_string{ s1, s2, std::make_index_sequence<N1>{},
                                 std::make_index_sequence<N - N1>{} }
     {
     }
 
-    constexpr array_string(const char string_literal[N+1])
-        : array_string{ string_literal, std::make_index_sequence<N>{} }
+    constexpr static_string(const char string_literal[N+1])
+        : static_string{ string_literal, std::make_index_sequence<N>{} }
     {
     }
 
 //    template<size_t NOther, size_t START_IDX, size_t END_IDX, ENABLE_IF(END_IDX - START_IDX == N)>
-//    constexpr array_string(const array_string<NOther>& other, std::index_sequence<START_IDX, END_IDX>)
-//        : array_string{other, fibre::make_integer_sequence_from_to<size_t, START_IDX, END_IDX>{}}
+//    constexpr static_string(const static_string<NOther>& other, std::index_sequence<START_IDX, END_IDX>)
+//        : static_string{other, fibre::make_integer_sequence_from_to<size_t, START_IDX, END_IDX>{}}
 //    {
 //    }
 
@@ -535,49 +535,49 @@ public:
     }
 
     template<size_t IFrom, size_t ITo = N>
-    constexpr array_string<ITo - IFrom> substring() const {
-        return array_string<ITo - IFrom>(*this, fibre::make_integer_sequence_from_to<size_t, IFrom, ITo>{});
+    constexpr static_string<ITo - IFrom> substring() const {
+        return static_string<ITo - IFrom>(*this, fibre::make_integer_sequence_from_to<size_t, IFrom, ITo>{});
     }
 
-    //constexpr array_string<N - last_index_of('/')> get_last_part(char c) {
+    //constexpr static_string<N - last_index_of('/')> get_last_part(char c) {
     //    return substring<file_path.last_index_of('/')>();
     //}
 };
 
 // @brief Constructs a fixed length string from a string literal
 template<size_t N_PLUS_1>
-constexpr array_string<N_PLUS_1-1> make_const_string(const char (&string_literal)[N_PLUS_1]) {
-    return array_string<N_PLUS_1-1>{string_literal};
+constexpr static_string<N_PLUS_1-1> make_const_string(const char (&string_literal)[N_PLUS_1]) {
+    return static_string<N_PLUS_1-1>{string_literal};
 }
 
 // @brief Constructs a fixed length string by concatenating two strings
-constexpr array_string<0> const_str_concat() {
-    return array_string<0>("");
+constexpr static_string<0> const_str_concat() {
+    return static_string<0>("");
 }
 
 // @brief Constructs a fixed length string by concatenating two strings
 template<size_t I1, size_t... ILengths>
-constexpr array_string<I1+sum<ILengths...>::value> const_str_concat(const array_string<I1>& s1, const array_string<ILengths>& ... strings) {
-    return array_string<I1+sum<ILengths...>::value>{s1, const_str_concat(strings...)};
+constexpr static_string<I1+sum<ILengths...>::value> const_str_concat(const static_string<I1>& s1, const static_string<ILengths>& ... strings) {
+    return static_string<I1+sum<ILengths...>::value>{s1, const_str_concat(strings...)};
 }
 
 // @brief Constructs a fixed length string by concatenating two strings
 template<size_t IDelim>
-constexpr array_string<0> const_str_join(const array_string<IDelim>& delimiter) {
-    return array_string<0>("");
+constexpr static_string<0> const_str_join(const static_string<IDelim>& delimiter) {
+    return static_string<0>("");
 }
 
 template<size_t IDelim, size_t I1>
-constexpr array_string<I1> const_str_join(const array_string<IDelim>& delimiter, const array_string<I1>& s1) {
+constexpr static_string<I1> const_str_join(const static_string<IDelim>& delimiter, const static_string<I1>& s1) {
     return s1;
 }
 
 // @brief Constructs a fixed length string by concatenating two strings
 template<size_t IDelim, size_t I1, size_t I2, size_t... ILengths>
-constexpr array_string<I1+I2+sum<ILengths...>::value+sizeof...(ILengths)+1>
+constexpr static_string<I1+I2+sum<ILengths...>::value+sizeof...(ILengths)+1>
 const_str_join(
-    const array_string<IDelim>& delimiter,
-    const array_string<I1> s1, const array_string<I2> s2, const array_string<ILengths>& ... strings) {
+    const static_string<IDelim>& delimiter,
+    const static_string<I1> s1, const static_string<I2> s2, const static_string<ILengths>& ... strings) {
     return const_str_concat(s1, ",", const_str_join(s2, strings...));
 }
 
@@ -980,5 +980,44 @@ public:
     TResult operator*() const { return (*container_)[i_]; }
 };
 
+
+
+/**
+ * @brief Extracts the argument types of a function signature and provides them
+ * as a std::tuple.
+ */
+template<typename TFunc>
+struct args_of;
+
+template<typename TRet, typename... TArgs>
+struct args_of<TRet(TArgs...)> {
+    using type = std::tuple<TArgs...>;
+};
+
+template<typename TFunc>
+using args_of_t = typename args_of<TFunc>::type;
+
+/**
+ * @brief Extracts the return type of a function signature
+ * 
+ * This is provided because std::result_of is deprecated since C++17
+ */
+template<typename TFunc>
+struct result_of;
+
+template<typename TRet, typename... TArgs>
+struct result_of<TRet(TArgs...)> {
+    using type = TRet;
+};
+
+template<typename TFunc>
+using result_of_t = typename result_of<TFunc>::type;
+
+
+/**
+ * @brief Returns the type that results when concatenating multiple tuples
+ */
+template<typename... TTuples>
+using tuple_cat_t = decltype(std::tuple_cat<TTuples...>(std::declval<TTuples>()...));
 
 #endif // __CPP_UTILS_HPP

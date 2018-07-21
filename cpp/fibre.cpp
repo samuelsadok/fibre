@@ -159,8 +159,11 @@ void publish_ref_type(FibreRefType* type) {
 
 /* Built-in published functions ---------------------------------------------*/
 
-bool get_function_json(uint32_t endpoint_id, char (&output)[256]) {
-    LOG_FIBRE(GENERAL, "invoked with ", as_hex(endpoint_id));
+bool get_function_json(uint32_t endpoint_id, const char ** output, size_t* length) {
+    LOG_FIBRE(GENERAL, "fetching JSON of function ", as_hex(endpoint_id));
+
+    if (output) *output = nullptr;
+    if (length) *length = 0;
 
     // TODO: behold, a race condition
     if (endpoint_id >= global_state.functions_.size()) {
@@ -168,22 +171,32 @@ bool get_function_json(uint32_t endpoint_id, char (&output)[256]) {
         return false;
     }
     fibre::LocalEndpoint* endpoint = global_state.functions_[endpoint_id];
-    endpoint->get_as_json(output);
+    endpoint->get_as_json(output, length);
     return true;
 }
 
+constexpr auto get_function_json__function_properties = 
+    make_function_props("get_function_json")
+    .with_inputs("endpoint_id")
+    .with_outputs("json");
 
-constexpr const char get_function_json_function_name[] = "get_function_json";
-constexpr const std::tuple<const char (&)[12]> get_function_json_input_names("endpoint_id");
-constexpr const std::tuple<const char (&)[5]> get_function_json_output_names("json");
-using get_function_json_properties = StaticFunctionProperties<
-    decltype(get_function_json_function_name),
-    std::remove_const_t<decltype(get_function_json_input_names)>,
-    std::remove_const_t<decltype(get_function_json_output_names)>
-    >::WithStaticNames<get_function_json_function_name, get_function_json_input_names, get_function_json_output_names>;
-auto a = FunctionStuff<std::tuple<uint32_t>, std::tuple<char[256]>, get_function_json_properties>
-        //::template WithStaticNames<get_function_json_names>
-        ::template WithStaticFuncPtr2<get_function_json>();
+fibre::LocalFunctionEndpoint<
+    decltype(get_function_json), get_function_json,
+    decltype(get_function_json__function_properties), get_function_json__function_properties> get_function_json__endpoint;
+
+
+//constexpr const char get_function_json_function_name[] = "get_function_json";
+//constexpr const std::tuple<const char (&)[12]> get_function_json_input_names("endpoint_id");
+//constexpr const std::tuple<const char (&)[5]> get_function_json_output_names("json");
+//using get_function_json_properties = StaticFunctionProperties<
+//    decltype(get_function_json_function_name),
+//    std::remove_const_t<decltype(get_function_json_input_names)>,
+//    std::remove_const_t<decltype(get_function_json_output_names)>
+//    >::WithStaticNames<get_function_json_function_name, get_function_json_input_names, get_function_json_output_names>;
+
+//auto a = FunctionStuff<std::tuple<uint32_t>, std::tuple<char[256]>, decltype(get_function_json__function_properties), get_function_json__function_properties>
+//        //::template WithStaticNames<get_function_json_names>
+//        ::template WithStaticFuncPtr2<get_function_json>();
 
 /**
  * @brief Runs one scheduler iteration for all remote nodes.
@@ -216,8 +229,8 @@ void init() {
     }
 
     // TODO: global_state should not be constructed statically
-
-    fibre::publish_function(&a);
+    fibre::publish_function(&get_function_json__endpoint);
+    //fibre::publish_function(&a);
 
     std::random_device rd;
     std::uniform_int_distribution<uint8_t> dist;

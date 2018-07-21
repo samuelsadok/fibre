@@ -2,3 +2,10 @@ __pycache__
 .Trash*
 build/
 /.tup
+
+/doc/pics/*.aux
+/doc/pics/*latexmk
+/doc/pics/*.fls
+/doc/pics/*.log
+/doc/pics/*.synctex.gz
+/doc/pics/*.pdf

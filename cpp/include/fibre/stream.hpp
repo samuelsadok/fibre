@@ -301,6 +301,11 @@ public:
     {
         //EXPECT_TYPE(TDecoder, StreamSink);
     }
+    StaticStreamChain() :
+        decoders_()
+    {
+        //EXPECT_TYPE(TDecoder, StreamSink);
+    }
 
     status_t process_bytes(const uint8_t *buffer, size_t length, size_t* processed_bytes) final {
         LOG_FIBRE(SERDES, "static stream chain: process ", length, " bytes");

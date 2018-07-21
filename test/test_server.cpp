@@ -58,11 +58,67 @@ constexpr const char function_name_a[] = "test_func_a";
 constexpr const std::tuple<const char (&)[12], const char (&)[5], const char (&)[5]> names_a("test_func_a", "arg1", "arg2");
 //constexpr const std::tuple<const char (&)[2]> names_a("a");
 
-uint32_t test_func_b(uint32_t arg) {
+uint32_t test_func_b(uint32_t arg, uint32_t& result) {
     printf("test_function called with %d\n", arg);
     return 8;
 }
 
+constexpr auto test_func_b__function_properties = 
+    fibre::make_function_props("test_func_b")
+    .with_inputs("arg")
+    .with_outputs("result");
+
+
+namespace fibre {
+
+}
+
+/*template<
+    typename TRet, typename ... TArgs, TRet(&func)(TArgs...),
+    size_t ... TInputSizes, std::tuple<const char (&)[TInputSizes]...>& input_names>
+class LocalFunctionEndpoint<
+    TRet(TArgs...), func,
+    std::tuple<const char (&)[TInputSizes]...>, input_names> {
+
+    LocalFunctionEndpoint() {
+
+    }
+};*/
+
+template<typename TFunc, TFunc& func>
+class fn;
+
+template<typename TRet, typename ... TArgs, TRet(&func)(TArgs...)>
+class fn<TRet(TArgs...), func> {
+    static constexpr size_t io_count = sizeof...(TArgs);
+    
+    //static auto input_names() {
+//
+    //}
+};
+
+
+
+/*template<size_t ... Is>
+constexpr std::tuple<const char (&)[Is]...> make_string_list(const char (&...values)[Is]) {
+    return std::tuple<const char (&)[Is]...>(values...);
+}*/
+
+//constexpr const auto input_names = make_string_list("asd", "asdd");
+//constexpr const auto output_names = make_string_list("asd", "asdd");
+
+
+
+
+
+//template<typename TFunc>
+//void make_function(TFunc&& func) {
+//    fn<void(*)(int), func> b;
+//}
+
+#define AS_TMPL(val) decltype(val), val
+
+//def<AS_TMPL(test_func_b), { "a" }, { "b" }>;
 
 void test_wait_handle() {
     fibre::AutoResetEvent evt;
@@ -75,6 +131,12 @@ void test_wait_handle() {
 int main() {
     test_wait_handle();
     fibre::init();
+
+    fibre::LocalFunctionEndpoint<
+        decltype(test_func_b), test_func_b,
+        decltype(test_func_b__function_properties), test_func_b__function_properties> f;
+    fibre::publish_function(&f);
+
     LOG_FIBRE(GENERAL, "hello");
     //auto a = fibre::FunctionStuff<std::tuple<uint32_t, uint32_t>, std::tuple<>, std::tuple<const char (&)[12], const char (&)[5], const char (&)[5]>>
     //    ::WithStaticNames<names_a>
@@ -138,3 +200,23 @@ int main() {
 
     return 0;
 }
+
+
+class Element;
+static Element*& get_list_head() {
+    static Element* list_head = nullptr;
+    return list_head;
+}
+
+class Element {
+public:
+    Element(int val)
+        : next(get_list_head()) {
+        get_list_head() = this;
+    }
+    Element* next;
+};
+
+Element some_element(5);
+Element another_element(9);
+Element third_element(30);
