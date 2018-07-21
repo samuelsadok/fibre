@@ -125,18 +125,26 @@ class RemoteFunction(object):
         #    self._call_instance += 1
         #with OutgoingConnection(self._remote_node, ensure_delivery=True, allow_spurious=False) as connection:
         with OutgoingConnection(self._remote_node, ensure_delivery=True) as connection:
+            output_chunk_start = connection._output_pipe._pos
+            output_chunk_length = 0
+
             output_futures = []
             for i, output_type in enumerate(self._output_types):
                 output_futures.append(connection.receive_value(output_type))
 
-            connection.emit_value("number", self._endpoint_id)
+            output_chunk_length += connection.emit_value("number", self._endpoint_id)
             for i, input_type in enumerate(self._input_types):
-                connection.emit_value(input_type, args[i])
-#            connection.flush()
+                output_chunk_length += connection.emit_value(input_type, args[i])
+            connection._output_pipe.send_packet_break()
 
             outputs = []
             for output in output_futures:
                 outputs.append(output.get_value())
+
+            if not outputs:
+                raise Exception("zero outputs not yet supported, we use the results as implicit ACKs")
+            connection._output_pipe.drop_chunk(output_chunk_start, output_chunk_length)
+
         if len(outputs) > 1:
             return tuple(outputs)
         elif len(outputs) == 1:

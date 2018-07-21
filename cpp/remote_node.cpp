@@ -5,7 +5,7 @@
 
 using namespace fibre;
 
-std::pair<InputPipe*, OutputPipe*> RemoteNode::get_pipe_pair(size_t id, bool server_pool, bool* is_new) {
+std::pair<InputPipe*, OutputPipe*> RemoteNode::get_pipe_pair(size_t id, bool server_pool) {
     std::unordered_map<size_t, std::pair<InputPipe, OutputPipe>>& pipe_pool =
         server_pool ? server_pipe_pairs_ : client_pipe_pairs_;
     // TODO: limit number of concurrent pipes
@@ -18,8 +18,7 @@ std::pair<InputPipe*, OutputPipe*> RemoteNode::get_pipe_pair(size_t id, bool ser
             std::forward_as_tuple(this, id >> 1, server_pool)
             ));
     std::pair<InputPipe, OutputPipe>& pipes = emplace_result.first->second;
-    if (is_new)
-        *is_new = emplace_result.second;
+    pipes.first.set_output_pipe(&pipes.second);
     return std::make_pair(&pipes.first, &pipes.second);
 }
 

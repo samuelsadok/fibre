@@ -429,6 +429,7 @@ protected:
     template<typename TDecoder, typename ... TArgs>
     void set_stream(TArgs&& ... args) {
         static_assert(sizeof(TDecoder) <= BUFFER_SIZE, "TDecoder is too large. Increase BUFFER_SIZE.");
+        set_stream(nullptr); // destruct old stream before overwriting the memory
         set_stream(new (buffer_) TDecoder(std::forward<TArgs>(args)...));
     }
     void set_stream(StreamSink* new_stream) {

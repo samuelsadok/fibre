@@ -3,7 +3,7 @@ import struct
 import itertools
 import time
 from threading import Thread, Lock
-from fibre import Semaphore, EventWaitHandle, InputPipe, OutputPipe
+from fibre import Semaphore, EventWaitHandle, InputPipe, SuspendedInputPipe, OutputPipe, SuspendedOutputPipe
 import fibre.remote_object
 
 class IndexPool(object):
@@ -73,6 +73,8 @@ class RemoteNode(object):
         self._logger = logger
         self._server_pipe_pool = IndexPool(n_pipes)
         self._client_pipe_pool = IndexPool(n_pipes)
+        self._server_pipe_offsets = [(SuspendedInputPipe(),SuspendedOutputPipe())] * n_pipes # only valid for suspended pipes
+        self._client_pipe_offsets = [(SuspendedInputPipe(),SuspendedOutputPipe())] * n_pipes # only valid for suspended pipes
         self._output_pipe_ready = EventWaitHandle(auto_reset=True) # spurious signals possible
         self._output_channel_ready = EventWaitHandle(auto_reset=True) # spurious signals possible
         self._cancellation_token = EventWaitHandle() # triggered in __exit__
@@ -104,7 +106,7 @@ class RemoteNode(object):
         specified or points to an inactive slot, a new pipe pair is created.
         The function blocks until the timeout (TODO) is reached.
         """
-        return self._server_pipe_pool.acquire(index, lambda idx: (InputPipe(self, idx), OutputPipe(self, idx, **kwargs)))
+        return self._server_pipe_pool.acquire(index, lambda idx: (InputPipe(self, idx, self._server_pipe_offsets[idx][0]), OutputPipe(self, idx, self._server_pipe_offsets[idx][1], **kwargs)))
 
     def get_client_pipe_pair(self, index=None, **kwargs):
         """
@@ -112,12 +114,15 @@ class RemoteNode(object):
         specified or points to an inactive slot, a new pipe pair is created.
         The function blocks until the timeout (TODO) is reached.
         """
-        return self._client_pipe_pool.acquire(index, lambda idx: (InputPipe(self, idx), OutputPipe(self, idx, **kwargs)))
+        return self._client_pipe_pool.acquire(index, lambda idx: (InputPipe(self, idx, self._client_pipe_offsets[idx][0]), OutputPipe(self, idx, self._client_pipe_offsets[idx][1], **kwargs)))
 
     def release_server_pipe_pair(self, index):
         self._server_pipe_pool.release(index)
 
     def release_client_pipe_pair(self, index):
+        pipe_pair = self.get_client_pipe_pair(index)
+        # the calls to close block until the pipes are fully flushed
+        self._client_pipe_offsets[index] = (pipe_pair[0].close(), pipe_pair[1].close())
         self._client_pipe_pool.release(index)
 
     #def release_pipe(self, pipe_id):
@@ -147,22 +152,22 @@ class RemoteNode(object):
         get_function_json = fibre.remote_object.RemoteFunction(self, 0, 0, ["number"], ["json"])
         json_string = get_function_json(0)
         self._logger.debug("JSON: {}".format(json_string))
-        #json_string = get_function_json(1)
-        #self._logger.debug("JSON: {}".format(json_string))
+        json_string = get_function_json(1)
+        self._logger.debug("JSON: {}".format(json_string))
 
     def _scheduler_thread_loop(self):
-        pipe_ready_time = None
+        next_pipe_ready_time = None
 
         while not self._cancellation_token.is_set():
-            pipe_ready_timeout = None if pipe_ready_time is None else (pipe_ready_time - time.monotonic() + 0.001)
-            self._logger.debug("Will trigger again in {}s".format(pipe_ready_timeout))
+            timeout = None if next_pipe_ready_time is None else (next_pipe_ready_time - time.monotonic() + 0.001)
+            self._logger.debug("Will trigger again in {}s".format(timeout))
             try:
-                self._output_pipe_ready.wait(timeout=pipe_ready_timeout, cancellation_token=self._cancellation_token)
+                self._output_pipe_ready.wait(timeout=timeout, cancellation_token=self._cancellation_token)
             except TimeoutError:
                 pass
             #self._output_channel_ready.wait(cancellation_token=self._cancellation_token)
 
-            pipe_ready_time = None
+            next_pipe_ready_time = None
 
             self._logger.debug(str(len(self._output_channels)))
             for channel in self._output_channels:
@@ -180,7 +185,7 @@ class RemoteNode(object):
                         if free_space is not None:
                             chunk.data = chunk.data[:free_space]
                             free_space -= per_chunk_overhead + len(chunk.data)
-                        chunk_header = struct.pack('<HHHH', output_pipe.pipe_id, chunk.offset, chunk.crc_init, len(chunk.data))
+                        chunk_header = struct.pack('<HHHH', output_pipe.pipe_id, chunk.offset, chunk.crc_init, (len(chunk.data) << 1) | chunk.packet_break)
                         self._logger.debug("pipe {}: emitting chunk {} - {} (crc 0x{:04X})".format(output_pipe.pipe_id, chunk.offset, chunk.offset + len(chunk.data) - 1, chunk.crc_init))
                         channel.process_bytes(chunk_header, timeout=0)
                         channel.process_bytes(chunk.data, timeout=0)
@@ -191,7 +196,7 @@ class RemoteNode(object):
                             next_due_time = max(output_pipe.get_due_time() + channel.resend_interval, time.monotonic())
                             output_pipe.set_due_time(chunk.offset, len(chunk.data), next_due_time)
 
-                    pipe_ready_time = min(pipe_ready_time or output_pipe.get_due_time(), output_pipe.get_due_time())
+                    next_pipe_ready_time = min(next_pipe_ready_time or output_pipe.get_due_time(), output_pipe.get_due_time())
                     #if output_pipe.get_pending_chunks():
                     #    self._output_pipe_ready.set()
 

@@ -1,20 +1,31 @@
 
 import struct
+import threading
 
 import fibre
 from fibre import StreamSink
 
+class SuspendedInputPipe(object):
+    def __init__(self, offset=0, crc=fibre.crc.CRC16_INIT):
+        self.offset = offset
+        self.crc = crc
+
 class InputPipe(object):
-    def __init__(self, remote_node, pipe_id):
+    def __init__(self, remote_node, pipe_id, suspended_input_pipe):
         self._remote_node = remote_node
         self._logger = remote_node.get_logger()
         self.pipe_id = pipe_id
-        self._pos = 0
-        self._crc = fibre.crc.CRC16_INIT
+        self._pos = suspended_input_pipe.offset
+        self._crc = suspended_input_pipe.crc
         self._input_handler = None
+        self._lock = threading.Lock()
     
     def set_input_handler(self, input_handler):
         self._input_handler = input_handler
+
+    def close(self):
+        with self._lock:
+            return SuspendedInputPipe(self._pos, self._crc)
 
     def process_chunk(self, buffer, offset, crc):
         if offset > self._pos:
@@ -32,16 +43,17 @@ class InputPipe(object):
             offset += diff
         
         if crc != self._crc:
-            self._logger.warn("received dangling chunk: expected CRC {:04X} but got {:04X}", self._crc, crc)
+            self._logger.warn("received dangling chunk: expected CRC {:04X} but got {:04X}".format(self._crc, crc))
             return
 
         if self._input_handler is None:
-            self._logger.warn("the pipe {} has no input handler", self.pipe_id)
+            self._logger.warn("the pipe {} has no input handler".format(self.pipe_id))
             return
 
-        self._input_handler.process_bytes(buffer)
-        self._pos = offset + len(buffer)
-        # TODO: close / ack logic
+        with self._lock:
+            self._input_handler.process_bytes(buffer)
+            self._pos = offset + len(buffer)
+            self._crc = fibre.calc_crc16(self._crc, buffer)
 
 class InputChannelDecoder(StreamSink):
     def __init__(self, remote_node):

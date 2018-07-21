@@ -13,7 +13,7 @@ public:
 
     Uuid get_uuid() const { return uuid_; }
 
-    std::pair<InputPipe*, OutputPipe*> get_pipe_pair(size_t id, bool server_pool, bool* is_new);
+    std::pair<InputPipe*, OutputPipe*> get_pipe_pair(size_t id, bool server_pool);
     
     void add_output_channel(OutputChannel* channel);
     void remove_output_channel(OutputChannel* channel);

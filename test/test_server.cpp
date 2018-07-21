@@ -34,29 +34,10 @@ FIBRE_EXPORT_TYPE(TestClass,
     //FIBRE_FUNCTION(set_both, "arg1", "arg2")
 );
 
-//FibreRefType<TestClass>* asd = new FibreRefType<TestClass>();
-
-//template<typename TObj, typename TRet, typename ... TArgs>
-//TRet invoke_function_with_tuple(TObj& obj, TRet(TObj::*func_ptr)(TArgs...), std::tuple<TArgs...> packed_args) {
-//    return function_traits<TObj, TRet, TArgs...>::template invoke<0>(obj, func_ptr, packed_args);
-//}
-
-//void fibre_register_rectified_function(std::tuple<TOut...>(*func_ptr)(std::tuple<TIn...>)) {
-//    FunctionPtr
-//}
-//
-//void fibre_register<void (*Function)(int &)>() {
-//    fibre_register_generic_function(call_function<Function>)
-//}
 
 void test_func_a(uint32_t arg, uint32_t arg2) {
     printf("test_function called with 0x%08x and 0x%08x\n", arg, arg2);
 }
-constexpr const char function_name_a[] = "test_func_a";
-//constexpr const std::array<const char*,2> input_names_a {{"arg1", "arg2"}};
-//constexpr const std::array<const char*,0> output_names_a {{}};
-constexpr const std::tuple<const char (&)[12], const char (&)[5], const char (&)[5]> names_a("test_func_a", "arg1", "arg2");
-//constexpr const std::tuple<const char (&)[2]> names_a("a");
 
 uint32_t test_func_b(uint32_t arg, uint32_t& result) {
     printf("test_function called with %d\n", arg);
@@ -69,56 +50,9 @@ constexpr auto test_func_b__function_properties =
     .with_outputs("result");
 
 
-namespace fibre {
-
-}
-
-/*template<
-    typename TRet, typename ... TArgs, TRet(&func)(TArgs...),
-    size_t ... TInputSizes, std::tuple<const char (&)[TInputSizes]...>& input_names>
-class LocalFunctionEndpoint<
-    TRet(TArgs...), func,
-    std::tuple<const char (&)[TInputSizes]...>, input_names> {
-
-    LocalFunctionEndpoint() {
-
-    }
-};*/
-
-template<typename TFunc, TFunc& func>
-class fn;
-
-template<typename TRet, typename ... TArgs, TRet(&func)(TArgs...)>
-class fn<TRet(TArgs...), func> {
-    static constexpr size_t io_count = sizeof...(TArgs);
-    
-    //static auto input_names() {
-//
-    //}
-};
-
-
-
-/*template<size_t ... Is>
-constexpr std::tuple<const char (&)[Is]...> make_string_list(const char (&...values)[Is]) {
-    return std::tuple<const char (&)[Is]...>(values...);
-}*/
-
-//constexpr const auto input_names = make_string_list("asd", "asdd");
-//constexpr const auto output_names = make_string_list("asd", "asdd");
-
-
-
-
-
-//template<typename TFunc>
-//void make_function(TFunc&& func) {
-//    fn<void(*)(int), func> b;
-//}
 
 #define AS_TMPL(val) decltype(val), val
 
-//def<AS_TMPL(test_func_b), { "a" }, { "b" }>;
 
 void test_wait_handle() {
     fibre::AutoResetEvent evt;
@@ -137,14 +71,6 @@ int main() {
         decltype(test_func_b__function_properties), test_func_b__function_properties> f;
     fibre::publish_function(&f);
 
-    LOG_FIBRE(GENERAL, "hello");
-    //auto a = fibre::FunctionStuff<std::tuple<uint32_t, uint32_t>, std::tuple<>, std::tuple<const char (&)[12], const char (&)[5], const char (&)[5]>>
-    //    ::WithStaticNames<names_a>
-    //    ::WithStaticFuncPtr<test_func_a>();
-    //fibre::publish_function(&a);
-    //auto b = fibre::FunctionStuff<std::tuple<uint32_t>, std::tuple<uint32_t>>::CompileTimeLocalEndpoint<test_func_b>();
-    //fibre::publish_function(&b);
-
     printf("Starting Fibre server...\n");
 
     TestClass test_object = TestClass();
@@ -153,11 +79,13 @@ int main() {
 //    //auto definitions = test_object.make_fibre_definitions;
 //    fibre::publish_object(test_object);
 
+    // for testing
+#if 0
     uint8_t in_buf[] = {
         0x00, 0x00, // pipe-no
         0x00, 0x00, // offset
         ((CANONICAL_CRC16_INIT >> 0) & 0xff), ((CANONICAL_CRC16_INIT >> 8) & 0xff), // crc
-        0x10, 0x00, // length * 2 | close_pipe
+        0x11, 0x00, // length * 2 | packet_break
         0x00, 0x00, // endpoint id
         0x00, 0x00, // endpoint hash
         0x00, 0x00, 0x00, 0x00, // payload
@@ -165,23 +93,17 @@ int main() {
         0x01, 0x00 // trailer
     };
     uint8_t out_buf[512];
-    //fibre::MemoryStreamSink output(out_buf, sizeof(out_buf));
-    //fibre::StreamBasedPacketSink packet_output(output);
-    //fibre::InputChannel<5> input_channel;
     
     fibre::Uuid pseudo_remote_node_uuid = fibre::Uuid::from_string("d0dbe1f9-cba4-4a40-89f9-2f76da898746");
     fibre::RemoteNode* remote_node = fibre::get_remote_node(pseudo_remote_node_uuid);
-
     fibre::MemoryStreamSink output_stream(out_buf, sizeof(out_buf));
     fibre::OutputChannelFromStream output_channel(&output_stream);
     remote_node->add_output_channel(&output_channel);
-
     fibre::InputChannelDecoder input_decoder(remote_node);
     input_decoder.process_bytes(in_buf, sizeof(in_buf), nullptr);
 
     usleep(1000000 / 5);
-    //LOG_FIBRE(GENERAL, "output buffer:", std::endl, fibre::as_hex(out_buf));
-    LOG_FIBRE(GENERAL, "test\n", fibre::as_hex(out_buf));
+#endif
     
 
     //using ref_type = FibreRefType<TestClass>;
@@ -201,6 +123,10 @@ int main() {
     return 0;
 }
 
+
+
+
+// future concept to simplify function exports
 
 class Element;
 static Element*& get_list_head() {

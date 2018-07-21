@@ -57,8 +57,8 @@ from .crc import calc_crc16
 
 # I/O
 from .stream import StreamSink, StreamSource, PacketSink, PacketSource, StreamChain, StreamStatus
-from .output import OutputChannel, OutputPipe, OutgoingConnection
-from .input import InputPipe, InputChannelDecoder
+from .output import OutputChannel, OutputPipe, SuspendedOutputPipe, OutgoingConnection
+from .input import InputPipe, SuspendedInputPipe, InputChannelDecoder
 
 from .remote_node import RemoteNode
 #from .remote_object import RemoteFunction

@@ -16,32 +16,33 @@ class InputPipe {
     uint8_t rx_buf_[RX_BUF_SIZE];
     //uint8_t tx_buf_[TX_BUF_SIZE]; // TODO: this does not belong here
     size_t pos_ = 0;
+    bool at_packet_break = true;
     size_t crc_ = CANONICAL_CRC16_INIT;
     size_t total_length_ = 0;
     bool total_length_known = false;
     size_t id_; // last bit indicates server (0) or client (1)
-    StreamSink* input_handler = nullptr; // TODO: destructor
+    StreamSink* input_handler_ = nullptr; // TODO: destructor
+    OutputPipe* output_pipe_ = nullptr; // must be set immediately after constructor call
 public:
     InputPipe(RemoteNode* remote_node, size_t idx, bool is_server)
         : id_((idx << 1) | (is_server ? 0 : 1)) {}
 
     size_t get_id() const { return id_; }
+    void set_output_pipe(OutputPipe* output_pipe) { output_pipe_ = output_pipe; }
 
     template<typename TDecoder, typename ... TArgs>
     void construct_decoder(TArgs&& ... args) {
+        set_handler(nullptr);
         static_assert(sizeof(TDecoder) <= RX_BUF_SIZE, "TDecoder is too large. Increase the buffer size of this pipe.");
-        input_handler = new (rx_buf_) TDecoder(std::forward<TArgs>(args)...);
+        set_handler(new (rx_buf_) TDecoder(std::forward<TArgs>(args)...));
+    }
+    void set_handler(StreamSink* new_handler) {
+        if (input_handler_)
+            input_handler_->~StreamSink();
+        input_handler_ = new_handler;
     }
 
-    void process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool close_pipe);
-
-    void close() {
-        LOG_FIBRE_W(INPUT, "close pipe not implemented");
-    }
-    void packet_reset() {
-        pos_ = 0;
-        crc_ = CANONICAL_CRC16_INIT;
-    }
+    void process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool packet_break);
 };
 
 class InputChannelDecoder : public StreamSink {
@@ -60,7 +61,6 @@ private:
             FixedIntDecoder<uint16_t, false>,
             FixedIntDecoder<uint16_t, false>>;
     RemoteNode* remote_node_;
-    InputPipe* input_pipe_;
     HeaderDecoder header_decoder_;
     bool in_header = true;
 
@@ -79,7 +79,6 @@ private:
     uint16_t& get_chunk_length() { return header_decoder_.get_stream<3>().get_value(); }
 
     void reset() {
-        input_pipe_ = nullptr;
         header_decoder_ = make_header_decoder();
         in_header = true;
     }
