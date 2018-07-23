@@ -581,6 +581,9 @@ const_str_join(
     return const_str_concat(s1, ",", const_str_join(s2, strings...));
 }
 
+template<size_t... ILengths>
+using static_string_arr = std::tuple<static_string<ILengths>...>;
+
 // source: https://stackoverflow.com/questions/40159732/return-other-value-if-key-not-found-in-the-map
 template<typename TKey, typename TValue>
 TValue& get_or(std::unordered_map<TKey, TValue>& m, const TKey& key, TValue& default_value) {

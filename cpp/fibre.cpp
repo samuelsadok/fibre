@@ -157,7 +157,7 @@ void publish_ref_type(FibreRefType* type) {
     global_state.ref_types_.push_back(type);
 }
 
-/* Built-in published functions ---------------------------------------------*/
+/* Built-in published functions ----------------------------------------------*/
 
 bool get_function_json(uint32_t endpoint_id, const char ** output, size_t* length) {
     LOG_FIBRE(GENERAL, "fetching JSON of function ", as_hex(endpoint_id));
