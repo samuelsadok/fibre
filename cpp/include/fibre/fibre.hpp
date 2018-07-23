@@ -136,6 +136,85 @@ namespace fibre {
 #if CONFIG_SCHEDULER_MODE == SCHEDULER_MODE_MANUAL
     void schedule_all();
 #endif
+
+
+    struct user_function_tag {};
+    struct builtin_function_tag {};
 } // namespace fibre
+
+
+
+
+template<typename T, typename TAG>
+class StaticLinkedListElement {
+private:
+    struct iterator : std::iterator<std::forward_iterator_tag, T> {
+    public:
+        explicit iterator(StaticLinkedListElement* head)
+            : head_(head) {}
+        T& operator*() const { return head_->val_; }
+        iterator& operator++() { head_ = head_->next_; return *this; }
+        bool operator==(iterator other) const { return head_ == other.head_; }
+        bool operator!=(iterator other) const { return !(*this == other); }
+    private:
+        StaticLinkedListElement* head_;
+    };
+    struct list {
+        static iterator begin() {
+            return iterator(get_list_head());
+        }
+        static iterator end() {
+            return iterator(nullptr);
+        }
+    };
+
+public:
+    StaticLinkedListElement(T val)
+        : next_(get_list_head()), val_(val)
+    {
+        get_list_head() = this;
+    }
+
+    static list get_list() {
+        return list();
+    }
+
+private:
+    StaticLinkedListElement* next_;
+    T val_;
+
+    static StaticLinkedListElement*& get_list_head() {
+        // maybe declaring this variable inside a header file might lead to
+        // multiple instances if the function is called in multiple compilation
+        // units. TODO: verify if a single instance is guaranteed.
+        static StaticLinkedListElement* list_head = nullptr;
+        return list_head;
+    }
+};
+
+
+
+
+
+
+/* Export macros -------------------------------------------------------------*/
+
+#define FIBRE_EXPORT_FUNCTION_(func_name, inputs, outputs, tag) \
+    constexpr auto func_name ## __function_properties = \
+        fibre::make_function_props(#func_name) \
+        inputs \
+        outputs; \
+    fibre::LocalFunctionEndpoint< \
+        decltype(func_name), func_name, \
+        decltype(func_name ## __function_properties), func_name ## __function_properties> func_name ## __endpoint; \
+    StaticLinkedListElement<fibre::LocalEndpoint*, tag> get_function_json__linked_list_element(&(func_name ## __endpoint))
+
+#define FIBRE_EXPORT_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(func_name, inputs, outputs, fibre::user_function_tag)
+
+#define FIBRE_EXPORT_BUILTIN_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(func_name, inputs, outputs, fibre::builtin_function_tag)
+
+#define INPUTS(...)     .with_inputs(__VA_ARGS__)
+#define OUTPUTS(...)    .with_outputs(__VA_ARGS__)
+
 
 #endif // __FIBRE_HPP

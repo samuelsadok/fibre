@@ -34,17 +34,10 @@ void my_function(uint32_t input1, uint32_t& output1) {
     [...]
 }
 
-constexpr auto my_function__function_properties = 
-    fibre::make_function_props("my_function")
-    .with_inputs("input1")
-    .with_outputs("output1");
+FIBRE_EXPORT_FUNCTION(my_function, INPUTS("input1"), OUTPUTS("output1"));
 
 void main() {
     fibre::init()
-    fibre::LocalFunctionEndpoint<
-        decltype(my_function), my_function,
-        decltype(my_function__function_properties), my_function__function_properties> ep;
-    fibre::publish_function(&ep);
 }
 ```
 
@@ -66,7 +59,6 @@ See `test/test_server.cpp` for details.
 
  - [ ] [general] Return ACKs/NACKs to make functions without return values work.
  - [ ] [C++] add resend timer like in python (see `remote_node.py` vs `remote_node.cpp`)
- - [ ] [C++] Provide a macro for easier function publishing
  - [ ] [C++] Return the proper JSON snippet for each function signature (currently a "demo"-string is built). See `FunctionJSONAssembler`.
  - [ ] [C++] Publish object reference types similar to how functions are published and build a constexpr JSON string that describes each type.
  - [ ] [C++] Garbage collect RemoteNodes that are no longer in active contact (how?)

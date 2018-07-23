@@ -44,11 +44,9 @@ uint32_t test_func_b(uint32_t arg, uint32_t& result) {
     return 8;
 }
 
-constexpr auto test_func_b__function_properties = 
-    fibre::make_function_props("test_func_b")
-    .with_inputs("arg")
-    .with_outputs("result");
-
+FIBRE_EXPORT_FUNCTION(
+    test_func_b, INPUTS("arg"), OUTPUTS("result")
+);
 
 
 #define AS_TMPL(val) decltype(val), val
@@ -64,12 +62,8 @@ void test_wait_handle() {
 
 int main() {
     test_wait_handle();
-    fibre::init();
 
-    fibre::LocalFunctionEndpoint<
-        decltype(test_func_b), test_func_b,
-        decltype(test_func_b__function_properties), test_func_b__function_properties> f;
-    fibre::publish_function(&f);
+    fibre::init();
 
     printf("Starting Fibre server...\n");
 
@@ -128,21 +122,8 @@ int main() {
 
 // future concept to simplify function exports
 
-class Element;
-static Element*& get_list_head() {
-    static Element* list_head = nullptr;
-    return list_head;
-}
+//class Element;
 
-class Element {
-public:
-    Element(int val)
-        : next(get_list_head()) {
-        get_list_head() = this;
-    }
-    Element* next;
-};
-
-Element some_element(5);
-Element another_element(9);
-Element third_element(30);
+//StaticLinkedListElement<int> some_element(5);
+//StaticLinkedListElement<int> another_element(9);
+//StaticLinkedListElement<int> third_element(30);
