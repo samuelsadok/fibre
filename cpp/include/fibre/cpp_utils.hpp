@@ -584,6 +584,10 @@ const_str_join(
 template<size_t... ILengths>
 using static_string_arr = std::tuple<static_string<ILengths>...>;
 
+static constexpr const static_string<0> empty_static_string("");
+static constexpr const static_string_arr<> empty_static_string_arr;
+
+
 // source: https://stackoverflow.com/questions/40159732/return-other-value-if-key-not-found-in-the-map
 template<typename TKey, typename TValue>
 TValue& get_or(std::unordered_map<TKey, TValue>& m, const TKey& key, TValue& default_value) {
@@ -1022,5 +1026,108 @@ using result_of_t = typename result_of<TFunc>::type;
  */
 template<typename... TTuples>
 using tuple_cat_t = decltype(std::tuple_cat<TTuples...>(std::declval<TTuples>()...));
+
+
+
+
+/**
+ * @brief Ensures that a given type is wrapped in a tuple
+ */
+template<typename T = void>
+struct as_tuple {
+    using type = std::tuple<T>;
+};
+
+template<>
+struct as_tuple<void> {
+    using type = std::tuple<>;
+};
+
+template<typename... Ts>
+struct as_tuple<std::tuple<Ts...>> {
+    using type = std::tuple<Ts...>;
+};
+
+template<typename T>
+using as_tuple_t = typename as_tuple<T>::type;
+
+/**
+ * @brief Removes a reference OR pointer from the given type.
+ * 
+ * This is similar to std::remove_reference, however it can also remove a
+ * pointer and it does not work for types that are neither a reference or
+ * a pointer.
+ */
+template<typename T>
+struct remove_ref_or_ptr;
+
+template<typename T>
+struct remove_ref_or_ptr<T*> { using type = T; };
+
+template<typename T>
+struct remove_ref_or_ptr<T&> { using type = T; };
+
+template<typename T>
+using remove_ref_or_ptr_t = typename remove_ref_or_ptr<T>::type;
+
+/**
+ * @brief Applies remove_ref_or_ptr_t to every type of a tuple type
+ */
+template<typename T>
+struct remove_refs_or_ptrs_from_tuple;
+
+template<typename... Ts>
+struct remove_refs_or_ptrs_from_tuple<std::tuple<Ts...>> {
+    using type = std::tuple<remove_ref_or_ptr_t<Ts>...>;
+};
+
+template<typename T>
+using remove_refs_or_ptrs_from_tuple_t = typename remove_refs_or_ptrs_from_tuple<T>::type;
+
+/**
+ * @brief The convert(val) function returns a reference or a pointer to val
+ * depending on TTo.
+ * TODO: this could be a functor
+ */
+template<typename TTo>
+struct add_ref_or_ptr;
+
+template<typename T>
+struct add_ref_or_ptr<T&> {
+    static T& convert(T& value) {
+        return value;
+    }
+};
+
+template<typename T>
+struct add_ref_or_ptr<T*> {
+    static T* convert(T& value) {
+        return &value;
+    }
+};
+
+
+/**
+ * @brief The convert() function turns a given tuple of values into a tuple of
+ * pointers or references based on the template argument TTo.
+ */
+template<typename TTo>
+struct add_ref_or_ptr_to_tuple;
+
+template<typename... TTo>
+struct add_ref_or_ptr_to_tuple<std::tuple<TTo...>> {
+    template<typename... TFrom, size_t... Is>
+    static std::tuple<TTo...> convert_impl(std::tuple<TFrom...>&& t, std::index_sequence<Is...>) {
+        using to_type = std::tuple<TTo...>;
+        to_type result(add_ref_or_ptr<std::tuple_element_t<Is, to_type>>::convert(std::get<Is>(t))...);
+        return result;
+    }
+
+    template<typename... TFrom>
+    static std::tuple<TTo...> convert(std::tuple<TFrom...>&& t) {
+        static_assert(sizeof...(TFrom) == sizeof...(TTo), "both tuples must have the same size");
+        return convert_impl(std::forward<std::tuple<TFrom...>>(t), std::make_index_sequence<sizeof...(TFrom)>());
+    }
+};
 
 #endif // __CPP_UTILS_HPP

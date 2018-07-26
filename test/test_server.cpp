@@ -19,18 +19,12 @@ public:
         property2 = arg2;
         return property1 + property2;
     }
-
-//    FIBRE_EXPORTS(TestClass,
-//        make_fibre_property("property1", &property1),
-//        make_fibre_property("property2", &property2),
-//        make_fibre_function("set_both", *obj, &TestClass::set_both, "arg1", "arg2")
-//    );
 };
 
-FIBRE_EXPORT_TYPE(float);
+//FIBRE_EXPORT_TYPE(float)
 FIBRE_EXPORT_TYPE(TestClass,
-    FIBRE_PROPERTY(property1),
-    FIBRE_PROPERTY(property2)
+    FIBRE_PROPERTY(property1)
+    //FIBRE_PROPERTY(property2)
     //FIBRE_FUNCTION(set_both, "arg1", "arg2")
 );
 

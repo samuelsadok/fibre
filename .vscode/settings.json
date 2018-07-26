@@ -58,7 +58,8 @@
         "typeindex": "cpp",
         "variant": "cpp",
         "complex": "cpp",
-        "string": "cpp"
+        "string": "cpp",
+        "iterator": "cpp"
     },
     "C_Cpp.default.cppStandard": "c++11"
 }

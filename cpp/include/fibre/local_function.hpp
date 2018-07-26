@@ -21,32 +21,32 @@ public:
 /**
  * @brief Assembles a JSON snippet that describes a function
  */
-template<typename TFuncProps, TFuncProps& func_props>
+template<typename TMetadata, TMetadata& metadata>
 struct FunctionJSONAssembler {
     template<size_t I>
-    //static constexpr static_string<10 + sizeof(std::get<I>(func_props.get_input_names()))/sizeof(std::get<I>(func_props.get_input_names())[0])>
-    static constexpr static_string<11 + std::get<I>(func_props.get_input_names()).size()>
+    //static constexpr static_string<10 + sizeof(std::get<I>(metadata.get_input_names()))/sizeof(std::get<I>(metadata.get_input_names())[0])>
+    static constexpr static_string<11 + std::get<I>(metadata.get_input_names()).size()>
     get_input_json() {
         return const_str_concat(
             make_const_string("{\"name\":\""),
-            std::get<I>(func_props.get_input_names()),
+            std::get<I>(metadata.get_input_names()),
             make_const_string("\"}")
         );
     }
 
     template<size_t... Is>
     static constexpr auto get_all_inputs_json(std::index_sequence<Is...>)
-        -> decltype(const_str_join(get_input_json<Is>()...)) {
-        return const_str_join(get_input_json<Is>()...);
+        -> decltype(const_str_join(std::declval<static_string<1>>(), get_input_json<Is>()...)) {
+        return const_str_join(make_const_string(","), get_input_json<Is>()...);
     }
 
     // @brief Returns a JSON snippet that describes this function
     static bool get_as_json(const char ** output, size_t* length) {
         static const constexpr auto json = const_str_concat(
             make_const_string("{\"name\":\""),
-            func_props.get_function_name(),
+            metadata.get_function_name(),
             make_const_string("\",\"in\":["),
-            get_all_inputs_json(std::make_index_sequence<TFuncProps::NInputs>()),
+            get_all_inputs_json(std::make_index_sequence<TMetadata::NInputs>()),
             make_const_string("]}")
         );
         //memcpy(output, json.c_str(), std::min((size_t)256, sizeof(json)));
@@ -80,7 +80,7 @@ struct StaticFunctionProperties<
     constexpr StaticFunctionProperties<TFuncName, static_string_arr<Is...>, TOutputNames> with_inputs(const char (&...names)[Is]) {
         return StaticFunctionProperties<TFuncName, static_string_arr<Is...>, TOutputNames>(
             function_name,
-            std::tuple<const char (&)[Is]...>(names...),
+            std::tuple_cat(input_names, std::tuple<const char (&)[Is]...>(names...)),
             output_names);
     }
 
@@ -89,7 +89,7 @@ struct StaticFunctionProperties<
         return StaticFunctionProperties<TFuncName, TInputNames, static_string_arr<Is...>>(
             function_name,
             input_names,
-            std::tuple<const char (&)[Is]...>(names...));
+            std::tuple_cat(output_names, std::tuple<const char (&)[Is]...>(names...)));
     }
 
     static constexpr const size_t NInputs = (sizeof...(IIn));
@@ -99,9 +99,6 @@ struct StaticFunctionProperties<
     constexpr TOutputNames get_output_names() { return output_names; }
 };
 
-
-static constexpr const static_string<0> empty_static_string("");
-static constexpr const static_string_arr<> empty_static_string_arr;
 
 template<size_t IFunc>
 static constexpr StaticFunctionProperties<static_string<IFunc>, static_string_arr<>, static_string_arr<>> make_function_props(const char (&function_name)[IFunc]) {
@@ -275,100 +272,18 @@ struct encoder_chain_from_tuple<std::tuple<TEncoders...>> {
     }
 };
 
-/**
- * @brief Ensures that a given type is wrapped in a tuple
- */
-template<typename T = void>
-struct as_tuple {
-    using type = std::tuple<T>;
-};
-
-template<>
-struct as_tuple<void> {
-    using type = std::tuple<>;
-};
-
-template<typename... Ts>
-struct as_tuple<std::tuple<Ts...>> {
-    using type = std::tuple<Ts...>;
-};
-
-template<typename T>
-using as_tuple_t = typename as_tuple<T>::type;
-
-
-template<typename T>
-struct remove_ref_or_ptr;
-
-template<typename T>
-struct remove_ref_or_ptr<T*> { using type = T; };
-
-template<typename T>
-struct remove_ref_or_ptr<T&> { using type = T; };
-
-template<typename T>
-using remove_ref_or_ptr_t = typename remove_ref_or_ptr<T>::type;
-
-template<typename T>
-struct remove_refs_or_ptrs_from_tuple;
-
-template<typename... Ts>
-struct remove_refs_or_ptrs_from_tuple<std::tuple<Ts...>> {
-    using type = std::tuple<remove_ref_or_ptr_t<Ts>...>;
-};
-
-template<typename T>
-using remove_refs_or_ptrs_from_tuple_t = typename remove_refs_or_ptrs_from_tuple<T>::type;
-
-template<typename TTo>
-struct add_ref_or_ptr;
-
-// TODO: this could be a functor
-template<typename T>
-struct add_ref_or_ptr<T&> {
-    static T& convert(T& value) {
-        return value;
-    }
-};
-
-// TODO: this could be a functor
-template<typename T>
-struct add_ref_or_ptr<T*> {
-    static T* convert(T& value) {
-        return &value;
-    }
-};
-
-template<typename TTo>
-struct add_ref_or_ptr_to_tuple;
-
-template<typename... TTo>
-struct add_ref_or_ptr_to_tuple<std::tuple<TTo...>> {
-    template<typename... TFrom, size_t... Is>
-    static std::tuple<TTo...> convert_impl(std::tuple<TFrom...>&& t, std::index_sequence<Is...>) {
-        using to_type = std::tuple<TTo...>;
-        to_type result(add_ref_or_ptr<std::tuple_element_t<Is, to_type>>::convert(std::get<Is>(t))...);
-        return result;
-    }
-
-    template<typename... TFrom>
-    static std::tuple<TTo...> convert(std::tuple<TFrom...>&& t) {
-        static_assert(sizeof...(TFrom) == sizeof...(TTo), "both tuples must have the same size");
-        return convert_impl(std::forward<std::tuple<TFrom...>>(t), std::make_index_sequence<sizeof...(TFrom)>());
-    }
-};
 
 template<
     typename TFunc, TFunc& func,
-    typename TProperties, TProperties& func_props>
+    typename TMetadata, TMetadata& metadata>
 class LocalFunctionEndpoint : public LocalEndpoint {
-    using TDecoders = decoder_type<TProperties::NInputs, args_of_t<TFunc>>;
+    using TDecoders = decoder_type<TMetadata::NInputs, args_of_t<TFunc>>;
 
     using out_arg_refs_t = typename TDecoders::remainder;
     using out_arg_vals_t = remove_refs_or_ptrs_from_tuple_t<out_arg_refs_t>;
 
-    using TArgEncoders = encoder_type<TProperties::NOutputs, out_arg_vals_t>;
-    //using TRetEncoders = encoder_type<TProperties::NOutputs, tuple_cat_t<out_arg_vals_t, as_tuple_t<result_of_t<TFunc>>>>;
+    using TArgEncoders = encoder_type<TMetadata::NOutputs, out_arg_vals_t>;
+    //using TRetEncoders = encoder_type<TMetadata::NOutputs, tuple_cat_t<out_arg_vals_t, as_tuple_t<result_of_t<TFunc>>>>;
     //int a =  TEncoders();
     //static_assert(
     //        (std::tuple_size<TEncoder::remainder> == 0) ||
@@ -377,8 +292,8 @@ class LocalFunctionEndpoint : public LocalEndpoint {
     //using TDecoder = typename decoder_type<args_of_t<TFunc>>::type;
     //using TEncoder = typename decoder_type<args_of_t<TFunc>>::type;
     //static_assert(
-    //    std::tuple_size<args_of_t<TFunc>> == TProperties::NInputs,
-    //    std::tuple_size<args_of_t<TFunc>> == TProperties::NOu,
+    //    std::tuple_size<args_of_t<TFunc>> == TMetadata::NInputs,
+    //    std::tuple_size<args_of_t<TFunc>> == TMetadata::NOu,
     //)
     //constexpr std::tuple_size<args_of_t<TFunc>> == NInputs
 
@@ -415,7 +330,7 @@ class LocalFunctionEndpoint : public LocalEndpoint {
     }
     // @brief Returns a JSON snippet that describes this function
     bool get_as_json(const char ** output, size_t* length) final {
-        return FunctionJSONAssembler<TProperties, func_props>::get_as_json(output, length);
+        return FunctionJSONAssembler<TMetadata, metadata>::get_as_json(output, length);
     }
 };
 

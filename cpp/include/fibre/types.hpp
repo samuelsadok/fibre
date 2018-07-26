@@ -113,6 +113,7 @@ using fibre_type_t = typename fibre_type<T>::type;
 
 }
 
+#if 0
 #define FIBRE_PROPERTY(name) \
     std::make_tuple<const char *, fibre::FibreRefType*, size_t>( \
         #name, \
@@ -143,5 +144,6 @@ public: \
 const std::tuple<const char *, fibre::FibreRefType*, size_t> FibreRefType<class_name>::properties[] = { \
     __VA_ARGS__ \
 }
+#endif
 
 #endif

@@ -95,6 +95,7 @@ namespace fibre {
 #include "output.hpp"
 #include "remote_node.hpp"
 #include "local_function.hpp"
+#include "local_ref_type.hpp"
 #include "types.hpp"
 
 namespace fibre {
@@ -102,7 +103,7 @@ namespace fibre {
         bool initialized = false;
         Uuid own_uuid;
         std::unordered_map<Uuid, RemoteNode> remote_nodes_;
-        std::vector<fibre::FibreRefType*> ref_types_ = std::vector<fibre::FibreRefType*>();
+        std::vector<fibre::LocalRefType*> ref_types_ = std::vector<fibre::LocalRefType*>();
         std::vector<fibre::LocalEndpoint*> functions_ = std::vector<fibre::LocalEndpoint*>();
         std::thread scheduler_thread;
         AutoResetEvent output_pipe_ready;
@@ -169,10 +170,10 @@ private:
     };
 
 public:
-    StaticLinkedListElement(T val)
-        : next_(get_list_head()), val_(val)
+    StaticLinkedListElement(T val) : val_(val)
     {
-        get_list_head() = this;
+        *get_list_tail() = this;
+        get_list_tail() = &(this->next_);
     }
 
     static list get_list() {
@@ -180,7 +181,7 @@ public:
     }
 
 private:
-    StaticLinkedListElement* next_;
+    StaticLinkedListElement* next_ = nullptr;
     T val_;
 
     static StaticLinkedListElement*& get_list_head() {
@@ -189,6 +190,11 @@ private:
         // units. TODO: verify if a single instance is guaranteed.
         static StaticLinkedListElement* list_head = nullptr;
         return list_head;
+    }
+
+    static StaticLinkedListElement**& get_list_tail() {
+        static StaticLinkedListElement** list_tail = &get_list_head();
+        return list_tail;
     }
 };
 
@@ -199,7 +205,7 @@ private:
 
 /* Export macros -------------------------------------------------------------*/
 
-#define FIBRE_EXPORT_FUNCTION_(func_name, inputs, outputs, tag) \
+#define FIBRE_EXPORT_FUNCTION_(tag, func_name, inputs, outputs) \
     constexpr auto func_name ## __function_properties = \
         fibre::make_function_props(#func_name) \
         inputs \
@@ -207,14 +213,28 @@ private:
     fibre::LocalFunctionEndpoint< \
         decltype(func_name), func_name, \
         decltype(func_name ## __function_properties), func_name ## __function_properties> func_name ## __endpoint; \
-    StaticLinkedListElement<fibre::LocalEndpoint*, tag> get_function_json__linked_list_element(&(func_name ## __endpoint))
+    StaticLinkedListElement<fibre::LocalEndpoint*, tag> func_name ## __linked_list_element(&(func_name ## __endpoint))
 
-#define FIBRE_EXPORT_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(func_name, inputs, outputs, fibre::user_function_tag)
-
-#define FIBRE_EXPORT_BUILTIN_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(func_name, inputs, outputs, fibre::builtin_function_tag)
+#define FIBRE_EXPORT_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, func_name, inputs, outputs)
+#define FIBRE_EXPORT_BUILTIN_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::builtin_function_tag, func_name, inputs, outputs)
 
 #define INPUTS(...)     .with_inputs(__VA_ARGS__)
 #define OUTPUTS(...)    .with_outputs(__VA_ARGS__)
+
+
+#define FIBRE_EXPORT_TYPE_(tag, type_name, ...) \
+    constexpr auto type_name ## __type_properties = \
+        fibre::make_ref_type_props(#type_name) \
+        __VA_ARGS__; \
+    fibre::StaticLocalRefType< \
+        type_name, \
+        decltype(type_name ## __type_properties), type_name ## __type_properties> type_name ## __fibre_type; \
+    StaticLinkedListElement<fibre::LocalRefType*, tag> type_name ## __linked_list_element(&(type_name ## __fibre_type))
+
+#define FIBRE_EXPORT_TYPE(type_name, ...) FIBRE_EXPORT_TYPE_(fibre::user_function_tag, type_name, __VA_ARGS__)
+#define FIBRE_EXPORT_BUILTIN_TYPE(type_name, ...) FIBRE_EXPORT_TYPE_(fibre::builtin_function_tag, type_name, __VA_ARGS__)
+
+#define FIBRE_PROPERTY(name)    .with_properties(#name)
 
 
 #endif // __FIBRE_HPP

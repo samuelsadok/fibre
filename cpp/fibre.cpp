@@ -153,7 +153,7 @@ void publish_function(LocalEndpoint* function) {
     global_state.functions_.push_back(function);
 }
 
-void publish_ref_type(FibreRefType* type) {
+void publish_ref_type(LocalRefType* type) {
     global_state.ref_types_.push_back(type);
 }
 
@@ -175,10 +175,32 @@ bool get_function_json(uint32_t endpoint_id, const char ** output, size_t* lengt
     return true;
 }
 
+bool get_ref_type_json(uint32_t ref_type_id, const char ** output, size_t* length) {
+    LOG_FIBRE(GENERAL, "fetching JSON of ref type ", as_hex(ref_type_id));
+
+    if (output) *output = nullptr;
+    if (length) *length = 0;
+
+    // TODO: behold, a race condition
+    if (ref_type_id >= global_state.ref_types_.size()) {
+        LOG_FIBRE_W(GENERAL, "ref_type_id out of range: ", ref_type_id, " >= ", global_state.functions_.size());
+        return false;
+    }
+    fibre::LocalRefType* type = global_state.ref_types_[ref_type_id];
+    type->get_as_json(output, length);
+    return true;
+}
+
 
 FIBRE_EXPORT_BUILTIN_FUNCTION(
     get_function_json,
     INPUTS("endpoint_id"),
+    OUTPUTS("json")
+);
+
+FIBRE_EXPORT_BUILTIN_FUNCTION(
+    get_ref_type_json,
+    INPUTS("ref_type_id"),
     OUTPUTS("json")
 );
 
@@ -223,6 +245,14 @@ void init() {
         fibre::publish_function(ep);
     }
     LOG_FIBRE(GENERAL, "published ", global_state.functions_.size(), " functions");
+
+    for (LocalRefType* t : StaticLinkedListElement<LocalRefType*, builtin_function_tag>::get_list()) {
+        fibre::publish_ref_type(t);
+    }
+    for (LocalRefType* t : StaticLinkedListElement<LocalRefType*, user_function_tag>::get_list()) {
+        fibre::publish_ref_type(t);
+    }
+    LOG_FIBRE(GENERAL, "published ", global_state.ref_types_.size(), " ref types");
 
 
     std::random_device rd;
