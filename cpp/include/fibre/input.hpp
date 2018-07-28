@@ -109,7 +109,7 @@ private:
         RECEIVING_HEADER,
         RECEIVING_PAYLOAD
     } state_ = RECEIVING_HEADER;
-    LocalEndpoint* endpoint_ = nullptr;
+    const LocalEndpoint* endpoint_ = nullptr;
     OutputPipe* output_pipe_ = nullptr;
 
     using HeaderDecoderChain = StaticStreamChain<

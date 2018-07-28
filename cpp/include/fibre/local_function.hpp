@@ -11,22 +11,25 @@ namespace fibre {
 class LocalEndpoint {
 public:
     //virtual void invoke(StreamSource* input, StreamSink* output) = 0;
-    virtual void open_connection(IncomingConnectionDecoder& input) = 0;
-    virtual void decoder_finished(const IncomingConnectionDecoder& input, OutputPipe* output) = 0;
-    virtual uint16_t get_hash() = 0;
-    virtual bool get_as_json(const char ** output, size_t* length) = 0;
+    virtual void open_connection(IncomingConnectionDecoder& input) const = 0;
+    virtual void decoder_finished(const IncomingConnectionDecoder& input, OutputPipe* output) const = 0;
+    virtual uint16_t get_hash() const = 0;
+    virtual bool get_as_json(const char ** output, size_t* length) const = 0;
 };
 
 
 /**
  * @brief Assembles a JSON snippet that describes a function
  */
-template<typename TMetadata, TMetadata& metadata>
+template<typename TMetadata>
 struct FunctionJSONAssembler {
+private:
     template<size_t I>
-    //static constexpr static_string<10 + sizeof(std::get<I>(metadata.get_input_names()))/sizeof(std::get<I>(metadata.get_input_names())[0])>
-    static constexpr static_string<11 + std::get<I>(metadata.get_input_names()).size()>
-    get_input_json() {
+    using get_input_json_t = static_string<11 + std::tuple_element_t<I, typename TMetadata::TInputNames>::size()>;
+
+    template<size_t I>
+    static constexpr get_input_json_t<I>
+    get_input_json(const TMetadata& metadata) {
         return const_str_concat(
             make_const_string("{\"name\":\""),
             std::get<I>(metadata.get_input_names()),
@@ -34,27 +37,33 @@ struct FunctionJSONAssembler {
         );
     }
 
+    template<typename Is>
+    struct get_all_inputs_json_type;
     template<size_t... Is>
-    static constexpr auto get_all_inputs_json(std::index_sequence<Is...>)
-        -> decltype(const_str_join(std::declval<static_string<1>>(), get_input_json<Is>()...)) {
-        return const_str_join(make_const_string(","), get_input_json<Is>()...);
+    struct get_all_inputs_json_type<std::index_sequence<Is...>> {
+        using type = const_str_join_t<1, get_input_json_t<Is>::size()...>;
+    };
+    using get_all_inputs_json_t = typename get_all_inputs_json_type<std::make_index_sequence<TMetadata::NInputs>>::type;
+
+    template<size_t... Is>
+    static constexpr get_all_inputs_json_t
+    get_all_inputs_json(const TMetadata& metadata, std::index_sequence<Is...>) {
+        return const_str_join(make_const_string(","), get_input_json<Is>(metadata)...);
     }
 
+public:
+    using get_json_t = static_string<19 + TMetadata::TFuncName::size() + get_all_inputs_json_t::size()>;
+
     // @brief Returns a JSON snippet that describes this function
-    static bool get_as_json(const char ** output, size_t* length) {
-        static const constexpr auto json = const_str_concat(
+    static constexpr get_json_t
+    get_as_json(const TMetadata& metadata) {
+        return const_str_concat(
             make_const_string("{\"name\":\""),
             metadata.get_function_name(),
             make_const_string("\",\"in\":["),
-            get_all_inputs_json(std::make_index_sequence<TMetadata::NInputs>()),
+            get_all_inputs_json(metadata, std::make_index_sequence<TMetadata::NInputs>()),
             make_const_string("]}")
         );
-        //memcpy(output, json.c_str(), std::min((size_t)256, sizeof(json)));
-        if (output)
-            *output = json.c_str();
-        if (length)
-            *length = sizeof(json);
-        return true;
     }
 };
 
@@ -77,19 +86,19 @@ struct StaticFunctionProperties<
         : function_name(function_name), input_names(input_names), output_names(output_names) {}
 
     template<size_t ... Is>
-    constexpr StaticFunctionProperties<TFuncName, static_string_arr<Is...>, TOutputNames> with_inputs(const char (&...names)[Is]) {
-        return StaticFunctionProperties<TFuncName, static_string_arr<Is...>, TOutputNames>(
+    constexpr StaticFunctionProperties<TFuncName, static_string_arr<(Is-1)...>, TOutputNames> with_inputs(const char (&...names)[Is]) {
+        return StaticFunctionProperties<TFuncName, static_string_arr<(Is-1)...>, TOutputNames>(
             function_name,
-            std::tuple_cat(input_names, std::tuple<const char (&)[Is]...>(names...)),
+            std::tuple_cat(input_names, static_string_arr<(Is-1)...>(names...)),
             output_names);
     }
 
     template<size_t ... Is>
-    constexpr StaticFunctionProperties<TFuncName, TInputNames, static_string_arr<Is...>> with_outputs(const char (&...names)[Is]) {
-        return StaticFunctionProperties<TFuncName, TInputNames, static_string_arr<Is...>>(
+    constexpr StaticFunctionProperties<TFuncName, TInputNames, static_string_arr<(Is-1)...>> with_outputs(const char (&...names)[Is]) {
+        return StaticFunctionProperties<TFuncName, TInputNames, static_string_arr<(Is-1)...>>(
             function_name,
             input_names,
-            std::tuple_cat(output_names, std::tuple<const char (&)[Is]...>(names...)));
+            std::tuple_cat(output_names, static_string_arr<(Is-1)...>(names...)));
     }
 
     static constexpr const size_t NInputs = (sizeof...(IIn));
@@ -100,9 +109,9 @@ struct StaticFunctionProperties<
 };
 
 
-template<size_t IFunc>
-static constexpr StaticFunctionProperties<static_string<IFunc>, static_string_arr<>, static_string_arr<>> make_function_props(const char (&function_name)[IFunc]) {
-    return StaticFunctionProperties<static_string<IFunc>, static_string_arr<>, static_string_arr<>>(static_string<IFunc>(function_name), empty_static_string_arr, empty_static_string_arr);
+template<size_t IFunc_PLUS_1>
+static constexpr StaticFunctionProperties<static_string<IFunc_PLUS_1-1>, static_string_arr<>, static_string_arr<>> make_function_props(const char (&function_name)[IFunc_PLUS_1]) {
+    return StaticFunctionProperties<static_string<IFunc_PLUS_1-1>, static_string_arr<>, static_string_arr<>>(static_string<IFunc_PLUS_1-1>(function_name), empty_static_string_arr, empty_static_string_arr);
 }
 
 struct get_value_functor {
@@ -275,7 +284,7 @@ struct encoder_chain_from_tuple<std::tuple<TEncoders...>> {
 
 template<
     typename TFunc, TFunc& func,
-    typename TMetadata, TMetadata& metadata>
+    typename TMetadata>
 class LocalFunctionEndpoint : public LocalEndpoint {
     using TDecoders = decoder_type<TMetadata::NInputs, args_of_t<TFunc>>;
 
@@ -297,12 +306,16 @@ class LocalFunctionEndpoint : public LocalEndpoint {
     //)
     //constexpr std::tuple_size<args_of_t<TFunc>> == NInputs
 
+public:
+    //constexpr LocalFunctionEndpoint(TMetadata metadata) : metadata_(metadata), json_(json) {}
+    constexpr LocalFunctionEndpoint(const char * json, size_t json_length) : json_(json), json_length_(json_length) {}
+
     using stream_chain = typename stream_decoder_chain_from_tuple<typename TDecoders::type>::type;
     //using encoder_chain = typename encoder_chain_from_tuple<typename TEncoders::type>::type;
-    void open_connection(IncomingConnectionDecoder& incoming_connection_decoder) final {
+    void open_connection(IncomingConnectionDecoder& incoming_connection_decoder) const final {
         incoming_connection_decoder.set_stream<stream_chain>();
     }
-    void decoder_finished(const IncomingConnectionDecoder& incoming_connection_decoder, OutputPipe* output) final {
+    void decoder_finished(const IncomingConnectionDecoder& incoming_connection_decoder, OutputPipe* output) const final {
         const stream_chain* decoder = incoming_connection_decoder.get_stream<stream_chain>();
         LOG_FIBRE(INPUT, "received all function arguments");
         //printf("arg decoder finished");
@@ -324,14 +337,27 @@ class LocalFunctionEndpoint : public LocalEndpoint {
         //Serializer<std::tuple<TOutputs...>>::serialize(outputs, output);
     }
 
-    uint16_t get_hash() {
+    uint16_t get_hash() const final {
         // TODO: implement
         return 0;
     }
     // @brief Returns a JSON snippet that describes this function
-    bool get_as_json(const char ** output, size_t* length) final {
-        return FunctionJSONAssembler<TMetadata, metadata>::get_as_json(output, length);
+    bool get_as_json(const char ** output, size_t* length) const final {
+        if (output) *output = json_;
+        if (length) *length = json_length_;
+        return true;
     }
+
+private:
+    const char * json_;
+    size_t json_length_;
+};
+
+template<typename TFunc, TFunc& func, typename TMetadata>
+LocalFunctionEndpoint<TFunc, func, TMetadata> make_local_function_endpoint(const TMetadata metadata) {
+    static const auto json = FunctionJSONAssembler<TMetadata>::get_as_json(metadata);
+    using ret_t = LocalFunctionEndpoint<TFunc, func, TMetadata>;
+    return ret_t(json.c_str(), decltype(json)::size());
 };
 
 }

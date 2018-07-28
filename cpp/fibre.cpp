@@ -149,11 +149,11 @@ void JSONDescriptorEndpoint::handle(const uint8_t* input, size_t input_length, f
 
 namespace fibre {
 
-void publish_function(LocalEndpoint* function) {
+void publish_function(const LocalEndpoint* function) {
     global_state.functions_.push_back(function);
 }
 
-void publish_ref_type(LocalRefType* type) {
+void publish_ref_type(const LocalRefType* type) {
     global_state.ref_types_.push_back(type);
 }
 
@@ -170,7 +170,7 @@ bool get_function_json(uint32_t endpoint_id, const char ** output, size_t* lengt
         LOG_FIBRE_W(GENERAL, "endpoint_id out of range: ", endpoint_id, " >= ", global_state.functions_.size());
         return false;
     }
-    fibre::LocalEndpoint* endpoint = global_state.functions_[endpoint_id];
+    const fibre::LocalEndpoint* endpoint = global_state.functions_[endpoint_id];
     endpoint->get_as_json(output, length);
     return true;
 }
@@ -186,7 +186,7 @@ bool get_ref_type_json(uint32_t ref_type_id, const char ** output, size_t* lengt
         LOG_FIBRE_W(GENERAL, "ref_type_id out of range: ", ref_type_id, " >= ", global_state.functions_.size());
         return false;
     }
-    fibre::LocalRefType* type = global_state.ref_types_[ref_type_id];
+    const fibre::LocalRefType* type = global_state.ref_types_[ref_type_id];
     type->get_as_json(output, length);
     return true;
 }
@@ -238,18 +238,18 @@ void init() {
     // TODO: global_state should not be constructed statically
 
     // Make sure we publish builtin functions first so they have a known ID starting at 0
-    for (LocalEndpoint* ep : StaticLinkedListElement<LocalEndpoint*, builtin_function_tag>::get_list()) {
+    for (const LocalEndpoint* ep : StaticLinkedListElement<const LocalEndpoint*, builtin_function_tag>::get_list()) {
         fibre::publish_function(ep);
     }
-    for (LocalEndpoint* ep : StaticLinkedListElement<LocalEndpoint*, user_function_tag>::get_list()) {
+    for (const LocalEndpoint* ep : StaticLinkedListElement<const LocalEndpoint*, user_function_tag>::get_list()) {
         fibre::publish_function(ep);
     }
     LOG_FIBRE(GENERAL, "published ", global_state.functions_.size(), " functions");
 
-    for (LocalRefType* t : StaticLinkedListElement<LocalRefType*, builtin_function_tag>::get_list()) {
+    for (const LocalRefType* t : StaticLinkedListElement<const LocalRefType*, builtin_function_tag>::get_list()) {
         fibre::publish_ref_type(t);
     }
-    for (LocalRefType* t : StaticLinkedListElement<LocalRefType*, user_function_tag>::get_list()) {
+    for (const LocalRefType* t : StaticLinkedListElement<const LocalRefType*, user_function_tag>::get_list()) {
         fibre::publish_ref_type(t);
     }
     LOG_FIBRE(GENERAL, "published ", global_state.ref_types_.size(), " ref types");

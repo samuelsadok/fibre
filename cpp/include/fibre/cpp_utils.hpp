@@ -414,13 +414,15 @@ std::tuple<TOut...> invoke_with_tuples(std::tuple<TIn...> inputs) {
 }
 
 
+template<typename TInt, TInt... Is>
+struct sum_impl;
+template<typename TInt>
+struct sum_impl<TInt> { static constexpr TInt value = 0; };
+template<typename TInt, TInt I, TInt... Is>
+struct sum_impl<TInt, I, Is...> { static constexpr TInt value = I + sum_impl<TInt, Is...>::value; };
 
-template<unsigned int... Ns>
-struct sum;
-template<>
-struct sum<> { enum {value = 0}; };
-template<unsigned size, unsigned... sizes>
-struct sum<size, sizes...> { enum { value = size + sum<sizes...>::value }; };
+template<size_t... Is>
+using sum = sum_impl<size_t, Is...>;
 
 
 // source: https://akrzemi1.wordpress.com/2017/05/18/asserts-in-constexpr-functions/
@@ -494,12 +496,12 @@ class static_string
     }
  
 public:
-    constexpr char operator[](size_t i) const {
-        return X_ASSERT(i >= 0 && i < N), _array[i];
+    static constexpr std::size_t size() {
+        return N;
     }
     
-    constexpr std::size_t size() const {
-        return N;
+    constexpr char operator[](size_t i) const {
+        return X_ASSERT(i >= 0 && i < N), _array[i];
     }
 
     template<size_t N1, ENABLE_IF(N1 <= N)>
@@ -574,12 +576,15 @@ constexpr static_string<I1> const_str_join(const static_string<IDelim>& delimite
 
 // @brief Constructs a fixed length string by concatenating two strings
 template<size_t IDelim, size_t I1, size_t I2, size_t... ILengths>
-constexpr static_string<I1+I2+sum<ILengths...>::value+sizeof...(ILengths)+1>
+constexpr static_string<I1 + I2 + sum<ILengths...>::value + sizeof...(ILengths) + 1>
 const_str_join(
     const static_string<IDelim>& delimiter,
-    const static_string<I1> s1, const static_string<I2> s2, const static_string<ILengths>& ... strings) {
-    return const_str_concat(s1, ",", const_str_join(s2, strings...));
+    const static_string<I1>& s1, const static_string<I2>& s2, const static_string<ILengths>& ... strings) {
+    return const_str_concat(s1, delimiter, const_str_join(delimiter, s2, strings...));
 }
+
+template<size_t IDelim, size_t... ILengths>
+using const_str_join_t = decltype(const_str_join(std::declval<static_string<IDelim>>(), std::declval<static_string<ILengths>>()...));
 
 template<size_t... ILengths>
 using static_string_arr = std::tuple<static_string<ILengths>...>;
