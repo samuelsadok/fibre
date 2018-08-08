@@ -221,6 +221,66 @@ This requires prior mutual agreement on several things, e.g. function ID, functi
 On a desktop PC, it also allows to concentrate all resources of Fibre in a single hub service, such that multiple user programs can plug in easily with minimal additional resources.
 
 
+## Comparison
+
+There are many existing communication frameworks, so why build yet another one? The answer is that none of these frameworks seem to fully align with the following three aspects:
+
+ * From a user experience standpoint, it's important that a communication framework can cope with a complex, heterogeneous and dynamic network topology and supports zero-config operation.
+ * From a developer standpoint, it's important that a framework is intuitive to use, feels native to any language and runs on any platform. In the age of robotics and IoT, this includes embedded systems.
+ * From an operations perspective it's important that a single file can be used as a root interface definition, that this interface doesn't  unnecessarily dictate implementation details and that updates to this definition don't break deployed applications too easily.
+
+Below is a table to compare details of a couple of popular framworks and Fibre. Scroll down for further explanation of some of the points.
+
+|   | Fibre | gRPC | Apache Thrift | Apache Avro RPC | ROS | D-Bus | Wayland | PJON |
+|---|---|---|---|---|---|---|---|---|
+| **General** |
+| Domain | general purpose | cloud backend & frontend | cloud backend | cloud backend | robotics | local IPC | graphics | embedded systems
+| Programming model | function calls and properties (static or on objects) | function calls on services | function calls on objects | | messages on topics | function calls on objects | function calls on objects | raw data bus
+| Language-agnostic IDL | planned for v0.3.0 | yes (protobuf IDL) | [yes (custom)](http://thrift-tutorial.readthedocs.io/en/latest/thrift-file.html) | | [yes (custom)](http://wiki.ros.org/msg) | [yes (XML)](https://dbus.freedesktop.org/doc/dbus-specification.html#introspection-format) | [yes (XML)](https://github.com/wayland-project/wayland/blob/master/protocol/wayland.xml) | no |
+| Platform support <sup>[1](#footnote-platform)</sub> | any | any | any | | Linux | Linux | Linux | any
+| Language support | C++, Python | most | most | | most | [most](#https://www.freedesktop.org/wiki/Software/DBusBindings/) | | C++, Python
+| Transport support <sup>[2](#footnote-transport)</sub> | TCP, UDP, USB, UART | TCP | TCP, Unix domain sockets, shared memory | | [TCP, UDP](#http://wiki.ros.org/ROS/Technical%20Overview#Node) | [Unix domain sockets, TCP](https://www.freedesktop.org/wiki/IntroductionToDBus/) | [Unix domain sockets](https://wayland.freedesktop.org/docs/html/ch04.html), [shared memory](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_shm) | TCP, UDP, UART
+| **Network Architecture** |
+| Service/object discovery <sup>[3](#footnote-discovery)</sub> | USB, UART: yes; TCP, UDP: planned for v0.4.0 | no | [no](https://stackoverflow.com/questions/13530391/apache-thrift-service-auto-discovery) | | no | yes | yes | [by device ID](https://github.com/gioblu/PJON/blob/master/examples/LINUX/Local/EthernetTCP/PingPong/Transmitter/Transmitter.cpp)
+| Channel multiplexing <sup>[4](#footnote-multichannel)</sub> | yes (v0.2.0) | no | no | | no | | no | no
+| Multihop networking <sup>[5](#footnote-multihop)</sub> | planned for v0.4.0 | no | no | | no | | no | [yes](https://github.com/gioblu/PJON/blob/master/specification/PJON-protocol-specification-v3.0.md#router)
+| Support for lossy channels | yes | no | no | | yes (UDP) | | | yes
+| Transport Encryption | planned for v1.0 | [yes](https://bbengfort.github.io/programmer/2017/03/03/secure-grpc.html) | [yes](https://chamibuddhika.wordpress.com/2011/10/03/securing-a-thrift-service/) | | experimental | no | no | not yet
+| Access control <sup>[6](#footnote-access-control)</sub> | planned for v1.0 | [yes](https://grpc.io/docs/guides/auth.html#authentication-api) | [no](http://www.doublecloud.org/2014/01/user-authentication-with-thrift-service-comparing-different-approaches/) | | experimental | yes | | not yet
+| **Design Details** |
+| Documentation embedded in IDL <sup>[7](#footnote-idl-doc)</sup> | planned for v0.3.0 | [no](https://developers.google.com/protocol-buffers/docs/proto) | [no](https://thrift.apache.org/docs/idl) | | [no](http://wiki.ros.org/msg) | [no](https://dbus.freedesktop.org/doc/dbus-specification.html#introspection-format) | [yes](https://github.com/wayland-project/wayland/blob/master/protocol/wayland.xml) | N/A
+| Flexible type matching <sup>[8](#footnote-type-matching)</sub> | planned for v1.0 | no | no | | no | | | N/A
+| Streaming mode <sup>[9](#footnote-streaming)</sub> | yes (v0.2.0) | [yes](https://grpc.io/docs/guides/concepts.html#service-definition) | [yes](https://github.com/erikvanoosten/thrift-stream) | | yes | | | yes
+| Threadless mode <sup>[10](#footnote-threads)</sub> | yes | | | | | | | yes
+| Static memory mode <sup>[11](#footnote-memory)</sub> | yes | | | | | | | probably
+| Runtime interface introspection <sup>[12](#footnote-introspection)</sub> | yes | no | no | | [no](http://wiki.ros.org/Messages) | [yes](https://dbus.freedesktop.org/doc/dbus-specification.html#introspection-format) | | N/A
+
+
+<a name="footnote-platform">1</a>: "any" means at least Linux, Windows and macOS. Given that these three are supported, it is likely that support can easily be added for other desktop systems. For embedded systems there are usually more strict requirements which are addressed separately.
+
+<a name="footnote-transport">2</a>: Most of the listed framworks are extensible with custom transport layers. However if a framework only officially supports TCP, it is unlikely that adding support for unreliable channels like UART will be trivial. Furthermore such extensions may need to be implemented separately for each language and platform that is used.
+
+<a name="footnote-discovery">3</a>: A client can discover compatible devices/applications in its vicinity with zero or near-zero user input using techniques like Bonjour/Avahi or USB device enumeration.
+
+<a name="footnote-multichannel">4</a>: Two peers can use multiple transport channels at the same time and switch between channels without breaking the connection. This is essential for mobile applications where IP addresses change spontaneously. It is also useful to fully exploit each channel's advantages (i.e. latency vs bandwidth vs dependability).
+
+<a name="footnote-multichannel">5</a>: Peers can communicate even if there is only an indirect connection. This is useful for IoT meshes and complex robot architectures, where some microcontrollers are not directly connected to the command issuing client.
+
+<a name="footnote-access">6</a>: The framework allows to grant different users access to different feature sets of a service. This is useful for smart home devices or any application that has multiple users.
+
+<a name="footnote-idl-doc">7</a>: The interface description language allows for embedding plain-text documentation for functions and arguments, so that the interface definition file is the only true source of the interface specification. This is important so that the same file can be used to autogenerate documentation in HTML or other formats, and to automatically add the same documentation to function stubs.
+
+<a name="footnote-type-matching">8</a>: The interface definition does not dictate the actual data types that implementations should use. One device may use uint16_t to represent an index, while another device may use uint32_t to represent the same value. This is makes interface definitions more future-proof and not favor devices with either small or large memory.
+
+<a name="footnote-streaming">9</a>: The framework allows function implementers to receive/return theoretically infinite sized values in a stream-oriented way. This is important for memory constrained devices.
+
+<a name="footnote-threads">10</a>: The framework can be used in a purely single-threaded environment, e.g. an embedded system without multithreading support.
+
+<a name="footnote-memory">11</a>: The framework can be configured to use only static memory. Certain runtime parameters may be limited in this mode (e.g. the number of concurrent connections).
+
+<a name="footnote-introspection">12</a>: A server is able to send its own interface description to clients at runtime so that clients can interact with objects without prior knowledge of the interface. This is useful for rapid prototyping (e.g. Python), interactive shells and automatic interfacing with other protocols.
+
+
 ## Projects using Fibre ##
 
  - [ODrive](https://github.com/madcowswe/ODrive): High performance motor control
