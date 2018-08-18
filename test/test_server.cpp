@@ -14,7 +14,7 @@ public:
     float property1;
     float property2;
 
-    float set_both(float arg1, float arg2) {
+    uint32_t set_both(uint32_t arg1, uint32_t arg2) {
         property1 = arg1;
         property2 = arg2;
         return property1 + property2;
@@ -23,11 +23,14 @@ public:
 
 //FIBRE_EXPORT_TYPE(float)
 FIBRE_EXPORT_TYPE(TestClass,
-    FIBRE_PROPERTY(property1)
-    //FIBRE_PROPERTY(property2)
+    FIBRE_PROPERTY(property1),
+    FIBRE_PROPERTY(property2)
     //FIBRE_FUNCTION(set_both, "arg1", "arg2")
 );
 
+FIBRE_EXPORT_MEMBER_FUNCTION(
+    TestClass, set_both, INPUTS("obj", "arg1", "arg2"), OUTPUTS(/*"result"*/)
+);
 
 void test_func_a(uint32_t arg, uint32_t arg2) {
     printf("test_function called with 0x%08x and 0x%08x\n", arg, arg2);
@@ -110,14 +113,3 @@ int main() {
 
     return 0;
 }
-
-
-
-
-// future concept to simplify function exports
-
-//class Element;
-
-//StaticLinkedListElement<int> some_element(5);
-//StaticLinkedListElement<int> another_element(9);
-//StaticLinkedListElement<int> third_element(30);

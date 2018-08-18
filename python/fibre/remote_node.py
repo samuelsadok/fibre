@@ -152,9 +152,9 @@ class RemoteNode(object):
         get_function_json = fibre.remote_object.RemoteFunction(self, 0, 0, ["number"], ["json"])
         get_ref_type_json = fibre.remote_object.RemoteFunction(self, 1, 0, ["number"], ["json"])
         json_string = get_function_json(0)
-        self._logger.debug("JSON: {}".format(json_string))
+        self._logger.debug("JSON 0: {}".format(json_string))
         json_string = get_function_json(1)
-        self._logger.debug("JSON: {}".format(json_string))
+        self._logger.debug("JSON 1: {}".format(json_string))
         json_string = get_ref_type_json(0)
         self._logger.debug("Ref type: {}".format(json_string))
 

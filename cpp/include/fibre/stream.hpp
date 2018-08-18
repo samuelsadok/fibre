@@ -466,6 +466,44 @@ private:
     StreamSink *current_stream_ = nullptr;
 };
 
-}
+
+template<typename TStreamSink>
+class StreamRepeater : public StreamSink {
+public:
+    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
+        LOG_FIBRE(SERDES, "stream repeater: process ", length, " bytes");
+        while (length && active_) {
+            size_t chunk = 0;
+            status_t result = stream_sink_.process_bytes(buffer, length, &chunk);
+            buffer += chunk;
+            length -= chunk;
+            if (processed_bytes)
+                *processed_bytes += chunk;
+            if (result != CLOSED)
+                return result;
+            active_ = advance_state();
+            if (active_) {
+                stream_sink_ = TStreamSink(); // reset stream sink
+            }
+        }
+        return active_ ? OK : CLOSED;
+    }
+
+    size_t get_min_useful_bytes() const final {
+        return active_ ? stream_sink_.get_min_useful_bytes() : 0;
+    }
+
+    size_t get_min_non_blocking_bytes() const final {
+        return active_ ? stream_sink_.get_min_non_blocking_bytes() : 0;
+    }
+
+protected:
+    TStreamSink stream_sink_;
+    virtual bool advance_state() = 0;
+private:
+    bool active_ = true;
+};
+
+} // namespace fibre
 
 #endif // __STREAM_HPP

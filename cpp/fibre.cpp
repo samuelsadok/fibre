@@ -157,6 +157,12 @@ void publish_ref_type(const LocalRefType* type) {
     global_state.ref_types_.push_back(type);
 }
 
+
+ObjectReference_t RootType::dereference(ObjectReference_t* ref, size_t index) const {
+    printf("ROOT OBJECT NOT IMPLEMENTED");
+    return ObjectReference_t::nil();
+}
+
 /* Built-in published functions ----------------------------------------------*/
 
 bool get_function_json(uint32_t endpoint_id, const char ** output, size_t* length) {
@@ -244,7 +250,12 @@ void init() {
     for (const LocalEndpoint* ep : StaticLinkedListElement<const LocalEndpoint*, user_function_tag>::get_list()) {
         fibre::publish_function(ep);
     }
-    LOG_FIBRE(GENERAL, "published ", global_state.functions_.size(), " functions");
+    LOG_FIBRE(GENERAL, "published ", global_state.functions_.size(), " functions:");
+    for (const LocalEndpoint* ep : global_state.functions_) {
+        const char * str = nullptr;
+        ep->get_as_json(&str, nullptr);
+        LOG_FIBRE(GENERAL, "  fn at ", as_hex(reinterpret_cast<uintptr_t>(ep)), ": ", str);
+    }
 
     for (const LocalRefType* t : StaticLinkedListElement<const LocalRefType*, builtin_function_tag>::get_list()) {
         fibre::publish_ref_type(t);
@@ -253,6 +264,11 @@ void init() {
         fibre::publish_ref_type(t);
     }
     LOG_FIBRE(GENERAL, "published ", global_state.ref_types_.size(), " ref types");
+    for (const LocalRefType* tp : global_state.ref_types_) {
+        const char * str = nullptr;
+        tp->get_as_json(&str, nullptr);
+        LOG_FIBRE(GENERAL, "  tp at ", as_hex(reinterpret_cast<uintptr_t>(tp)), ": ", str);
+    }
 
 
     std::random_device rd;

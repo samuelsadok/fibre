@@ -44,10 +44,14 @@ namespace fibre {
 template<typename T>
 using FibreList = std::vector<T>;
 
-class FibreRefType {
+/*class FibreRefType {
 public:
+    virtual ObjectReference_t* dereference(ObjectReference_t*, size_t index) {
+        return ObjectReference_t() global_instance_of
+    }
+
     virtual std::tuple<FibreRefType*, size_t> get_property(size_t index) = 0;
-};
+};*/
 
 //class FibreTypeType : public FibreType {
 //    std::tuple<FibreType*, size_t> get_member(size_t index) {
@@ -55,35 +59,25 @@ public:
 //    }
 //}
 
-template<typename T>
-T& global_instance_of() {
-    static T instance = T();
-    return instance;
-}
-
-extern int the_one_and_only_int;
-
-class ObjectReference_t {
-public:
-    ObjectReference_t(ObjectReference_t* parent, uintptr_t obj, FibreRefType* type) :
-        obj(obj), type(type) {}
-    ObjectReference_t dereference(size_t index) {
-        return ObjectReference_t(
-            this,
-            obj + std::get<1>(type->get_property(index)),
-            std::get<0>(type->get_property(index)));
-    }
-    ObjectReference_t *parent; // pointer to the parent object reference
-    uintptr_t obj; // context pointer (meaning depends on type)
-    FibreRefType* type;
-
-    //static ObjectReference_t root() { return ObjectReference_t(
-    //    nullptr,
-    //    (uintptr_t)&the_one_and_only_int,
-    //    &global_instance_of<FibreRefType<int>>()); }
-};
 
 
+
+//template<>
+//class fibre_type<int32_t> { typedef IntNumberType<int32_t> type; };
+//template<>
+//class fibre_type<uint32_t> { typedef IntNumberType<uint32_t> type; };
+
+//template<typename T>
+//using fibre_type_t = typename fibre_type<T>::type;
+
+
+
+/*template<typename T>
+class ObjectReference_t : public ObjectReference_t {
+    using ref_type = LocalRefType;
+}*/
+
+#if 0
 template<typename T>
 class IntNumberType : FibreRefType {
     // @brief Statically known encoders
@@ -99,17 +93,7 @@ class IntNumberType : FibreRefType {
     typedef std::tuple_element_t<0, static_encoders> default_encoder;
     typedef std::tuple_element_t<0, static_decoders> default_decoder;
 };
-
-template<typename T>
-class fibre_type;
-
-template<>
-class fibre_type<int32_t> { typedef IntNumberType<int32_t> type; };
-template<>
-class fibre_type<uint32_t> { typedef IntNumberType<uint32_t> type; };
-
-template<typename T>
-using fibre_type_t = typename fibre_type<T>::type;
+#endif
 
 }
 

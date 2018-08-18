@@ -87,6 +87,20 @@ namespace fibre {
     class OutputPipe; // output.hpp
     class RemoteNode; // remote_node.hpp
     class LocalEndpoint; // local_function.hpp
+    class LocalRefType; // local_ref_type.hpp
+    class ObjectReference_t; // local_ref_type.hpp
+    template<typename T>
+    class ObjectReferenceDecoder; // local_ref_type.hpp
+
+    template<typename T>
+    T& global_instance_of() {
+        static T instance = T();
+        return instance;
+    }
+
+
+    struct user_function_tag {};
+    struct builtin_function_tag {};
 }
 
 #include "stream.hpp"
@@ -103,8 +117,8 @@ namespace fibre {
         bool initialized = false;
         Uuid own_uuid;
         std::unordered_map<Uuid, RemoteNode> remote_nodes_;
-        std::vector<const fibre::LocalRefType*> ref_types_ = std::vector<const fibre::LocalRefType*>();
-        std::vector<const fibre::LocalEndpoint*> functions_ = std::vector<const fibre::LocalEndpoint*>();
+        std::vector<const LocalRefType*> ref_types_ = std::vector<const LocalRefType*>();
+        std::vector<const LocalEndpoint*> functions_ = std::vector<const LocalEndpoint*>();
         std::thread scheduler_thread;
         AutoResetEvent output_pipe_ready;
         AutoResetEvent output_channel_ready;
@@ -139,8 +153,6 @@ namespace fibre {
 #endif
 
 
-    struct user_function_tag {};
-    struct builtin_function_tag {};
 } // namespace fibre
 
 
@@ -205,36 +217,46 @@ private:
 
 /* Export macros -------------------------------------------------------------*/
 
-#define FIBRE_EXPORT_FUNCTION_(tag, func_name, inputs, outputs) \
-    constexpr auto func_name ## __function_properties = \
+#define FIBRE_EXPORT_FUNCTION_(tag, func_name, func, inputs, outputs) \
+    constexpr auto func_name ## __function_metadata = \
         fibre::make_function_props(#func_name) \
         inputs \
         outputs; \
     auto func_name ## __endpoint = fibre::make_local_function_endpoint< \
-        decltype(func_name), func_name, \
-        decltype(func_name ## __function_properties)>(func_name ## __function_properties); \
+        decltype(func), \
+        decltype(func_name ## __function_metadata)>(func, std::forward<decltype(func_name ## __function_metadata)>(func_name ## __function_metadata)); \
     StaticLinkedListElement<const fibre::LocalEndpoint*, tag> func_name ## __linked_list_element(&(func_name ## __endpoint))
 
-#define FIBRE_EXPORT_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, func_name, inputs, outputs)
-#define FIBRE_EXPORT_BUILTIN_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::builtin_function_tag, func_name, inputs, outputs)
+#define FIBRE_EXPORT_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, func_name, func_name, inputs, outputs)
+#define FIBRE_EXPORT_BUILTIN_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::builtin_function_tag, func_name, func_name, inputs, outputs)
+#define FIBRE_EXPORT_MEMBER_FUNCTION(type_name, func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, asd, \
+    std::mem_fn(&type_name::func_name), inputs, outputs)
 
 #define INPUTS(...)     .with_inputs(__VA_ARGS__)
 #define OUTPUTS(...)    .with_outputs(__VA_ARGS__)
 
 
 #define FIBRE_EXPORT_TYPE_(tag, type_name, ...) \
-    constexpr auto type_name ## __type_properties = \
+namespace type_name ## __namespace { \
+    using T = type_name; \
+    constexpr auto type_name ## __type_metadata = \
         fibre::make_ref_type_props(#type_name) \
-        __VA_ARGS__; \
+        .with_items(__VA_ARGS__); \
     auto type_name ## __fibre_type = fibre::make_local_ref_type< \
         type_name, \
-        decltype(type_name ## __type_properties)>(type_name ## __type_properties); \
-    StaticLinkedListElement<const fibre::LocalRefType*, tag> type_name ## __linked_list_element(&(type_name ## __fibre_type))
+        decltype(type_name ## __type_metadata)>(std::forward<decltype(type_name ## __type_metadata)>(type_name ## __type_metadata)); \
+    StaticLinkedListElement<const fibre::LocalRefType*, tag> type_name ## __linked_list_element(&(type_name ## __fibre_type)); \
+}
+
 
 #define FIBRE_EXPORT_TYPE(type_name, ...) FIBRE_EXPORT_TYPE_(fibre::user_function_tag, type_name, __VA_ARGS__)
 #define FIBRE_EXPORT_BUILTIN_TYPE(type_name, ...) FIBRE_EXPORT_TYPE_(fibre::builtin_function_tag, type_name, __VA_ARGS__)
 
-#define FIBRE_PROPERTY(name)    .with_properties(#name)
+
+// creates a macro item
+#define FIBRE_PROPERTY(name)    fibre::make_property_metadata(#name, &T::name)
+
+//#define FIBRE_PROPERTY(name)    .with_properties(#name)
 
 
 #endif // __FIBRE_HPP

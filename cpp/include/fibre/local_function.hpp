@@ -68,10 +68,10 @@ public:
 };
 
 template<typename TFuncName, typename TInputNames, typename TOutputNames>
-struct StaticFunctionProperties;
+struct StaticFunctionMetadata;
 
 template<size_t IFun, size_t... IIn, size_t... IOut>
-struct StaticFunctionProperties<
+struct StaticFunctionMetadata<
         static_string<IFun>,
         static_string_arr<IIn...>,
         static_string_arr<IOut...>> {
@@ -82,20 +82,20 @@ struct StaticFunctionProperties<
     TInputNames input_names;
     TOutputNames output_names;
 
-    constexpr StaticFunctionProperties(TFuncName function_name, TInputNames input_names, TOutputNames output_names)
+    constexpr StaticFunctionMetadata(TFuncName function_name, TInputNames input_names, TOutputNames output_names)
         : function_name(function_name), input_names(input_names), output_names(output_names) {}
 
     template<size_t ... Is>
-    constexpr StaticFunctionProperties<TFuncName, static_string_arr<(Is-1)...>, TOutputNames> with_inputs(const char (&...names)[Is]) {
-        return StaticFunctionProperties<TFuncName, static_string_arr<(Is-1)...>, TOutputNames>(
+    constexpr StaticFunctionMetadata<TFuncName, static_string_arr<(Is-1)...>, TOutputNames> with_inputs(const char (&...names)[Is]) {
+        return StaticFunctionMetadata<TFuncName, static_string_arr<(Is-1)...>, TOutputNames>(
             function_name,
             std::tuple_cat(input_names, static_string_arr<(Is-1)...>(names...)),
             output_names);
     }
 
     template<size_t ... Is>
-    constexpr StaticFunctionProperties<TFuncName, TInputNames, static_string_arr<(Is-1)...>> with_outputs(const char (&...names)[Is]) {
-        return StaticFunctionProperties<TFuncName, TInputNames, static_string_arr<(Is-1)...>>(
+    constexpr StaticFunctionMetadata<TFuncName, TInputNames, static_string_arr<(Is-1)...>> with_outputs(const char (&...names)[Is]) {
+        return StaticFunctionMetadata<TFuncName, TInputNames, static_string_arr<(Is-1)...>>(
             function_name,
             input_names,
             std::tuple_cat(output_names, static_string_arr<(Is-1)...>(names...)));
@@ -106,12 +106,15 @@ struct StaticFunctionProperties<
     constexpr TFuncName get_function_name() { return function_name; }
     constexpr TInputNames get_input_names() { return input_names; }
     constexpr TOutputNames get_output_names() { return output_names; }
+
+    using JSONAssembler = FunctionJSONAssembler<StaticFunctionMetadata>;
+    typename JSONAssembler::get_json_t json = JSONAssembler::get_as_json(*this);
 };
 
 
-template<size_t IFunc_PLUS_1>
-static constexpr StaticFunctionProperties<static_string<IFunc_PLUS_1-1>, static_string_arr<>, static_string_arr<>> make_function_props(const char (&function_name)[IFunc_PLUS_1]) {
-    return StaticFunctionProperties<static_string<IFunc_PLUS_1-1>, static_string_arr<>, static_string_arr<>>(static_string<IFunc_PLUS_1-1>(function_name), empty_static_string_arr, empty_static_string_arr);
+template<size_t INameLength_Plus1>
+static constexpr StaticFunctionMetadata<static_string<INameLength_Plus1-1>, static_string_arr<>, static_string_arr<>> make_function_props(const char (&function_name)[INameLength_Plus1]) {
+    return StaticFunctionMetadata<static_string<INameLength_Plus1-1>, static_string_arr<>, static_string_arr<>>(static_string<INameLength_Plus1-1>(function_name), empty_static_string_arr, empty_static_string_arr);
 }
 
 struct get_value_functor {
@@ -123,46 +126,56 @@ struct get_value_functor {
 
 
 
-template<size_t NInputs, typename... Ts>
+template<typename, size_t NInputs, typename... Ts>
 struct decoder_type;
 
 template<size_t NInputs>
-struct decoder_type<NInputs> {
+struct decoder_type<void, NInputs> {
     static_assert(NInputs == 0, "too many input names provided");
     using type = std::tuple<>;
     using remainder = std::tuple<>;
 };
 
 template<typename T, typename... Ts>
-struct decoder_type<0, T, Ts...> {
+struct decoder_type<void, 0, T, Ts...> {
     using type = std::tuple<>;
     using remainder = std::tuple<T, Ts...>;
 };
 
 template<size_t NInputs, typename... TTuple, typename... Ts>
-struct decoder_type<NInputs, std::tuple<TTuple...>, Ts...> {
+struct decoder_type<void, NInputs, std::tuple<TTuple...>, Ts...> {
 private:
-    using unpacked = decoder_type<NInputs, TTuple..., Ts...>;
+    using unpacked = decoder_type<void, NInputs, TTuple..., Ts...>;
 public:
     using type = typename unpacked::type;
     using remainder = typename unpacked::remainder;
 };
 
 template<size_t NInputs, typename... Ts>
-struct decoder_type<NInputs, uint32_t, Ts...> {
+struct decoder_type<typename std::enable_if_t<(NInputs > 0)>, NInputs, uint32_t, Ts...> {
 private:
-    using tail = decoder_type<NInputs - 1, Ts...>;
+    using tail = decoder_type<void, NInputs - 1, Ts...>;
     using this_type = FixedIntDecoder<uint32_t, false>;
 public:
     using type = tuple_cat_t<std::tuple<this_type>, typename tail::type>;
     using remainder = typename tail::remainder;
 };
 
-template<size_t NOutputs, typename... Ts>
+template<size_t NInputs, typename TObj, typename... Ts>
+struct decoder_type<typename std::enable_if<(NInputs > 0)>::type, NInputs, TObj*, Ts...> {
+private:
+    using tail = decoder_type<void, NInputs - 1, Ts...>;
+    using this_type = ObjectReferenceDecoder<TObj>;
+public:
+    using type = tuple_cat_t<std::tuple<this_type>, typename tail::type>;
+    using remainder = typename tail::remainder;
+};
+
+template<typename, size_t NOutputs, typename... Ts>
 struct encoder_type;
 
 template<size_t NOutputs>
-struct encoder_type<NOutputs> {
+struct encoder_type<void, NOutputs> {
     static_assert(NOutputs == 0, "too many output names provided");
     using type = std::tuple<>;
     using remainder = std::tuple<>;
@@ -172,7 +185,7 @@ struct encoder_type<NOutputs> {
 };
 
 template<typename T, typename... Ts>
-struct encoder_type<0, T, Ts...> {
+struct encoder_type<void, 0, T, Ts...> {
     using type = std::tuple<>;
     using remainder = std::tuple<T, Ts...>;
     static void serialize(StreamSink* output, T&& value, Ts&&... tail_values) {
@@ -181,9 +194,9 @@ struct encoder_type<0, T, Ts...> {
 };
 
 template<size_t NOutputs, typename... TTuple, typename... Ts>
-struct encoder_type<NOutputs, std::tuple<TTuple...>, Ts...> {
+struct encoder_type<typename std::enable_if_t<(NOutputs > 0)>, NOutputs, std::tuple<TTuple...>, Ts...> {
 private:
-    using unpacked = encoder_type<NOutputs, TTuple..., Ts...>;
+    using unpacked = encoder_type<void, NOutputs, TTuple..., Ts...>;
 public:
     //using type = typename unpacked::type;
     //using remainder = typename unpacked::remainder;
@@ -198,9 +211,9 @@ public:
 };
 
 template<size_t NOutputs, typename... Ts>
-struct encoder_type<NOutputs, uint32_t, Ts...> {
+struct encoder_type<typename std::enable_if_t<(NOutputs > 0)>, NOutputs, uint32_t, Ts...> {
 private:
-    using tail = encoder_type<NOutputs - 1, Ts...>;
+    using tail = encoder_type<void, NOutputs - 1, Ts...>;
 public:
     //using type = tuple_cat_t<std::tuple<this_type>, typename tail::type>;
     //using remainder = typename tail::remainder;
@@ -214,9 +227,9 @@ public:
 };
 
 template<size_t NOutputs, typename... Ts>
-struct encoder_type<NOutputs, const char *, size_t, Ts...> {
+struct encoder_type<typename std::enable_if_t<(NOutputs > 0)>, NOutputs, const char *, size_t, Ts...> {
 private:
-    using tail = encoder_type<NOutputs - 1, Ts...>;
+    using tail = encoder_type<void, NOutputs - 1, Ts...>;
     using this_data_type = std::tuple<const char *, size_t>;
 public:
     //using data_type = tuple_cat_t<this_data_type, typename tail::data_type>;
@@ -283,15 +296,16 @@ struct encoder_chain_from_tuple<std::tuple<TEncoders...>> {
 
 
 template<
-    typename TFunc, TFunc& func,
+    typename TFunc,
+    //typename TFuncSignature,
     typename TMetadata>
 class LocalFunctionEndpoint : public LocalEndpoint {
-    using TDecoders = decoder_type<TMetadata::NInputs, args_of_t<TFunc>>;
+    using TDecoders = decoder_type<void, TMetadata::NInputs, args_of_t<TFunc>>;
 
     using out_arg_refs_t = typename TDecoders::remainder;
     using out_arg_vals_t = remove_refs_or_ptrs_from_tuple_t<out_arg_refs_t>;
 
-    using TArgEncoders = encoder_type<TMetadata::NOutputs, out_arg_vals_t>;
+    using TArgEncoders = encoder_type<void, TMetadata::NOutputs, out_arg_vals_t>;
     //using TRetEncoders = encoder_type<TMetadata::NOutputs, tuple_cat_t<out_arg_vals_t, as_tuple_t<result_of_t<TFunc>>>>;
     //int a =  TEncoders();
     //static_assert(
@@ -308,7 +322,9 @@ class LocalFunctionEndpoint : public LocalEndpoint {
 
 public:
     //constexpr LocalFunctionEndpoint(TMetadata metadata) : metadata_(metadata), json_(json) {}
-    constexpr LocalFunctionEndpoint(const char * json, size_t json_length) : json_(json), json_length_(json_length) {}
+    constexpr LocalFunctionEndpoint(TFunc&& func, TMetadata&& metadata) :
+        func_(std::forward<TFunc>(func)),
+        metadata_(std::forward<TMetadata>(metadata)) {}
 
     using stream_chain = typename stream_decoder_chain_from_tuple<typename TDecoders::type>::type;
     //using encoder_chain = typename encoder_chain_from_tuple<typename TEncoders::type>::type;
@@ -330,7 +346,7 @@ public:
         //std::tuple<TOutputs&...> output_refs = std::forward_as_tuple(outputs);
         //std::tuple<TOutputs&...> output_refs(std::get<0>(outputs));
         auto in_and_out_refs = std::tuple_cat(in_refs, out_refs);
-        std::apply(func, in_and_out_refs);
+        std::apply(func_, in_and_out_refs);
         TArgEncoders::serialize(output, std::forward<out_arg_vals_t>(out_vals));
         //printf("first arg is ", std::hex, std::get<0>(inputs));
         //LOG_FIBRE(SERDES, "will write output of type ", typeid(TOutputs).name()...);
@@ -343,21 +359,34 @@ public:
     }
     // @brief Returns a JSON snippet that describes this function
     bool get_as_json(const char ** output, size_t* length) const final {
-        if (output) *output = json_;
-        if (length) *length = json_length_;
+        if (output) *output = metadata_.json.c_str();
+        if (length) *length = metadata_.json.size();
         return true;
     }
 
 private:
-    const char * json_;
-    size_t json_length_;
+    TFunc func_;
+    TMetadata metadata_;
 };
 
-template<typename TFunc, TFunc& func, typename TMetadata>
-LocalFunctionEndpoint<TFunc, func, TMetadata> make_local_function_endpoint(const TMetadata metadata) {
+/*template<typename TFunc, TFunc& func, typename TMetadata>
+LocalFunctionEndpoint<TFunc, TMetadata> make_local_function_endpoint0(const TMetadata metadata) {
     static const auto json = FunctionJSONAssembler<TMetadata>::get_as_json(metadata);
-    using ret_t = LocalFunctionEndpoint<TFunc, func, TMetadata>;
-    return ret_t(json.c_str(), decltype(json)::size());
+    using ret_t = LocalFunctionEndpoint<TFunc, TMetadata>;
+    return ret_t(func, json.c_str(), decltype(json)::size());
+};*/
+
+template<typename TFunc, typename TMetadata>
+LocalFunctionEndpoint<TFunc&, TMetadata> make_local_function_endpoint(TFunc& func, TMetadata&& metadata) {
+    using ret_t = LocalFunctionEndpoint<TFunc&, TMetadata>;
+    return ret_t(std::forward<TFunc>(func), std::forward<TMetadata>(metadata));
+};
+
+
+template<typename TFunc, typename TMetadata>
+LocalFunctionEndpoint<TFunc, TMetadata> make_local_function_endpoint(TFunc&& func, TMetadata&& metadata) {
+    using ret_t = LocalFunctionEndpoint<TFunc, TMetadata>;
+    return ret_t(std::forward<TFunc>(func), std::forward<TMetadata>(metadata));
 };
 
 }

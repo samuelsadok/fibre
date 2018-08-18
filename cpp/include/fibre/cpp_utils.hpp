@@ -997,6 +997,7 @@ public:
 /**
  * @brief Extracts the argument types of a function signature and provides them
  * as a std::tuple.
+ * TODO: if an STL alternative exists, use that
  */
 template<typename TFunc>
 struct args_of;
@@ -1005,6 +1006,14 @@ template<typename TRet, typename... TArgs>
 struct args_of<TRet(TArgs...)> {
     using type = std::tuple<TArgs...>;
 };
+
+template<typename TRet, typename TObj, typename... TArgs>
+struct args_of<std::_Mem_fn<TRet (TObj::*)(TArgs...)>> {
+    using type = std::tuple<TObj*, TArgs...>;
+};
+
+template<typename TFunc>
+struct args_of<TFunc&> : public args_of<TFunc> {};
 
 template<typename TFunc>
 using args_of_t = typename args_of<TFunc>::type;
@@ -1032,7 +1041,21 @@ using result_of_t = typename result_of<TFunc>::type;
 template<typename... TTuples>
 using tuple_cat_t = decltype(std::tuple_cat<TTuples...>(std::declval<TTuples>()...));
 
+template<typename T, size_t I1, size_t I2, size_t... PACK1, size_t... PACK2>
+constexpr std::array<T, I1+I2> array_cat_impl(std::array<T, I1> arr1, std::array<T, I2> arr2, std::index_sequence<PACK1...>, std::index_sequence<PACK2...>) {
+    return { arr1[PACK1]..., arr2[PACK2]... };
+}
 
+template<typename T, size_t I1, size_t I2>
+constexpr std::array<T, I1+I2> array_cat(std::array<T, I1> arr1, std::array<T, I2> arr2) {
+    return array_cat_impl(arr1, arr2, std::make_index_sequence<I1>(), std::make_index_sequence<I2>());
+}
+
+/**
+ * @brief Returns the type that results when concatenating multiple tuples
+ */
+template<typename... TTuples>
+using tuple_cat_t = decltype(std::tuple_cat<TTuples...>(std::declval<TTuples>()...));
 
 
 /**
@@ -1064,7 +1087,9 @@ using as_tuple_t = typename as_tuple<T>::type;
  * a pointer.
  */
 template<typename T>
-struct remove_ref_or_ptr;
+struct remove_ref_or_ptr {
+    static_assert(std::is_reference<T>() || std::is_pointer<T>(), "the type T is neither a reference or a pointer");
+};
 
 template<typename T>
 struct remove_ref_or_ptr<T*> { using type = T; };
