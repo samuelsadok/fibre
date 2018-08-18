@@ -25,14 +25,14 @@ template<typename TMetadata>
 struct FunctionJSONAssembler {
 private:
     template<size_t I>
-    using get_input_json_t = static_string<11 + std::tuple_element_t<I, typename TMetadata::TInputNames>::size()>;
+    using get_input_json_t = static_string<11 + std::tuple_element_t<1, std::tuple_element_t<I, typename TMetadata::TInputMetadata>>::size()>;
 
     template<size_t I>
     static constexpr get_input_json_t<I>
     get_input_json(const TMetadata& metadata) {
         return const_str_concat(
             make_const_string("{\"name\":\""),
-            std::get<I>(metadata.get_input_names()),
+            std::get<1>(std::get<I>(metadata.get_input_metadata())),
             make_const_string("\"}")
         );
     }
@@ -67,45 +67,85 @@ public:
     }
 };
 
-template<typename TFuncName, typename TInputNames, typename TOutputNames>
+template<typename T>
+struct nothing {};
+
+struct input_metadata_item_tag {};
+struct output_metadata_item_tag {};
+
+template<size_t INameLength, typename TIn>
+using InputMetadata = std::tuple<input_metadata_item_tag, static_string<INameLength>, nothing<TIn>>;
+
+template<size_t INameLength, typename TOut>
+using OutputMetadata = std::tuple<output_metadata_item_tag, static_string<INameLength>, nothing<TOut>>;
+
+template<typename TIn, size_t INameLengthPlus1>
+constexpr InputMetadata<(INameLengthPlus1-1), TIn> make_input_metadata(const char (&name)[INameLengthPlus1]) {
+    return InputMetadata<(INameLengthPlus1-1), TIn>(
+        input_metadata_item_tag(),
+        make_const_string(name),
+        nothing<TIn>());
+}
+
+template<typename TOut, size_t INameLengthPlus1>
+constexpr OutputMetadata<(INameLengthPlus1-1), TOut> make_output_metadata(const char (&name)[INameLengthPlus1]) {
+    return OutputMetadata<(INameLengthPlus1-1), TOut>(
+        output_metadata_item_tag(),
+        make_const_string(name),
+        nothing<TOut>());
+}
+
+
+template<typename TFuncName, typename TInputMetadata, typename TOutputMetadata>
 struct StaticFunctionMetadata;
 
-template<size_t IFun, size_t... IIn, size_t... IOut>
+template<size_t IFun, typename... TInputs, typename... TOutputs>
 struct StaticFunctionMetadata<
         static_string<IFun>,
-        static_string_arr<IIn...>,
-        static_string_arr<IOut...>> {
+        std::tuple<TInputs...>,
+        std::tuple<TOutputs...>> {
+    static constexpr const size_t NInputs = (sizeof...(TInputs));
+    static constexpr const size_t NOutputs = (sizeof...(TOutputs));
     using TFuncName = static_string<IFun>;
-    using TInputNames = static_string_arr<IIn...>;
-    using TOutputNames = static_string_arr<IOut...>;
+    using TInputMetadata = std::tuple<TInputs...>;
+    using TOutputMetadata = std::tuple<TOutputs...>;
+
     TFuncName function_name;
-    TInputNames input_names;
-    TOutputNames output_names;
+    TInputMetadata input_metadata;
+    TOutputMetadata output_metadata;
 
-    constexpr StaticFunctionMetadata(TFuncName function_name, TInputNames input_names, TOutputNames output_names)
-        : function_name(function_name), input_names(input_names), output_names(output_names) {}
+    constexpr StaticFunctionMetadata(TFuncName function_name, TInputMetadata input_metadata, TOutputMetadata output_metadata)
+        : function_name(function_name), input_metadata(input_metadata), output_metadata(output_metadata) {}
 
-    template<size_t ... Is>
-    constexpr StaticFunctionMetadata<TFuncName, static_string_arr<(Is-1)...>, TOutputNames> with_inputs(const char (&...names)[Is]) {
-        return StaticFunctionMetadata<TFuncName, static_string_arr<(Is-1)...>, TOutputNames>(
+    template<size_t INameLength, typename TIn>
+    constexpr StaticFunctionMetadata<TFuncName, tuple_cat_t<TInputMetadata, std::tuple<InputMetadata<INameLength, TIn>>>, TOutputMetadata> with_item(InputMetadata<INameLength, TIn> item) {
+        return StaticFunctionMetadata<TFuncName, tuple_cat_t<TInputMetadata, std::tuple<InputMetadata<INameLength, TIn>>>, TOutputMetadata>(
             function_name,
-            std::tuple_cat(input_names, static_string_arr<(Is-1)...>(names...)),
-            output_names);
+            std::tuple_cat(input_metadata, std::make_tuple(item)),
+            output_metadata);
     }
 
-    template<size_t ... Is>
-    constexpr StaticFunctionMetadata<TFuncName, TInputNames, static_string_arr<(Is-1)...>> with_outputs(const char (&...names)[Is]) {
-        return StaticFunctionMetadata<TFuncName, TInputNames, static_string_arr<(Is-1)...>>(
+    template<size_t INameLength, typename TOut>
+    constexpr StaticFunctionMetadata<TFuncName, TInputMetadata, tuple_cat_t<TOutputMetadata, std::tuple<OutputMetadata<INameLength, TOut>>>> with_item(OutputMetadata<INameLength, TOut> item) {
+        return StaticFunctionMetadata<TFuncName, TInputMetadata, tuple_cat_t<TOutputMetadata, std::tuple<OutputMetadata<INameLength, TOut>>>>(
             function_name,
-            input_names,
-            std::tuple_cat(output_names, static_string_arr<(Is-1)...>(names...)));
+            input_metadata,
+            std::tuple_cat(output_metadata, std::make_tuple(item)));
     }
 
-    static constexpr const size_t NInputs = (sizeof...(IIn));
-    static constexpr const size_t NOutputs = (sizeof...(IOut));
+    constexpr StaticFunctionMetadata with_items() {
+        return *this;
+    }
+
+    template<typename T, typename ... Ts>
+    constexpr auto with_items(T item, Ts... items) 
+            -> decltype(with_item(item).with_items(items...)) {
+        return with_item(item).with_items(items...);
+    }
+
     constexpr TFuncName get_function_name() { return function_name; }
-    constexpr TInputNames get_input_names() { return input_names; }
-    constexpr TOutputNames get_output_names() { return output_names; }
+    constexpr TInputMetadata get_input_metadata() { return input_metadata; }
+    constexpr TOutputMetadata get_output_metadata() { return output_metadata; }
 
     using JSONAssembler = FunctionJSONAssembler<StaticFunctionMetadata>;
     typename JSONAssembler::get_json_t json = JSONAssembler::get_as_json(*this);
@@ -113,8 +153,8 @@ struct StaticFunctionMetadata<
 
 
 template<size_t INameLength_Plus1>
-static constexpr StaticFunctionMetadata<static_string<INameLength_Plus1-1>, static_string_arr<>, static_string_arr<>> make_function_props(const char (&function_name)[INameLength_Plus1]) {
-    return StaticFunctionMetadata<static_string<INameLength_Plus1-1>, static_string_arr<>, static_string_arr<>>(static_string<INameLength_Plus1-1>(function_name), empty_static_string_arr, empty_static_string_arr);
+static constexpr StaticFunctionMetadata<static_string<INameLength_Plus1-1>, std::tuple<>, std::tuple<>> make_function_props(const char (&function_name)[INameLength_Plus1]) {
+    return StaticFunctionMetadata<static_string<INameLength_Plus1-1>, std::tuple<>, std::tuple<>>(static_string<INameLength_Plus1-1>(function_name), std::tuple<>(), std::tuple<>());
 }
 
 struct get_value_functor {
@@ -143,7 +183,7 @@ struct decoder_type<void, 0, T, Ts...> {
 };
 
 template<size_t NInputs, typename... TTuple, typename... Ts>
-struct decoder_type<void, NInputs, std::tuple<TTuple...>, Ts...> {
+struct decoder_type<typename std::enable_if_t<(NInputs > 0)>, NInputs, std::tuple<TTuple...>, Ts...> {
 private:
     using unpacked = decoder_type<void, NInputs, TTuple..., Ts...>;
 public:

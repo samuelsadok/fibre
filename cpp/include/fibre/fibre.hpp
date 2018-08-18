@@ -217,23 +217,22 @@ private:
 
 /* Export macros -------------------------------------------------------------*/
 
-#define FIBRE_EXPORT_FUNCTION_(tag, func_name, func, inputs, outputs) \
+#define FIBRE_EXPORT_FUNCTION_(tag, func_name, func, ...) \
     constexpr auto func_name ## __function_metadata = \
         fibre::make_function_props(#func_name) \
-        inputs \
-        outputs; \
+        .with_items(__VA_ARGS__); \
     auto func_name ## __endpoint = fibre::make_local_function_endpoint< \
         decltype(func), \
         decltype(func_name ## __function_metadata)>(func, std::forward<decltype(func_name ## __function_metadata)>(func_name ## __function_metadata)); \
     StaticLinkedListElement<const fibre::LocalEndpoint*, tag> func_name ## __linked_list_element(&(func_name ## __endpoint))
 
-#define FIBRE_EXPORT_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, func_name, func_name, inputs, outputs)
-#define FIBRE_EXPORT_BUILTIN_FUNCTION(func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::builtin_function_tag, func_name, func_name, inputs, outputs)
-#define FIBRE_EXPORT_MEMBER_FUNCTION(type_name, func_name, inputs, outputs) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, asd, \
-    std::mem_fn(&type_name::func_name), inputs, outputs)
+#define FIBRE_EXPORT_FUNCTION(func_name, ...) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, func_name, func_name, __VA_ARGS__)
+#define FIBRE_EXPORT_BUILTIN_FUNCTION(func_name, ...) FIBRE_EXPORT_FUNCTION_(fibre::builtin_function_tag, func_name, func_name, __VA_ARGS__)
+#define FIBRE_EXPORT_MEMBER_FUNCTION(type_name, func_name, ...) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, asd, \
+    std::mem_fn(&type_name::func_name), __VA_ARGS__)
 
-#define INPUTS(...)     .with_inputs(__VA_ARGS__)
-#define OUTPUTS(...)    .with_outputs(__VA_ARGS__)
+#define FIBRE_INPUT(name)     fibre::make_input_metadata<void>(#name)
+#define FIBRE_OUTPUT(name)    fibre::make_output_metadata<void>(#name)
 
 
 #define FIBRE_EXPORT_TYPE_(tag, type_name, ...) \

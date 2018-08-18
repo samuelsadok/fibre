@@ -29,7 +29,11 @@ FIBRE_EXPORT_TYPE(TestClass,
 );
 
 FIBRE_EXPORT_MEMBER_FUNCTION(
-    TestClass, set_both, INPUTS("obj", "arg1", "arg2"), OUTPUTS(/*"result"*/)
+    TestClass, set_both,
+    FIBRE_INPUT(obj),
+    FIBRE_INPUT(arg1),
+    FIBRE_INPUT(arg2)
+//    FIBRE_OUTPUT(result)
 );
 
 void test_func_a(uint32_t arg, uint32_t arg2) {
@@ -42,7 +46,9 @@ uint32_t test_func_b(uint32_t arg, uint32_t& result) {
 }
 
 FIBRE_EXPORT_FUNCTION(
-    test_func_b, INPUTS("arg"), OUTPUTS("result")
+    test_func_b,
+    FIBRE_INPUT(arg),
+    FIBRE_OUTPUT(result)
 );
 
 

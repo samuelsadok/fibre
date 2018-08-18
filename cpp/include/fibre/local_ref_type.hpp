@@ -187,7 +187,7 @@ std::array<RectifiedPropertyMetadata, sizeof...(Is)> rectify_all_metadata(std::t
     return { rectify_metadata(std::get<Is>(props))... };
 }
 
-template<typename TTypeName, typename TPropNames>
+template<typename TTypeName, typename TPropMetadata>
 struct StaticRefTypeMetadata;
 
 template<size_t IFun, typename... TProperties>
@@ -212,13 +212,12 @@ struct StaticRefTypeMetadata<
     }*/
 
     template<size_t INameLength, typename TProp, typename TObj>
-    constexpr StaticRefTypeMetadata<TTypeName, tuple_cat_t<TPropertyMetadata, std::tuple<PropertyMetadata<INameLength, TProp, TObj>>>> with_item(PropertyMetadata<INameLength, TProp, TObj> prop) {
+    constexpr StaticRefTypeMetadata<TTypeName, tuple_cat_t<TPropertyMetadata, std::tuple<PropertyMetadata<INameLength, TProp, TObj>>>> with_item(PropertyMetadata<INameLength, TProp, TObj> item) {
         return StaticRefTypeMetadata<TTypeName, tuple_cat_t<TPropertyMetadata, std::tuple<PropertyMetadata<INameLength, TProp, TObj>>>>(
             type_name,
-            std::tuple_cat(property_metadata, std::make_tuple(prop)));
+            std::tuple_cat(property_metadata, std::make_tuple(item)));
     }
 
-    //template<>
     constexpr StaticRefTypeMetadata with_items() {
         return *this;
     }

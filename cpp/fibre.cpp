@@ -200,14 +200,14 @@ bool get_ref_type_json(uint32_t ref_type_id, const char ** output, size_t* lengt
 
 FIBRE_EXPORT_BUILTIN_FUNCTION(
     get_function_json,
-    INPUTS("endpoint_id"),
-    OUTPUTS("json")
+    FIBRE_INPUT(endpoint_id),
+    FIBRE_OUTPUT(json)
 );
 
 FIBRE_EXPORT_BUILTIN_FUNCTION(
     get_ref_type_json,
-    INPUTS("ref_type_id"),
-    OUTPUTS("json")
+    FIBRE_INPUT(ref_type_id),
+    FIBRE_OUTPUT(json)
 );
 
 
