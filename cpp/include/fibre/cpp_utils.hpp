@@ -97,6 +97,10 @@ namespace std {
     template< bool B, class T = void >
     using enable_if_t = typename enable_if<B,T>::type;
 
+    // source: https://en.cppreference.com/w/cpp/types/conditional
+    template< bool B, class T, class F >
+    using conditional_t = typename conditional<B,T,F>::type;
+
     // source: http://en.cppreference.com/w/cpp/utility/tuple/tuple_element
     template <std::size_t I, class T>
     using tuple_element_t = typename tuple_element<I, T>::type;
@@ -135,13 +139,19 @@ namespace std {
 #endif
 
 namespace fibre {
+    // Creates the index sequence { IFrom, IFrom + 1, IFrom + 2, ..., ITo - 1 }
     template<typename _Tp, _Tp IFrom, _Tp ITo, _Tp ... I>
-    struct make_integer_sequence_from_to
-        : public make_integer_sequence_from_to<_Tp, IFrom, ITo - 1, I...> {};
+    struct make_integer_sequence_from_to_impl {
+        using type = typename make_integer_sequence_from_to_impl<_Tp, IFrom, ITo - 1, ITo - 1, I...>::type;
+    };
 
     template<typename _Tp, _Tp IFrom, _Tp ... I>
-    struct make_integer_sequence_from_to<_Tp, IFrom, IFrom, I...>
-        : public std::index_sequence<I...> {};
+    struct make_integer_sequence_from_to_impl<_Tp, IFrom, IFrom, I...> {
+        using type = std::index_sequence<I...>;
+    };
+    
+    template<typename _Tp, _Tp IFrom, _Tp ITo>
+    using make_integer_sequence_from_to = typename make_integer_sequence_from_to_impl<_Tp, IFrom, ITo>::type;
 }
 
 #if __cplusplus < 201703L
@@ -937,18 +947,19 @@ namespace fibre {
 template<typename T>
 class HexPrinter {
 public:
-    HexPrinter(T val) : val_(val) {}
+    HexPrinter(T val, bool prefix) : val_(val), prefix_(prefix) {}
     T val_;
+    bool prefix_;
 };
 
 template<typename T>
 std::ostream& operator<<(std::ostream& stream, const HexPrinter<T>& printer) {
     // TODO: specialize for char
-    return stream << std::hex << std::setw(hex_digits<T>()) << std::setfill('0') << static_cast<uint64_t>(printer.val_);
+    return stream << (printer.prefix_ ? "0x" : "") << std::hex << std::setw(hex_digits<T>()) << std::setfill('0') << static_cast<uint64_t>(printer.val_);
 }
 
 template<typename T>
-HexPrinter<T> as_hex(T val) { return HexPrinter<T>(val); }
+HexPrinter<T> as_hex(T val, bool prefix = true) { return HexPrinter<T>(val, prefix); }
 
 template<typename T>
 class HexPrinter<T*> {
@@ -1028,6 +1039,11 @@ struct result_of;
 
 template<typename TRet, typename... TArgs>
 struct result_of<TRet(TArgs...)> {
+    using type = TRet;
+};
+
+template<typename TRet, typename... TArgs>
+struct result_of<TRet(&)(TArgs...)> {
     using type = TRet;
 };
 
@@ -1159,5 +1175,99 @@ struct add_ref_or_ptr_to_tuple<std::tuple<TTo...>> {
         return convert_impl(std::forward<std::tuple<TFrom...>>(t), std::make_index_sequence<sizeof...(TFrom)>());
     }
 };
+
+template<typename Ts>
+struct add_ptrs_to_tuple_type;
+
+template<typename... Ts>
+struct add_ptrs_to_tuple_type<std::tuple<Ts...>> {
+    using type = std::tuple<Ts*...>;
+};
+
+template<typename TTuple>
+using add_ptrs_to_tuple_t = typename add_ptrs_to_tuple_type<TTuple>::type;
+
+template<typename Ts>
+struct add_refs_to_tuple_type;
+
+template<typename... Ts>
+struct add_refs_to_tuple_type<std::tuple<Ts...>> {
+    using type = std::tuple<Ts&...>;
+};
+
+template<typename TTuple>
+using add_refs_to_tuple_t = typename add_refs_to_tuple_type<TTuple>::type;
+
+
+template<typename> struct is_tuple: std::false_type {};
+template<typename... T> struct is_tuple<std::tuple<T...>>: std::true_type {};
+
+
+template<typename Is, typename TTuple>
+struct tuple_select_type_impl;
+
+template<size_t... Is, typename TTuple>
+struct tuple_select_type_impl<std::index_sequence<Is...>, TTuple> {
+    using type = std::tuple<std::tuple_element_t<Is, TTuple>...>;
+};
+
+template<size_t... Is, typename TTuple>
+typename tuple_select_type_impl<std::index_sequence<Is...>, TTuple>::type
+tuple_select_impl(TTuple tuple, std::index_sequence<Is...>)  {
+    return typename tuple_select_type_impl<std::index_sequence<Is...>, TTuple>::type(std::get<Is>(tuple)...);
+};
+
+
+template<size_t I, typename TTuple>
+struct tuple_take_type {
+    static_assert(I <= std::tuple_size<TTuple>::value, "cannot take more elements than tuple size");
+    using type = typename tuple_select_type_impl<std::make_index_sequence<I>, TTuple>::type;
+};
+
+template<size_t I, typename TTuple>
+using tuple_take_t = typename tuple_take_type<I, TTuple>::type;
+
+/**
+ * @brief Returns the first I elements from the tuple as a tuple.
+ * The resulting type is tuple_take_t<I, TTuple>.
+ * See also: tuple_skip
+ */
+template<size_t I, typename TTuple>
+tuple_take_t<I, TTuple> tuple_take(TTuple tuple)  {
+    return tuple_select_impl(tuple, std::make_index_sequence<I>{});
+};
+
+
+template<size_t I, typename TTuple>
+struct tuple_skip_type {
+    static_assert(I <= std::tuple_size<TTuple>::value, "cannot skip more elements than tuple size");
+    using type = typename tuple_select_type_impl<fibre::make_integer_sequence_from_to<std::size_t, I, std::tuple_size<TTuple>::value>, TTuple>::type;
+};
+
+template<size_t I, typename TTuple>
+using tuple_skip_t = typename tuple_skip_type<I, TTuple>::type;
+
+/**
+ * @brief Returns all but the first I elements from the tuple as a tuple.
+ * The resulting type is tuple_skip_t<I, TTuple>.
+ * See also: tuple_take
+ */
+template<size_t I, typename TTuple>
+tuple_skip_t<I, TTuple> tuple_skip(TTuple tuple)  {
+    return tuple_select_impl(tuple, fibre::make_integer_sequence_from_to<std::size_t, I, std::tuple_size<TTuple>::value>{});
+};
+
+template<size_t I, typename T, typename... Ts>
+struct repeat_type_impl {
+    using type = typename repeat_type_impl<I - 1, T, T, Ts...>::type;
+};
+
+template<typename T, typename... Ts>
+struct repeat_type_impl<0, T, Ts...> {
+    using type = std::tuple<Ts...>;
+};
+
+template<size_t I, typename T>
+using repeat_t = typename repeat_type_impl<I, T>::type;
 
 #endif // __CPP_UTILS_HPP

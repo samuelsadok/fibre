@@ -109,11 +109,11 @@ __attribute__((unused))
 static std::ostream& operator<<(std::ostream& stream, const Uuid& uuid) {
     const uint8_t * buffer = uuid.get_bytes().data();
     size_t length = 16;
-    return stream << as_hex(read_be<uint32_t>(&buffer, &length)) << "-"
-        << as_hex(read_be<uint16_t>(&buffer, &length)) << "-"
-        << as_hex(read_be<uint16_t>(&buffer, &length)) << "-"
-        << as_hex(read_be<uint16_t>(&buffer, &length)) << "-"
-        << as_hex(buffer[0]) << as_hex(buffer[1]) << as_hex(buffer[2]) << as_hex(buffer[3]) << as_hex(buffer[4]) << as_hex(buffer[5]);
+    return stream << as_hex(read_be<uint32_t>(&buffer, &length), false) << "-"
+        << as_hex(read_be<uint16_t>(&buffer, &length), false) << "-"
+        << as_hex(read_be<uint16_t>(&buffer, &length), false) << "-"
+        << as_hex(read_be<uint16_t>(&buffer, &length), false) << "-"
+        << as_hex(buffer[0], false) << as_hex(buffer[1], false) << as_hex(buffer[2], false) << as_hex(buffer[3], false) << as_hex(buffer[4], false) << as_hex(buffer[5], false);
 }
 
 }
