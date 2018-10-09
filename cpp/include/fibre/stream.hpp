@@ -296,11 +296,13 @@ private:
 template<typename ... TStreams>
 class StaticStreamChain : public StreamSink {
 public:
-    StaticStreamChain(TStreams&& ... decoders) :
+    template<size_t NStreams = sizeof...(TStreams), ENABLE_IF((NStreams >= 1))>
+    explicit StaticStreamChain(TStreams&& ... decoders) :
         decoders_(std::forward<TStreams>(decoders)...)
     {
         //EXPECT_TYPE(TDecoder, StreamSink);
     }
+
     StaticStreamChain() :
         decoders_()
     {
@@ -401,7 +403,7 @@ public:
 
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
         LOG_FIBRE(SERDES, "dynamic stream chain: process ", length, " bytes");
-        while (length && current_stream_) {
+        while (current_stream_) {
             size_t chunk = 0;
             status_t result = current_stream_->process_bytes(buffer, length, &chunk);
             buffer += chunk;
@@ -412,7 +414,7 @@ public:
                 return result;
             advance_state();
         }
-        return current_stream_ ? OK : CLOSED;
+        return CLOSED;
     }
 
     size_t get_min_useful_bytes() const final {

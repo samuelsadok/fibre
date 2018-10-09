@@ -130,7 +130,8 @@ class RemoteFunction(object):
 
             output_futures = []
             for i, output_type in enumerate(self._output_types):
-                output_futures.append(connection.receive_value(output_type))
+                future = connection.receive_value(output_type)
+                output_futures.append(future)
 
             output_chunk_length += connection.emit_value("number", self._endpoint_id)
             for i, input_type in enumerate(self._input_types):

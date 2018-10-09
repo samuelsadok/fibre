@@ -2,6 +2,7 @@
 import struct
 import itertools
 import time
+import traceback
 from threading import Thread, Lock
 from fibre import Semaphore, EventWaitHandle, InputPipe, SuspendedInputPipe, OutputPipe, SuspendedOutputPipe
 import fibre.remote_object
@@ -120,6 +121,7 @@ class RemoteNode(object):
         self._server_pipe_pool.release(index)
 
     def release_client_pipe_pair(self, index):
+        # TODO: probably there's a deadlock here
         pipe_pair = self.get_client_pipe_pair(index)
         # the calls to close block until the pipes are fully flushed
         self._client_pipe_offsets[index] = (pipe_pair[0].close(), pipe_pair[1].close())
@@ -149,14 +151,27 @@ class RemoteNode(object):
         self._output_channel_ready.set()
 
     def _interrogate(self):
-        get_function_json = fibre.remote_object.RemoteFunction(self, 0, 0, ["number"], ["json"])
-        get_ref_type_json = fibre.remote_object.RemoteFunction(self, 1, 0, ["number"], ["json"])
-        json_string = get_function_json(0)
-        self._logger.debug("JSON 0: {}".format(json_string))
-        json_string = get_function_json(1)
-        self._logger.debug("JSON 1: {}".format(json_string))
-        json_string = get_ref_type_json(0)
-        self._logger.debug("Ref type: {}".format(json_string))
+        try:
+            get_function_count = fibre.remote_object.RemoteFunction(self, 0, 0, [], ["number"])
+            get_function_json = fibre.remote_object.RemoteFunction(self, 1, 0, ["number"], ["json"])
+            get_ref_type_count = fibre.remote_object.RemoteFunction(self, 2, 0, [], ["number"])
+            get_ref_type_json = fibre.remote_object.RemoteFunction(self, 3, 0, ["number"], ["json"])
+
+            function_count = get_function_count()
+            self._logger.debug("function count: {}".format(function_count))
+            for i in range(function_count):
+                json_string = get_function_json(i)
+                self._logger.debug("JSON {}: {}".format(i, json_string))
+
+            ref_type_count = get_ref_type_count()
+            self._logger.debug("ref type count: {}".format(ref_type_count))
+            for i in range(ref_type_count):
+                json_string = get_ref_type_json(i)
+                self._logger.debug("JSON {}: {}".format(i, json_string))
+        except:
+            self._logger.warn("interrogation of {} failed".format(self._uuid))
+            self._logger.warn(traceback.format_exc())
+            
 
     def _scheduler_thread_loop(self):
         next_pipe_ready_time = None
@@ -170,9 +185,10 @@ class RemoteNode(object):
                 pass
             #self._output_channel_ready.wait(cancellation_token=self._cancellation_token)
 
+            self._logger.debug("pipe is ready")
+
             next_pipe_ready_time = None
 
-            self._logger.debug(str(len(self._output_channels)))
             for channel in self._output_channels:
                 self._logger.debug("handling channel {}".format(channel))
                 #packet = bytes()

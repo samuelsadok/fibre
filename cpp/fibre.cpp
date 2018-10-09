@@ -165,8 +165,13 @@ ObjectReference_t RootType::dereference(ObjectReference_t* ref, size_t index) co
 
 /* Built-in published functions ----------------------------------------------*/
 
+uint32_t get_function_count() {
+    return global_state.functions_.size();
+}
+
 bool get_function_json(uint32_t endpoint_id, const char ** output, size_t* length) {
     LOG_FIBRE(GENERAL, "fetching JSON of function ", as_hex(endpoint_id));
+    LOG_FIBRE(GENERAL, "length ptr = ", as_hex(length));
 
     if (output) *output = nullptr;
     if (length) *length = 0;
@@ -178,6 +183,7 @@ bool get_function_json(uint32_t endpoint_id, const char ** output, size_t* lengt
     }
     const fibre::LocalEndpoint* endpoint = global_state.functions_[endpoint_id];
     endpoint->get_as_json(output, length);
+    LOG_FIBRE(GENERAL, "result has length ", *length);
     return true;
 }
 
@@ -197,17 +203,37 @@ bool get_ref_type_json(uint32_t ref_type_id, const char ** output, size_t* lengt
     return true;
 }
 
+uint32_t get_ref_type_count() {
+    return global_state.ref_types_.size();
+}
+
+/*
+* These exports must not be reordered, otherwise program no longer adheres
+* to the Fibre specification.
+*/
+
+FIBRE_EXPORT_BUILTIN_FUNCTION(
+    get_function_count,
+    FIBRE_OUTPUT(count, 1)
+);
 
 FIBRE_EXPORT_BUILTIN_FUNCTION(
     get_function_json,
-    FIBRE_INPUT(endpoint_id),
-    FIBRE_OUTPUT(json)
+    FIBRE_INPUT(endpoint_id, 1),
+    FIBRE_OUTPUT(json, 2),
+    FIBRE_DISCARD_OUTPUT(1)
+);
+
+FIBRE_EXPORT_BUILTIN_FUNCTION(
+    get_ref_type_count,
+    FIBRE_OUTPUT(count, 1)
 );
 
 FIBRE_EXPORT_BUILTIN_FUNCTION(
     get_ref_type_json,
-    FIBRE_INPUT(ref_type_id),
-    FIBRE_OUTPUT(json)
+    FIBRE_INPUT(ref_type_id, 1),
+    FIBRE_OUTPUT(json, 2),
+    FIBRE_DISCARD_OUTPUT(1)
 );
 
 

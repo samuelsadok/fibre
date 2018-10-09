@@ -236,7 +236,7 @@ struct StaticRefTypeMetadata<
 };
 
 template<size_t INameLength_Plus1>
-static constexpr StaticRefTypeMetadata<static_string<INameLength_Plus1-1>, std::tuple<>> make_ref_type_props(const char (&type_name)[INameLength_Plus1]) {
+static constexpr StaticRefTypeMetadata<static_string<INameLength_Plus1-1>, std::tuple<>> make_ref_type_metadata(const char (&type_name)[INameLength_Plus1]) {
     return StaticRefTypeMetadata<static_string<INameLength_Plus1-1>, std::tuple<>>(static_string<INameLength_Plus1-1>(type_name), std::tuple<>());
 }
 

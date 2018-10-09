@@ -28,13 +28,13 @@ FIBRE_EXPORT_TYPE(TestClass,
     //FIBRE_FUNCTION(set_both, "arg1", "arg2")
 );
 
-FIBRE_EXPORT_MEMBER_FUNCTION(
-    TestClass, set_both,
-    FIBRE_INPUT(obj),
-    FIBRE_INPUT(arg1),
-    FIBRE_INPUT(arg2)
-//    FIBRE_OUTPUT(result)
-);
+//FIBRE_EXPORT_MEMBER_FUNCTION(
+//    TestClass, set_both,
+//    FIBRE_INPUT(obj, 1),
+//    FIBRE_INPUT(arg1, 1),
+//    FIBRE_INPUT(arg2, 1),
+//    FIBRE_OUTPUT(result, 1)
+//);
 
 void test_func_a(uint32_t arg, uint32_t arg2) {
     printf("test_function called with 0x%08x and 0x%08x\n", arg, arg2);
@@ -47,8 +47,9 @@ uint32_t test_func_b(uint32_t arg, uint32_t& result) {
 
 FIBRE_EXPORT_FUNCTION(
     test_func_b,
-    FIBRE_INPUT(arg),
-    FIBRE_OUTPUT(result)
+    FIBRE_INPUT(arg, 1),
+    FIBRE_OUTPUT(result, 1),
+    FIBRE_DISCARD_OUTPUT(1)
 );
 
 

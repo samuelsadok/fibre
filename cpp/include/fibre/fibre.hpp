@@ -219,7 +219,7 @@ private:
 
 #define FIBRE_EXPORT_FUNCTION_(tag, func_name, func, ...) \
     constexpr auto func_name ## __function_metadata = \
-        fibre::make_function_props(#func_name) \
+        fibre::make_function_metadata<tuple_cat_t<args_of_t<decltype(func)>, add_ptrs_to_tuple_t<as_tuple_t<result_of_t<decltype(func)>>>>>(#func_name) \
         .with_items(__VA_ARGS__); \
     auto func_name ## __endpoint = fibre::make_local_function_endpoint< \
         decltype(func), \
@@ -231,15 +231,16 @@ private:
 #define FIBRE_EXPORT_MEMBER_FUNCTION(type_name, func_name, ...) FIBRE_EXPORT_FUNCTION_(fibre::user_function_tag, asd, \
     std::mem_fn(&type_name::func_name), __VA_ARGS__)
 
-#define FIBRE_INPUT(name)     fibre::make_input_metadata<void>(#name)
-#define FIBRE_OUTPUT(name)    fibre::make_output_metadata<void>(#name)
+#define FIBRE_INPUT(name, num_params)     fibre::make_input_metadata_prototype<num_params>(#name)
+#define FIBRE_OUTPUT(name, num_params)    fibre::make_output_metadata_prototype<num_params, false>(#name)
+#define FIBRE_DISCARD_OUTPUT(num_params)  fibre::make_output_metadata_prototype<num_params, true>("")
 
 
 #define FIBRE_EXPORT_TYPE_(tag, type_name, ...) \
 namespace type_name ## __namespace { \
     using T = type_name; \
     constexpr auto type_name ## __type_metadata = \
-        fibre::make_ref_type_props(#type_name) \
+        fibre::make_ref_type_metadata(#type_name) \
         .with_items(__VA_ARGS__); \
     auto type_name ## __fibre_type = fibre::make_local_ref_type< \
         type_name, \

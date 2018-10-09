@@ -51,6 +51,7 @@ class OutputPipe(object):
 
     def send_packet_break(self):
         self._packet_break = True
+        self._remote_node.notify_output_pipe_ready()
 
     def get_pending_chunks(self):
         have_data = self._pending_bytes or self._packet_break
@@ -99,7 +100,8 @@ class OutgoingConnection(object):
         # TODO: the selected codec may depend on the endpoint
         format_name = fibre.codecs.canonical_formats[value_type]
         codec = fibre.codecs.get_codec(format_name, type(value))
-        return codec.serialize(value)
+        encoder = codec[1]()
+        return encoder.serialize(value)
     def flush(self):
         """
         Blocks until all previously emitted values have reached
@@ -112,6 +114,7 @@ class OutgoingConnection(object):
         self._output_pipe.send_bytes(data)
         return len(data)
     def receive_value(self, value_type):
+        assert isinstance(value_type, str)
         format_name = fibre.codecs.canonical_formats[value_type]
         codec = fibre.codecs.get_codec(format_name, None)
         decoder = codec[0]()

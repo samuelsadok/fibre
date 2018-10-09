@@ -25,6 +25,7 @@ void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t lengt
         LOG_FIBRE_W(INPUT, "received dangling chunk: expected CRC ", as_hex(crc_), " but got ", as_hex(crc));
         return;
     }
+    LOG_FIBRE(INPUT, "input pipe ", id_, ": process ", as_hex(length), " bytes...");
 
     // Open connection on demand
     if (!input_handler_ && at_packet_break) {
@@ -77,7 +78,7 @@ InputChannelDecoder::status_t InputChannelDecoder::process_bytes(const uint8_t* 
 
             // finished receiving chunk header
             if (status == CLOSED) {
-                LOG_FIBRE(INPUT, "received chunk header: pipe ", get_pipe_no(), ", offset ", as_hex(get_chunk_offset()), ", length ", as_hex(get_chunk_length()), ", crc ", as_hex(get_chunk_crc()));
+                LOG_FIBRE(INPUT, "received chunk header: pipe ", get_pipe_no(), ", offset ", as_hex(get_chunk_offset()), ", (length << 1) | packet_break ", as_hex(get_chunk_length()), ", crc ", as_hex(get_chunk_crc()));
                 in_header = false;
             }
         } else {

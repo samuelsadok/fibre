@@ -100,16 +100,16 @@ class StringDecoder(fibre.StreamSink):
 
 
 codecs = {
-    'i8le': { int: StructCodec("<b", int) },
-    'u8le': { int: StructCodec("<B", int) },
-    'i16le': { int: StructCodec("<h", int) },
-    'u16le': { int: StructCodec("<H", int) },
-    'i32le': { int: StructCodec("<i", int) },
-    'u32le': { int: StructCodec("<I", int) },
-    'i64le': { int: StructCodec("<q", int) },
-    'u64le': { int: StructCodec("<Q", int) },
-    'bool': { bool: StructCodec("<?", bool) },
-    'float': { float: StructCodec("<f", float) },
+    'i8le': { int: ((lambda: StructDecoder("<b", int)), (lambda: StructCodec("<b", int))) },
+    'u8le': { int: ((lambda: StructDecoder("<B", int)), (lambda: StructCodec("<B", int))) },
+    'i16le': { int: ((lambda: StructDecoder("<h", int)), (lambda: StructCodec("<h", int))) },
+    'u16le': { int: ((lambda: StructDecoder("<H", int)), (lambda: StructCodec("<H", int))) },
+    'i32le': { int: ((lambda: StructDecoder("<i", int)), (lambda: StructCodec("<i", int))) },
+    'u32le': { int: ((lambda: StructDecoder("<I", int)), (lambda: StructCodec("<I", int))) },
+    'i64le': { int: ((lambda: StructDecoder("<q", int)), (lambda: StructCodec("<q", int))) },
+    'u64le': { int: ((lambda: StructDecoder("<Q", int)), (lambda: StructCodec("<Q", int))) },
+    'bool': { bool: ((lambda: StructDecoder("<?", bool)), (lambda: StructCodec("<?", bool))) },
+    'float': { float: ((lambda: StructDecoder("<f", float)), (lambda: StructCodec("<f", float))) },
     'ascii_string': { str: ((lambda: StringDecoder("ascii")), None) }
 }
 

@@ -108,7 +108,7 @@ class EventWaitHandle(Waitable):
             raise TypeError
         with self._lock:
             self._subscribers.append(handler)
-            if self._is_set():
+            if self._is_set:
                 handler()
         return handler
     
