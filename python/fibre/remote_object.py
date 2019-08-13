@@ -83,18 +83,42 @@ class RemoteProperty():
 #        self.endpoint_id = endpoint_id
 #        self.crc = crc
 
+class ArgSpec(object):
+    def __init__(self, name, codec):
+        self.name = name
+        self.type = codec
+
+    @staticmethod
+    def from_data(data_dict):
+        return ArgSpec(
+            data_dict.get("name", None),
+            data_dict.get("codec", None)
+        )
 
 class RemoteFunction(object):
     """
     Represents a callable function that maps to a function call on a remote node
     """
-    def __init__(self, remote_node, endpoint_id, endpoint_hash, input_types, output_types):
+    def __init__(self, remote_node, endpoint_id, endpoint_hash, input_args, output_args):
         self._remote_node = remote_node
         self._endpoint_id = endpoint_id
         self._endpoint_hash = endpoint_hash
-        self._input_types = input_types
-        self._output_types = output_types
+        self._input_args = input_args
+        self._output_args = output_args
         #self._lock = Lock()
+
+    @staticmethod
+    def from_dict(remote_node, endpoint_id, data_dict):
+        endpoint_hash = 0 # TODO: calculate hash from json_string
+        return RemoteFunction(
+                remote_node, endpoint_id, endpoint_hash,
+                [ArgSpec.from_data(x) for x in data_dict.get("in", [])],
+                [ArgSpec.from_data(x) for x in data_dict.get("out", [])]
+            )
+
+    @staticmethod
+    def from_json_string(remote_node, endpoint_id, json_string):
+        return RemoteFunction.from_dict(remote_node, endpoint_id, json.loads(json_string))
 
 #    def __init__(self, json_data, parent):
 #        self._parent = parent
@@ -118,24 +142,26 @@ class RemoteFunction(object):
 #            self._outputs.append(RemoteProperty(param_json, parent))
 
     def __call__(self, *args):
-        if (len(self._input_types) != len(args)):
-            raise TypeError("expected {} arguments but have {}".format(len(self._input_types), len(args)))
+        if (len(self._input_args) != len(args)):
+            raise TypeError("expected {} arguments but have {}".format(len(self._input_args), len(args)))
         #with self._lock:
         #    call_instance = self._call_instance
         #    self._call_instance += 1
         #with OutgoingConnection(self._remote_node, ensure_delivery=True, allow_spurious=False) as connection:
-        with OutgoingConnection(self._remote_node, ensure_delivery=True) as connection:
+
+        connection = OutgoingConnection(self._remote_node)
+        with connection:
             output_chunk_start = connection._output_pipe._pos
             output_chunk_length = 0
 
             output_futures = []
-            for i, output_type in enumerate(self._output_types):
-                future = connection.receive_value(output_type)
+            for i, output_arg_spec in enumerate(self._output_args):
+                future = connection.receive_value(output_arg_spec.type)
                 output_futures.append(future)
 
             output_chunk_length += connection.emit_value("number", self._endpoint_id)
-            for i, input_type in enumerate(self._input_types):
-                output_chunk_length += connection.emit_value(input_type, args[i])
+            for i, input_arg_spec in enumerate(self._input_args):
+                output_chunk_length += connection.emit_value(input_arg_spec.type, args[i])
             connection._output_pipe.send_packet_break()
 
             outputs = []
@@ -155,6 +181,12 @@ class RemoteFunction(object):
 
     def dump(self):
         return "{}({})".format(self._name, ", ".join("{}: {}".format(x._name, x._property_type.__name__) for x in self._inputs))
+
+class RemoteInterface(object):
+    def __init__(self):
+        pass
+    #def add_function(self, remote_function):
+    #def remove_function(self):
 
 class RemoteObject(object):
     """

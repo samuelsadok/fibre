@@ -1,3 +1,8 @@
+/*
+* Implements types and macros needed to export local function to remote Fibre
+* nodes.
+* This file is analogous and similar in structure to local_ref_types.hpp.
+*/
 #ifndef __FIBRE_LOCAL_ENDPOINT
 #define __FIBRE_LOCAL_ENDPOINT
 
@@ -23,7 +28,18 @@ class Decoder;
 template<>
 class Decoder<uint32_t> : public FixedIntDecoder<uint32_t, false> {
 public:
+    static constexpr auto name = make_const_string("uint32");
+    using TName = decltype(name);
     using value_tuple_t = std::tuple<uint32_t>;
+};
+
+template<typename TObj>
+class Decoder<TObj*> : public ObjectReferenceDecoder<TObj> {
+public:
+    //static constexpr auto name = make_const_string("lalala");
+    static constexpr auto name = type_name_provider<TObj>::get_type_name(); //make_const_string("lalala");
+    using TName = decltype(name);
+    using value_tuple_t = std::tuple<TObj*>;
 };
 
 struct get_value_functor {
@@ -124,14 +140,21 @@ template<typename TMetadata>
 struct FunctionJSONAssembler {
 private:
     template<size_t I>
-    using get_input_json_t = static_string<11 + std::tuple_element_t<I, typename TMetadata::TInputMetadata>::TName::size()>;
+    using get_input_json_t = static_string<22 +
+                std::tuple_element_t<I, typename TMetadata::TInputMetadata>::TName::size() +
+                decltype(std::tuple_element_t<I, typename TMetadata::TInputMetadata>::decoder_type::name)::size()
+            >;
 
     template<size_t I>
     static constexpr get_input_json_t<I>
     get_input_json(const TMetadata& metadata) {
+        using TElement = std::tuple_element_t<I, typename TMetadata::TInputMetadata>;
+        using TDecoder = typename TElement::decoder_type;
         return const_str_concat(
             make_const_string("{\"name\":\""),
             std::get<I>(metadata.get_input_metadata()).name,
+            make_const_string("\",\"codec\":\""),
+            TDecoder::name,
             make_const_string("\"}")
         );
     }

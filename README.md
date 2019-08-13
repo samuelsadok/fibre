@@ -280,6 +280,11 @@ Below is a table to compare details of a couple of popular framworks and Fibre. 
 
 <a name="footnote-introspection">12</a>: A server is able to send its own interface description to clients at runtime so that clients can interact with objects without prior knowledge of the interface. This is useful for rapid prototyping (e.g. Python), interactive shells and automatic interfacing with other protocols.
 
+Other stuff:
+
+ * ZeroCM
+ * Matrix
+
 
 ## Projects using Fibre ##
 
@@ -289,3 +294,69 @@ Below is a table to compare details of a couple of popular framworks and Fibre. 
 ## Contribute ##
 
 This project losely adheres to the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html).
+
+
+## Stream multiplexer vs object multiplexer
+
+**Stream oriented endpoints**
+An endpoint has an input and output stream. A stream has metadata such as available/active codecs.
+
+Con: Once the data is encoded for a particular stream, it cannot be transcoded by the framework because it has no knowledge about the data format.
+
+**Function oriented endpoints**
+An endpoint is a function taking and returning arguments in decoded form.
+The data received/transmitted is finite.
+
+Pro: Encoding can be deferred until the underlying transport stream is ready.
+Con: Functions can only start operating once all data is received For realtime streams such as audio streams this is unsuitable because it requires the fragmentation of what would be a stream into frames. It is not clear what frame size to choose.
+
+**Object streams**
+The framework has knowledge of the underlying value type and decodes it before passing to the endpoint. Arguments can be infinite.
+
+Pro: Encoding/Decoding can be handled by the framework with knowledge about input/output streams.
+Allows for "delta" transmission, such as wavelet-transformed images.
+
+## Lifecycle of an object stream based endpoint
+
+By default the objects coming in are not exclusive (multiple access) and unordered
+Con: An output is no longer associated with an input. Cannot return results on same channel
+
+ * Objects coming from the same origin should keep their relative order
+ * Objects coming from different origins may arrive interleaved, but a single slice will always be from a single source
+
+
+oooooo---->oooo [decoder] => object1, object2
+       \--->oo|aa [decoder] => object1, object2
+aa-----/
+
+
+Normal transmission:
+
+bytes 0 - 55        response: 0 bytes
+break               break
+bytes 36 - 39       response: 4 bytes
+bytes 40 - 43       
+break               break
+bytes 44 - 50       response: 4 bytes
+break               break
+break           
+
+interleaved with:
+ 1. client: drop bytes 36 - 39
+ 2. server: ack input pipe 4, bytes 12 - 30
+ 3. server: consider 4 bytes from input pipe omitted
+ 4. server/client: switch to pipe 3, offset 12
+
+length + flags
+
+flags:
+    0: packet break after chunk
+   01: pipe break after chunk
+  011: packet break and pipe break after chunk
+
+0x01 0x03 0x0C
+
+How to cancel an RPC:
+ 1. send "drop bytes 36 - 43"
+ 2. 
+

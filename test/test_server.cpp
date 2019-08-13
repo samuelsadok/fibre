@@ -40,20 +40,21 @@ void test_func_a(uint32_t arg, uint32_t arg2) {
     printf("test_function called with 0x%08x and 0x%08x\n", arg, arg2);
 }
 
-uint32_t test_func_b(uint32_t arg, uint32_t& result) {
+uint32_t test_func_b(TestClass* obj, uint32_t arg, uint32_t& result) {
     printf("test_function called with %d\n", arg);
     return 8;
 }
 
 FIBRE_EXPORT_FUNCTION(
     test_func_b,
+    FIBRE_INPUT(obj, 1),
     FIBRE_INPUT(arg, 1),
     FIBRE_OUTPUT(result, 1),
     FIBRE_DISCARD_OUTPUT(1)
 );
 
 
-#define AS_TMPL(val) decltype(val), val
+//#define AS_TMPL(val) decltype(val), val
 
 
 void test_wait_handle() {

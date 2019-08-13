@@ -1,3 +1,9 @@
+/*
+* Implements types and macros needed to export local classes to remote Fibre
+* nodes.
+* This file is analogous and similar in structure to local_function.hpp.
+*/
+
 #ifndef __FIBRE_LOCAL_REF_TYPE
 #define __FIBRE_LOCAL_REF_TYPE
 
@@ -7,17 +13,6 @@
 #include <fibre/fibre.hpp>
 
 namespace fibre {
-
-class UnimplementedRefType;
-class RootType;
-
-template<typename T>
-struct fibre_type {
-    using type = UnimplementedRefType;
-};
-
-template<typename T>
-using fibre_type_t = typename fibre_type<T>::type;
 
 
 class LocalRefType {
@@ -275,6 +270,10 @@ public:
         if (output) *output = metadata_.json.c_str();
         if (length) *length = metadata_.json.size();
         return true;
+    }
+
+    constexpr typename TMetadata::TTypeName get_type_name() {
+        return TMetadata::get_type_name();
     }
 
 private:

@@ -57,8 +57,10 @@ from .crc import calc_crc16
 
 # I/O
 from .stream import StreamSink, StreamSource, PacketSink, PacketSource, StreamChain, StreamStatus
-from .output import OutputChannel, OutputPipe, SuspendedOutputPipe, OutgoingConnection
-from .input import InputPipe, SuspendedInputPipe, InputChannelDecoder
+from .output_pipe import OutputChannel, OutputPipe
+from .input_pipe import InputPipe
+from .outgoing_connection import OutgoingConnection
+from .input_channel_decoder import InputChannelDecoder
 
 from .remote_node import RemoteNode
 #from .remote_object import RemoteFunction
@@ -70,7 +72,7 @@ from .shell import launch_shell
 def get_remote_node(uuid):
     # TODO: make thread-safe
     if uuid not in global_state.remote_nodes:
-        remote_node = RemoteNode(uuid, global_state.logger, PIPES_PER_REMOTE_NODE)
+        remote_node = RemoteNode(uuid, global_state.logger, PIPES_PER_REMOTE_NODE, PIPES_PER_REMOTE_NODE)
         remote_node.__enter__()
         global_state.remote_nodes[uuid] = remote_node
     return global_state.remote_nodes[uuid]

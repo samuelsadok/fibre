@@ -4,7 +4,7 @@ import itertools
 import time
 import traceback
 from threading import Thread, Lock
-from fibre import Semaphore, EventWaitHandle, InputPipe, SuspendedInputPipe, OutputPipe, SuspendedOutputPipe
+from fibre import Semaphore, EventWaitHandle, InputPipe, OutputPipe
 import fibre.remote_object
 
 class IndexPool(object):
@@ -31,7 +31,7 @@ class IndexPool(object):
         if index is None:
             self._free_slots.acquire() # TODO: allow cancellation
         with self._lock:
-            if index is None:
+            if index is None: # find first free index
                 index = self._slots.index(None)
             item = self._slots[index]
             if item is None:
@@ -39,11 +39,13 @@ class IndexPool(object):
                 self._slots[index] = item
             return item
     
-    def release(self, index):
+    def release(self, index, destructor):
         """Releases the resource at the specified index"""
         with self._lock:
+            result = destructor(self._slots[index])
             self._slots[index] = None
         self._free_slots.release()
+        return result
 
     def get_active_items(self):
         """
@@ -59,6 +61,48 @@ class IndexPool(object):
             yield item
 
 
+class ResourcePool(object):
+    """
+    Represents a pool of limited resources.
+    All public member functions of this class are mutually thread-safe.
+    """
+    def __init__(self, resources):
+        self._lock = Lock()
+        self._resources = resources
+        self._is_occupied = [False] * len(resources)
+        self._n_available = Semaphore(count = len(resources))
+
+    def acquire(self):
+        """
+        Acquires one instance from the resource pool. The function may block
+        until a slot becomes free.
+        """
+        self._n_available.acquire() # TODO: allow cancellation
+        with self._lock:
+            index = self._is_occupied.index(False)
+            self._is_occupied[index] = True
+            return self._resources[index]
+    
+    def release(self, index):
+        """Releases the resource at the specified index"""
+        with self._lock:
+            index = self._resources.index(index)
+            self._is_occupied[index] = False
+        self._n_available.release()
+
+#    def get_active_items(self):
+#        """
+#        Returns a generator that returns all active items in the pool.
+#        If an item is added or removed while the generator is active, it may or
+#        may not be included in the result.
+#        """
+#        for idx in range(len(self._slots)):
+#            with self._lock:
+#                item = self._slots[idx]
+#                if item is None:
+#                    continue
+#            yield item
+
 class RemoteNode(object):
     """
     An outbox multiplexes multiple output pipes onto multiple output channels,
@@ -69,13 +113,32 @@ class RemoteNode(object):
     Only one outbox must be allocated for a given destination node.
     """
 
-    def __init__(self, uuid, logger, n_pipes):
+    def __init__(self, uuid, logger, n_client_pipe_pairs, n_server_pipe_pairs):
         self._uuid = uuid
         self._logger = logger
-        self._server_pipe_pool = IndexPool(n_pipes)
-        self._client_pipe_pool = IndexPool(n_pipes)
-        self._server_pipe_offsets = [(SuspendedInputPipe(),SuspendedOutputPipe())] * n_pipes # only valid for suspended pipes
-        self._client_pipe_offsets = [(SuspendedInputPipe(),SuspendedOutputPipe())] * n_pipes # only valid for suspended pipes
+
+        self.input_pipes_dict = {}
+
+        # assume for now that the receiver supports an arbitrary number of pipes
+        self.client_pipe_pairs = []
+        for i in range(n_client_pipe_pairs):
+            input_pipe = InputPipe(self, i << 1 | 1)
+            output_pipe = OutputPipe(self, i << 1)
+            self.client_pipe_pairs.append((input_pipe, output_pipe))
+            self.input_pipes_dict[input_pipe.pipe_id] = input_pipe
+
+        self.server_pipe_pairs = []
+        for i in range(n_server_pipe_pairs):
+            input_pipe = InputPipe(self, i << 1)
+            output_pipe = OutputPipe(self, i << 1 | 1)
+            self.server_pipe_pairs.append((input_pipe, output_pipe))
+            self.input_pipes_dict[input_pipe.pipe_id] = input_pipe
+
+
+        #self._server_pipe_pool = IndexPool(n_server_pipe_pairs)
+        self._client_pipe_pool = ResourcePool(self.client_pipe_pairs)
+        #self._server_pipe_offsets = [(SuspendedInputPipe(),SuspendedOutputPipe())] * n_pipes # only valid for suspended pipes
+        #self._client_pipe_offsets = [(SuspendedInputPipe(),SuspendedOutputPipe())] * n_pipes # only valid for suspended pipes
         self._output_pipe_ready = EventWaitHandle(auto_reset=True) # spurious signals possible
         self._output_channel_ready = EventWaitHandle(auto_reset=True) # spurious signals possible
         self._cancellation_token = EventWaitHandle() # triggered in __exit__
@@ -89,6 +152,7 @@ class RemoteNode(object):
         self._scheduler_thread.start()
         self._interrogate_thread.start()
         return self
+
     def __exit__(self, exception_type, exception_value, traceback):
         """Stops the scheduler thread"""
         self._cancellation_token.set()
@@ -101,31 +165,35 @@ class RemoteNode(object):
     def get_logger(self):
         return self._logger
 
-    def get_server_pipe_pair(self, index, **kwargs):
-        """
-        Returns a pipe pair from the server pipe pool. If the index is not
-        specified or points to an inactive slot, a new pipe pair is created.
-        The function blocks until the timeout (TODO) is reached.
-        """
-        return self._server_pipe_pool.acquire(index, lambda idx: (InputPipe(self, idx, self._server_pipe_offsets[idx][0]), OutputPipe(self, idx, self._server_pipe_offsets[idx][1], **kwargs)))
+    #def get_output_pipe(self, index)
 
-    def get_client_pipe_pair(self, index=None, **kwargs):
-        """
-        Returns a pipe pair from the client pipe pool. If the index is not
-        specified or points to an inactive slot, a new pipe pair is created.
-        The function blocks until the timeout (TODO) is reached.
-        """
-        return self._client_pipe_pool.acquire(index, lambda idx: (InputPipe(self, idx, self._client_pipe_offsets[idx][0]), OutputPipe(self, idx, self._client_pipe_offsets[idx][1], **kwargs)))
-
-    def release_server_pipe_pair(self, index):
-        self._server_pipe_pool.release(index)
-
-    def release_client_pipe_pair(self, index):
-        # TODO: probably there's a deadlock here
-        pipe_pair = self.get_client_pipe_pair(index)
-        # the calls to close block until the pipes are fully flushed
-        self._client_pipe_offsets[index] = (pipe_pair[0].close(), pipe_pair[1].close())
-        self._client_pipe_pool.release(index)
+#    def get_server_pipe_pair(self, index, **kwargs):
+#        """
+#        Returns a pipe pair from the server pipe pool. If the index is not
+#        specified or points to an inactive slot, a new pipe pair is created.
+#        The function blocks until the timeout (TODO) is reached.
+#        """
+#        return self._server_pipe_pool.acquire(index, lambda idx: (InputPipe(self, idx, self._server_pipe_offsets[idx][0]), OutputPipe(self, idx, self._server_pipe_offsets[idx][1], **kwargs)))
+#
+#    def get_client_pipe_pair(self, index=None, **kwargs):
+#        """
+#        Returns a pipe pair from the client pipe pool. If the index is not
+#        specified or points to an inactive slot, a new pipe pair is created.
+#        The function blocks until the timeout (TODO) is reached.
+#        """
+#        return self._client_pipe_pool.acquire(index, lambda idx: (InputPipe(self, idx, self._client_pipe_offsets[idx][0]), OutputPipe(self, idx, self._client_pipe_offsets[idx][1], **kwargs)))
+#
+#    def release_server_pipe_pair(self, index):
+#        self._server_pipe_pool.release(index)
+#
+#    def release_client_pipe_pair(self, index):
+#        # TODO: probably there's a deadlock here
+#        #pipe_pair = self.get_client_pipe_pair(index)
+#        # the calls to close block until the pipes are fully flushed
+#        self._client_pipe_offsets[index] = self._client_pipe_pool.release(
+#            index,
+#            lambda pipe_pair: (pipe_pair[0].close(), pipe_pair[1].close())
+#        )
 
     #def release_pipe(self, pipe_id):
     #    with self._lock:
@@ -157,17 +225,22 @@ class RemoteNode(object):
             get_ref_type_count = fibre.remote_object.RemoteFunction(self, 2, 0, [], ["number"])
             get_ref_type_json = fibre.remote_object.RemoteFunction(self, 3, 0, ["number"], ["json"])
 
+            json_string = '{"name":"get_function_json","in":[{"name":"endpoint_id","codec":"uint32"}]}'
+            my_new_function = fibre.remote_object.RemoteFunction.from_json_string(self, 1, json_string)
+
             function_count = get_function_count()
             self._logger.debug("function count: {}".format(function_count))
             for i in range(function_count):
                 json_string = get_function_json(i)
                 self._logger.debug("JSON {}: {}".format(i, json_string))
+                fn = fibre.remote_object.RemoteFunction.from_json(self, i, json_string)
 
             ref_type_count = get_ref_type_count()
             self._logger.debug("ref type count: {}".format(ref_type_count))
             for i in range(ref_type_count):
                 json_string = get_ref_type_json(i)
                 self._logger.debug("JSON {}: {}".format(i, json_string))
+                iface = fibre.remote_object.RemoteInterface.from_json(json_string)
         except:
             self._logger.warn("interrogation of {} failed".format(self._uuid))
             self._logger.warn(traceback.format_exc())
@@ -198,7 +271,7 @@ class RemoteNode(object):
                 free_space = None if free_space is None else (free_space - per_packet_overhead)
                 assert free_space is not None or free_space >= 0
 
-                for pipe_pair in itertools.chain(self._server_pipe_pool.get_active_items(), self._client_pipe_pool.get_active_items()):
+                for pipe_pair in itertools.chain(self.server_pipe_pairs, self.client_pipe_pairs):
                     output_pipe = pipe_pair[1]
                     for chunk in output_pipe.get_pending_chunks():
                         if free_space is not None:
