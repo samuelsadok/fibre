@@ -8,6 +8,11 @@ test_server = define_package{
     sources={'test_server.cpp'}
 }
 
+test2 = define_package{
+    packages={fibre_package},
+    sources={'test2.cpp'}
+}
+
 unit_tests = define_package{
     packages={fibre_package},
     sources={'run_tests.cpp'}
@@ -21,7 +26,9 @@ toolchain=GCCToolchain('', 'build', {'-O3', '-g', '-Wall'}, {})
 --toolchain=LLVMToolchain('avr', {'-O3', '-std=gnu++11', '--target=avr', '-fno-sanitize=safe-stack', '-fno-stack-protector', '-I/home/samuel/stlport-avr/stlport'}, {'-flto', '-Wl,-s'})
 
 
-if tup.getconfig("BUILD_FIBRE_TESTS") == "true" then
-	build_executable('test_server', test_server, toolchain)
-	--build_executable('run_tests', unit_tests, toolchain)
-end
+--if tup.getconfig("BUILD_FIBRE_TESTS") == "true" then
+--	build_executable('test_server', test_server, toolchain)
+--	--build_executable('run_tests', unit_tests, toolchain)
+--end
+
+build_executable('test2', test2, toolchain)

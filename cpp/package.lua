@@ -8,8 +8,10 @@ fibre_package = define_package{
         'input.cpp',
         'output.cpp',
         'remote_node.cpp',
-        'posix_tcp.cpp'
+        'posix_tcp.cpp',
+        'worker.cpp',
+        'usb_discoverer.cpp'
     }, -- 'posix_udp.cpp'},
-    libs={'pthread'},
-    headers={'include'}
+    libs={'pthread', 'usb-1.0', 'udev'},
+    headers={'include', '/usr/include/libusb-1.0'} -- todo: pkg-config libusb --cflags
 }

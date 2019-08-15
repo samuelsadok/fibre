@@ -111,7 +111,11 @@ function get_generalized_paths(paths)
         -- TODO: check for string
         generalized_paths = {}
         for _,path in pairs(paths) do
-            table.insert(generalized_paths, tup.nodevariable(path))
+            if path:find('^/') then
+                table.insert(generalized_paths, path)
+            else
+                table.insert(generalized_paths, tup.getcwd()..'/'..path)
+            end
         end
         return generalized_paths
     end
@@ -141,7 +145,7 @@ function define_package(pkg)
     pkg.sources = get_generalized_paths(pkg.sources)
     pkg.objects = get_generalized_paths(pkg.objects)
     pkg.headers = get_generalized_paths(pkg.headers)
-    pkg.private_headers = get_generalized_paths(private_headers)
+    pkg.private_headers = get_generalized_paths(pkg.private_headers)
     if pkg.packages == nil then pkg.packages = {} end
     if pkg.libs == nil then pkg.libs = {} end
     if pkg.c_flags == nil then pkg.c_flags = {} end
