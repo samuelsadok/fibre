@@ -2,7 +2,6 @@
 #include <fibre/usb_discoverer.hpp>
 
 #include <iostream>
-#include <sys/timerfd.h>
 #include <unistd.h>
 #include <sys/epoll.h>
 
@@ -99,7 +98,7 @@ int USBHostSideDiscoverer::deinit() {
     // FIXME: the libusb_hotplug_deregister_callback call will still trigger a
     // usb_handler event. We need to wait until this has finished before we
     // truly discard libusb resources
-    usleep(100000);
+    //usleep(100000);
 
     libusb_exit(libusb_ctx);
     libusb_ctx = nullptr;
@@ -115,15 +114,6 @@ void USBHostSideDiscoverer::udev_handler() {
     struct udev_device* dev = udev_monitor_receive_device(udev_mon);
     (void) dev; // the device is not actually being used
     printf("udev handler completed\n");
-}
-
-void USBHostSideDiscoverer::timer_handler() {
-    printf("timer handler\n");
-    uint64_t val;
-    read(tim_fd, &val, sizeof(val));
-
-    //libusb_handle_events_completed(libusb_ctx, NULL);
-    printf("timer handler completed\n");
 }
 
 void USBHostSideDiscoverer::usb_handler() {
@@ -249,71 +239,6 @@ int USBHostSideDiscoverer::stop_udev_monitor() {
     return result;
 }
 
-/**
- * @brief Starts a timer that will be used for polling for USB devices.
- * The corresponding event is added to the epoll interest set.
- * 
- * This method should only be used as a fallback if a proper event-driven method
- * is not available.
- * 
- * Returns an error code if the timer was already started.
- */
-int USBHostSideDiscoverer::start_timer() {
-    if (is_timer_started())
-        return -1;
-
-    struct itimerspec itimerspec = {
-        .it_interval = { .tv_sec = 1, .tv_nsec = 0 }, // periodic interval between timer events
-        .it_value = { .tv_sec = 1, .tv_nsec = 0 }, // timeout until first timer event
-    };
-
-    tim_fd = timerfd_create(CLOCK_MONOTONIC, 0);
-    if (tim_fd < 0) {
-        printf("timerfd_create() failed\n");
-        return -1;
-    }
-
-    if (timerfd_settime(tim_fd, 0, &itimerspec, nullptr) != 0) {
-        printf("timerfd_settime() failed\n");
-        goto fail;
-    }
-
-    if (!worker_ || (worker_->register_event(tim_fd, EPOLLIN, &timer_handler_obj) != 0)) {
-        printf("register_event(tim_fd) failed\n");
-        goto fail;
-    }
-    return 0;
-
-fail:
-    close(tim_fd);
-    tim_fd = -1;
-    return -1;
-}
-
-/**
- * @brief Stops the timer that was started with start_timer().
- * Returns an error code if the timer was already stopped.
- */
-int USBHostSideDiscoverer::stop_timer() {
-    if (!is_timer_started())
-        return -1;
-
-    int result = 0;
-
-    if (!worker_ || (worker_->deregister_event(tim_fd) != 0)) {
-        printf("deregister_event(tim_fd) failed\n");
-        result = -1;
-    }
-    printf("deregister status %d\n", result);
-
-    if (close(tim_fd) != 0) {
-        printf("close() failed\n");
-        result = -1;
-    }
-    tim_fd = -1;
-
-    return result;
-}
 
 /**
  * @brief Starts monitoring USB devices in a background thread.
@@ -326,7 +251,7 @@ int USBHostSideDiscoverer::start_libusb_monitor() {
         printf("Could not start udev monitor. Fall back to polling.\n");
     }
 
-    if (!is_udev_monitor_started() && (start_timer() != 0)) {
+    if (!is_udev_monitor_started() && timer_.start(1000, true, nullptr) != 0) {
         printf("Could not start polling timer.\n");
         goto fail;
     }
@@ -354,8 +279,8 @@ fail:
     if (is_udev_monitor_started()) {
         stop_udev_monitor();
     }
-    if (is_timer_started()) {
-        stop_timer();
+    if (timer_.is_started()) {
+        timer_.stop();
     }
 
     return -1;
@@ -368,7 +293,7 @@ int USBHostSideDiscoverer::stop_libusb_monitor() {
     if (is_udev_monitor_started() && (stop_udev_monitor() != 0)) {
         result = -1;
     }
-    if (is_timer_started() && (stop_timer() != 0)) {
+    if (timer_.is_started() && (timer_.stop() != 0)) {
         result = -1;
     }
     return result;

@@ -2,6 +2,7 @@
 #define __FIBRE_USB_DISCOVERER_HPP
 
 #include <fibre/worker.hpp>
+#include <fibre/timer.hpp>
 
 #include <libusb.h>
 #include <libudev.h>
@@ -30,7 +31,6 @@ public:
 
 private:
     void udev_handler();
-    void timer_handler();
     void usb_handler();
 
     void pollfd_added_handler(int fd, short events);
@@ -43,10 +43,6 @@ private:
     int stop_udev_monitor();
     bool is_udev_monitor_started() { return udev_mon; }
 
-    int start_timer();
-    int stop_timer();
-    bool is_timer_started() { return tim_fd >= 0; }
-
     int start_libusb_monitor();
     int stop_libusb_monitor();
 
@@ -55,21 +51,16 @@ private:
     struct udev_monitor* udev_mon = nullptr;
     libusb_hotplug_callback_handle hotplug_callback_handle;
     int n_discovery_requests = 0;
-    int tim_fd = -1;
     Worker* worker_ = nullptr;
+    Timer timer_;
 
     Worker::callback_t udev_handler_obj = {
-        .callback = [](void* ctx){ ((USBHostSideDiscoverer*)ctx)->udev_handler(); },
-        .ctx = this
-    };
-
-    Worker::callback_t timer_handler_obj = {
-        .callback = [](void* ctx){ ((USBHostSideDiscoverer*)ctx)->timer_handler(); },
+        .callback = [](void* ctx, uint32_t events){ ((USBHostSideDiscoverer*)ctx)->udev_handler(); },
         .ctx = this
     };
 
     Worker::callback_t usb_handler_obj = {
-        .callback = [](void* ctx){ ((USBHostSideDiscoverer*)ctx)->usb_handler(); },
+        .callback = [](void* ctx, uint32_t events){ ((USBHostSideDiscoverer*)ctx)->usb_handler(); },
         .ctx = this
     };
 };

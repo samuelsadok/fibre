@@ -13,6 +13,11 @@ test2 = define_package{
     sources={'test2.cpp'}
 }
 
+dbus_test = define_package{
+    packages={fibre_package},
+    sources={'dbus_test.cpp'}
+}
+
 unit_tests = define_package{
     packages={fibre_package},
     sources={'run_tests.cpp'}
@@ -31,4 +36,5 @@ toolchain=GCCToolchain('', 'build', {'-O3', '-g', '-Wall'}, {})
 --	--build_executable('run_tests', unit_tests, toolchain)
 --end
 
-build_executable('test2', test2, toolchain)
+--build_executable('test2', test2, toolchain)
+build_executable('dbus_test', dbus_test, toolchain)
