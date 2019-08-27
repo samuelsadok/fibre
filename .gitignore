@@ -9,3 +9,5 @@ build/
 /doc/pics/*.log
 /doc/pics/*.synctex.gz
 /doc/pics/*.pdf
+
+/.vscode/ipch/
