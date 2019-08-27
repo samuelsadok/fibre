@@ -3,24 +3,12 @@
 
 #include <fibre/worker.hpp>
 #include <fibre/timer.hpp>
+#include <fibre/channel_discoverer.hpp>
 
 #include <libusb.h>
 #include <libudev.h>
 
 namespace fibre {
-
-
-class interface_specs {};
-
-/**
- * @brief Abstract class that provides an interface to find/spawn Fibre channels
- */
-class ChannelDiscoverer {
-    int init();
-    int deinit();
-    int start_channel_discovery(interface_specs* interface_specs, void** discovery_ctx);
-    int stop_channel_discovery(void* discovery_ctx);
-};
 
 class USBHostSideDiscoverer : ChannelDiscoverer {
 public:

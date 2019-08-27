@@ -1,0 +1,38 @@
+#ifndef __INTERFACES__{{output_name | replace('.', '_') | upper}}
+#define __INTERFACES__{{output_name | replace('.', '_') | upper}}
+
+#include <fibre/dbus.hpp>
+#include <vector>
+
+{% macro args_to_types(args) %}
+{%- for arg in args %}
+{{- arg.type | dbus_type_to_cpp_type}}{% if not loop.last %}, {% endif %}
+{%- endfor %}
+{%- endmacro %}
+
+{%- for interface in all_interfaces %}
+class {{interface.name | replace('.', '_')}} : public fibre::DBusObject {
+public:
+    static constexpr const char* interface_name = "{{interface.name}}";
+
+    {{interface.name | replace('.', '_')}}(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
+        : DBusObject(conn, service_name, object_name) {}
+{% for method in interface.methods %}
+    int {{method.name}}_async({% for arg in method.inputs %}{{arg.type | dbus_type_to_cpp_type}} {{arg.name}}, {% endfor %}fibre::Callback<{{args_to_types(method.outputs)}}>* callback) {
+        return method_call_async(interface_name, "{{method.name}}", {% for arg in method.inputs %}{{arg.name}}, {% endfor %}callback);
+    }
+{% endfor %}
+
+{%- for property in interface.properties %}
+    // DBusProperty<{{property.type | dbus_type_to_cpp_type}}> {{property.name}};
+{%- endfor %}
+
+{%- for signal in interface.signals %}
+    // Callback<{{args_to_types(signal.args)}}> {{signal.name}};
+{%- endfor %}
+};
+
+
+{%- endfor %}
+
+#endif // __INTERFACES__{{output_name | replace('.', '_') | upper}}

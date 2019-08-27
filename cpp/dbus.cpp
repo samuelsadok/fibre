@@ -73,7 +73,6 @@ int DBusConnectionWrapper::init(Worker* worker) {
         exit(1);
     }*/
 
-    printf("set watch fn\n");
     status = dbus_connection_set_watch_functions(conn_,
         [](DBusWatch* watch, void* data) { /* add_function */
             return ((DBusConnectionWrapper*)data)->handle_add_watch(watch) == 0 ?
@@ -93,7 +92,6 @@ int DBusConnectionWrapper::init(Worker* worker) {
         goto fail2;
     }
 
-    printf("set timeout fn\n");
     status = dbus_connection_set_timeout_functions(conn_,
         [](DBusTimeout* timeout, void* data) { /* */
             return ((DBusConnectionWrapper*)data)->handle_add_timeout(timeout) == 0 ?
@@ -118,7 +116,6 @@ int DBusConnectionWrapper::init(Worker* worker) {
         goto fail2;
     }
 
-    printf("set wakeup fn\n");
     // TODO: ask on mailing list what this is exactly supposed to do. What
     // assumption do they have about my mainloop? That it calls
     // dbus_connection_dispatch()?
@@ -127,7 +124,6 @@ int DBusConnectionWrapper::init(Worker* worker) {
             ((DBusConnectionWrapper*)data)->dispatch_signal_.set();
         }, this, nullptr);
 
-    printf("set dispatch fn\n");
     dbus_connection_set_dispatch_status_function(conn_,
         [](DBusConnection* conn_, DBusDispatchStatus new_status, void* data) {
             if (new_status == DBUS_DISPATCH_DATA_REMAINS)
@@ -269,146 +265,3 @@ int DBusConnectionWrapper::handle_toggle_timeout(DBusTimeout *timeout, bool enab
     }
 }
 
-namespace fibre {
-
-void append_object(DBusMessageIter* iter, const char* str) {
-    dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, str);
-}
-
-void append_object(DBusMessageIter* iter, dbus_variant& val) {
-    DBusMessageIter subiter;
-    //char sig[2] = { val.get_type_as_string(), '\0' };
-    dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, val.get_type_as_string(), &subiter);
-    val.append_variant(&subiter);
-    dbus_message_iter_close_container(iter, &subiter);
-}
-
-void append_object(DBusMessageIter* iter, std::unordered_map<const char*, const char*> val) {
-    DBusMessageIter dict;
-    dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
-            DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
-            DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
-            DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict); /* todo: make this more flexible */
-
-    for (auto& it: val) {
-        DBusMessageIter entry;
-        dbus_message_iter_open_container(&dict, DBUS_TYPE_DICT_ENTRY, nullptr, &entry);
-        append_object(&entry, it.first);
-        dbus_variant variant = dbus_variant(it.second);
-        append_object(&entry, variant);
-        dbus_message_iter_close_container(&dict, &entry);
-    }
-
-    dbus_message_iter_close_container(iter, &dict);
-}
-
-template<typename ... Ts>
-struct MessageDecomposer;
-
-template<typename ... Ts>
-struct MessageDecomposer<int, Ts...> {
-    static int get(DBusMessageIter* iter, int* val, Ts* ... vals) {
-        if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT32) {
-            printf("argument type mismatch\n");
-            return -1;
-        }
-        dbus_message_iter_get_basic(iter, val);
-        dbus_message_iter_next(iter);
-    }
-};
-
-template<typename ... Ts>
-struct MessageDecomposer<const char*, Ts...> {
-    static int get(DBusMessageIter* iter, const char** val, Ts* ... vals) {
-        if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_STRING) {
-            printf("argument type mismatch\n");
-            return -1;
-        }
-        dbus_message_iter_get_basic(iter, val);
-        dbus_message_iter_next(iter);
-        return 0;
-    }
-};
-
-//template<typename ... Ts>
-void handle_reply_message(DBusMessage* msg, Callback<const char*>* callback) {
-    DBusMessageIter args;
-
-    dbus_message_iter_init(msg, &args);
-
-    const char* val;
-    int status = MessageDecomposer<const char *>::get(&args, &val);
-    if (status != 0) {
-        printf("failed to decompose message\n");
-    }
-    if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_INVALID) {
-        printf("too many arguments\n");
-    }
-
-    if (callback) {
-        callback->callback(callback->ctx, val);
-    }
-}
-
-
-#include <unistd.h>
-int get_managed_objects_async(DBusObject* obj, Callback<const char*>* callback) {
-    DBusMessage* msg;
-    DBusMessageIter args;
-    DBusPendingCall* pending;
-
-    msg = dbus_message_new_method_call(obj->service_name, // target for the method call
-            obj->object_name, // object to call on
-            "org.freedesktop.DBus.Introspectable", // interface to call on
-            "Introspect"); // method name
-    if (NULL == msg) {
-        fprintf(stderr, "Message Null\n");
-        goto fail1;
-    }
-
-    // Append arguments
-    dbus_message_iter_init_append(msg, &args);
-
-    // send message and get a handle for a reply
-    if (!dbus_connection_send_with_reply(obj->conn->get_libdbus_ptr(), msg, &pending, -1)) { // -1 is default timeout
-        fprintf(stderr, "Out Of Memory!\n"); 
-        goto fail2;
-    }
-    if (NULL == pending) { 
-        fprintf(stderr, "Pending Call Null\n"); 
-        goto fail2; 
-    }
-    dbus_connection_flush(obj->conn->get_libdbus_ptr());
-
-    // free message
-    dbus_message_unref(msg);
-    printf("Successfully dispatched message\n");
-
-    dbus_pending_call_set_notify(pending,
-        [](DBusPendingCall* pending, void* ctx){
-            printf("message arrived in callback\n");
-            auto callback = ((Callback<const char*>*)ctx);
-            DBusMessage* msg = dbus_pending_call_steal_reply(pending);
-            dbus_pending_call_unref(pending);
-            handle_reply_message(msg, callback);
-            dbus_message_unref(msg);
-        }, callback, nullptr);
-
-    // Handle reply now if it already arrived before we set the notify callback.
-    msg = dbus_pending_call_steal_reply(pending);
-    if (msg) {
-        printf("message arrived quickly\n");
-        dbus_pending_call_unref(pending);
-        handle_reply_message(msg, callback);
-        dbus_message_unref(msg);
-    }
-
-    return 0;
-
-fail2:
-    dbus_message_unref(msg);
-fail1:
-    return -1;
-}
-
-}

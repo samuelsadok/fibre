@@ -13,6 +13,7 @@ fibre_package = define_package{
         'timer.cpp',
         'signal.cpp',
         'usb_discoverer.cpp',
+        'bluetooth_discoverer.cpp',
         'dbus.cpp'
     }, -- 'posix_udp.cpp'},
     libs={'pthread', 'usb-1.0', 'udev', 'dbus-1'},

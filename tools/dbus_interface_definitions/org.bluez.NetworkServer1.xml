@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="org.bluez.NetworkServer1">
+    <method name="Register">
+      <arg name="uuid" type="s" direction="in"/>
+      <arg name="bridge" type="s" direction="in"/>
+    </method>
+    <method name="Unregister">
+      <arg name="uuid" type="s" direction="in"/>
+    </method>
+  </interface>
+</node>

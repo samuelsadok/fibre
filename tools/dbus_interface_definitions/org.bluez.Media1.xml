@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="org.bluez.Media1">
+    <method name="RegisterEndpoint">
+      <arg name="endpoint" type="o" direction="in"/>
+      <arg name="properties" type="a{sv}" direction="in"/>
+    </method>
+    <method name="UnregisterEndpoint">
+      <arg name="endpoint" type="o" direction="in"/>
+    </method>
+    <method name="RegisterPlayer">
+      <arg name="player" type="o" direction="in"/>
+      <arg name="properties" type="a{sv}" direction="in"/>
+    </method>
+    <method name="UnregisterPlayer">
+      <arg name="player" type="o" direction="in"/>
+    </method>
+  </interface>
+</node>
