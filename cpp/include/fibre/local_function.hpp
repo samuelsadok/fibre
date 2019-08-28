@@ -28,7 +28,7 @@ class Decoder;
 template<>
 class Decoder<uint32_t> : public FixedIntDecoder<uint32_t, false> {
 public:
-    static constexpr auto name = make_const_string("uint32");
+    static constexpr auto name = make_sstring("uint32");
     using TName = decltype(name);
     using value_tuple_t = std::tuple<uint32_t>;
 };
@@ -36,8 +36,8 @@ public:
 template<typename TObj>
 class Decoder<TObj*> : public ObjectReferenceDecoder<TObj> {
 public:
-    //static constexpr auto name = make_const_string("lalala");
-    static constexpr auto name = type_name_provider<TObj>::get_type_name(); //make_const_string("lalala");
+    //static constexpr auto name = make_sstring("lalala");
+    static constexpr auto name = type_name_provider<TObj>::get_type_name(); //make_sstring("lalala");
     using TName = decltype(name);
     using value_tuple_t = std::tuple<TObj*>;
 };
@@ -140,7 +140,7 @@ template<typename TMetadata>
 struct FunctionJSONAssembler {
 private:
     template<size_t I>
-    using get_input_json_t = static_string<22 +
+    using get_input_json_t = sstring<22 +
                 std::tuple_element_t<I, typename TMetadata::TInputMetadata>::TName::size() +
                 decltype(std::tuple_element_t<I, typename TMetadata::TInputMetadata>::decoder_type::name)::size()
             >;
@@ -150,49 +150,45 @@ private:
     get_input_json(const TMetadata& metadata) {
         using TElement = std::tuple_element_t<I, typename TMetadata::TInputMetadata>;
         using TDecoder = typename TElement::decoder_type;
-        return const_str_concat(
-            make_const_string("{\"name\":\""),
-            std::get<I>(metadata.get_input_metadata()).name,
-            make_const_string("\",\"codec\":\""),
-            TDecoder::name,
-            make_const_string("\"}")
-        );
+        return make_sstring("{\"name\":\"") +
+               std::get<I>(metadata.get_input_metadata()).name +
+               make_sstring("\",\"codec\":\"") +
+               TDecoder::name +
+               make_sstring("\"}");
     }
 
     template<typename Is>
     struct get_all_inputs_json_type;
     template<size_t... Is>
     struct get_all_inputs_json_type<std::index_sequence<Is...>> {
-        using type = const_str_join_t<1, get_input_json_t<Is>::size()...>;
+        using type = join_sstring_t<1, get_input_json_t<Is>::size()...>;
     };
     using get_all_inputs_json_t = typename get_all_inputs_json_type<std::make_index_sequence<TMetadata::NInputs>>::type;
 
     template<size_t... Is>
     static constexpr get_all_inputs_json_t
     get_all_inputs_json(const TMetadata& metadata, std::index_sequence<Is...>) {
-        return const_str_join(make_const_string(","), get_input_json<Is>(metadata)...);
+        return join_sstring(make_sstring(","), get_input_json<Is>(metadata)...);
     }
 
 public:
-    using get_json_t = static_string<19 + TMetadata::TFuncName::size() + get_all_inputs_json_t::size()>;
+    using get_json_t = sstring<19 + TMetadata::TFuncName::size() + get_all_inputs_json_t::size()>;
 
     // @brief Returns a JSON snippet that describes this function
     static constexpr get_json_t
     get_as_json(const TMetadata& metadata) {
-        return const_str_concat(
-            make_const_string("{\"name\":\""),
-            metadata.get_function_name(),
-            make_const_string("\",\"in\":["),
-            get_all_inputs_json(metadata, std::make_index_sequence<TMetadata::NInputs>()),
-            make_const_string("]}")
-        );
+        return make_sstring("{\"name\":\"") +
+               metadata.get_function_name() +
+               make_sstring("\",\"in\":[") +
+               get_all_inputs_json(metadata, std::make_index_sequence<TMetadata::NInputs>()) +
+               make_sstring("]}");
     }
 };
 
 
 template<size_t INameLength, size_t IInParams>
 struct InputMetadataPrototype {
-    static_string<INameLength> name;
+    sstring<INameLength> name;
 };
 
 template<size_t INameLength, typename TArgs>
@@ -200,7 +196,7 @@ struct InputMetadata;
 
 template<size_t INameLength, typename... TArgs>
 struct InputMetadata<INameLength, std::tuple<TArgs...>> {
-    using TName =  static_string<INameLength>;
+    using TName =  sstring<INameLength>;
     TName name;
     using decoder_type = Decoder<TArgs...>;
     using tuple_type = std::tuple<TArgs...>;
@@ -208,7 +204,7 @@ struct InputMetadata<INameLength, std::tuple<TArgs...>> {
 
 template<size_t INameLength, size_t IOutParams, bool BDiscard>
 struct OutputMetadataPrototype {
-    static_string<INameLength> name;
+    sstring<INameLength> name;
 };
 
 template<size_t INameLength, typename TArgs, bool BDiscard>
@@ -216,7 +212,7 @@ struct OutputMetadata;
 
 template<size_t INameLength, typename... TArgs, bool BDiscard>
 struct OutputMetadata<INameLength, std::tuple<TArgs...>, BDiscard> {
-    using TName =  static_string<INameLength>;
+    using TName =  sstring<INameLength>;
     TName name;
     using encoder_type = std::conditional_t<
             BDiscard,
@@ -229,14 +225,14 @@ struct OutputMetadata<INameLength, std::tuple<TArgs...>, BDiscard> {
 template<size_t IInParams, size_t INameLengthPlus1>
 constexpr InputMetadataPrototype<(INameLengthPlus1-1), IInParams> make_input_metadata_prototype(const char (&name)[INameLengthPlus1]) {
     return InputMetadataPrototype<(INameLengthPlus1-1), IInParams>{
-        make_const_string(name)
+        make_sstring(name)
     };
 }
 
 template<size_t IOutParams, bool BDiscard, size_t INameLengthPlus1>
 constexpr OutputMetadataPrototype<(INameLengthPlus1-1), IOutParams, BDiscard> make_output_metadata_prototype(const char (&name)[INameLengthPlus1]) {
     return OutputMetadataPrototype<(INameLengthPlus1-1), IOutParams, BDiscard>{
-        make_const_string(name)
+        make_sstring(name)
     };
 }
 
@@ -309,14 +305,14 @@ struct StaticFunctionMetadata;
 
 template<size_t IFun, typename... TInputs, typename... TOutputs, typename... TFreeArgs, typename... ArgModes>
 struct StaticFunctionMetadata<
-        static_string<IFun>,
+        sstring<IFun>,
         std::tuple<TInputs...>,
         std::tuple<TOutputs...>,
         std::tuple<TFreeArgs...>,
         std::tuple<ArgModes...>> {
     static constexpr const size_t NInputs = (sizeof...(TInputs));
     static constexpr const size_t NOutputs = (sizeof...(TOutputs));
-    using TFuncName = static_string<IFun>;
+    using TFuncName = sstring<IFun>;
     using TInputMetadata = std::tuple<TInputs...>;
     using TOutputMetadata = std::tuple<TOutputs...>;
 
@@ -374,8 +370,8 @@ struct StaticFunctionMetadata<
 
 
 template<typename TFreeArgs, size_t INameLength_Plus1>
-static constexpr StaticFunctionMetadata<static_string<INameLength_Plus1-1>, std::tuple<>, std::tuple<>, TFreeArgs, std::tuple<>> make_function_metadata(const char (&function_name)[INameLength_Plus1]) {
-    return StaticFunctionMetadata<static_string<INameLength_Plus1-1>, std::tuple<>, std::tuple<>, TFreeArgs, std::tuple<>>(static_string<INameLength_Plus1-1>(function_name), std::tuple<>(), std::tuple<>());
+static constexpr StaticFunctionMetadata<sstring<INameLength_Plus1-1>, std::tuple<>, std::tuple<>, TFreeArgs, std::tuple<>> make_function_metadata(const char (&function_name)[INameLength_Plus1]) {
+    return StaticFunctionMetadata<sstring<INameLength_Plus1-1>, std::tuple<>, std::tuple<>, TFreeArgs, std::tuple<>>(sstring<INameLength_Plus1-1>(function_name), std::tuple<>(), std::tuple<>());
 }
 
 

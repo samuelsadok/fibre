@@ -105,7 +105,7 @@ void log(const char *filename, size_t line_no, const char *funcname, Ts&& ... va
 
 template<size_t I>
 constexpr const char * get_file_name(const char (&file_path)[I]) {
-    return file_path + make_const_string(file_path).after_last_index_of('/');
+    return file_path + make_sstring(file_path).after_last_index_of('/');
 }
 
 

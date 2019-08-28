@@ -111,58 +111,54 @@ template<typename TMetadata>
 struct RefTypeJSONAssembler {
 private:
     template<size_t I>
-    using get_property_json_t = static_string<11 + std::tuple_element_t<1, std::tuple_element_t<I, typename TMetadata::TPropertyMetadata>>::size()>;
+    using get_property_json_t = sstring<11 + std::tuple_element_t<1, std::tuple_element_t<I, typename TMetadata::TPropertyMetadata>>::size()>;
 
     template<size_t I>
     static constexpr get_property_json_t<I>
     get_property_json(const TMetadata& metadata) {
-        return const_str_concat(
-            make_const_string("{\"name\":\""),
-            std::get<1>(std::get<I>(metadata.get_property_metadata())),
-            make_const_string("\"}")
-        );
+        return make_sstring("{\"name\":\"") +
+               std::get<1>(std::get<I>(metadata.get_property_metadata())) +
+               make_sstring("\"}");
     }
 
     template<typename Is>
     struct get_all_properties_json_type;
     template<size_t... Is>
     struct get_all_properties_json_type<std::index_sequence<Is...>> {
-        using type = const_str_join_t<1, get_property_json_t<Is>::size()...>;
+        using type = join_sstring_t<1, get_property_json_t<Is>::size()...>;
     };
     using get_all_properties_json_t = typename get_all_properties_json_type<std::make_index_sequence<TMetadata::NProperties>>::type;
 
     template<size_t... Is>
     static constexpr get_all_properties_json_t
     get_all_properties_json(const TMetadata& metadata, std::index_sequence<Is...>) {
-        return const_str_join(make_const_string(","), get_property_json<Is>(metadata)...);
+        return join_sstring(make_sstring(","), get_property_json<Is>(metadata)...);
     }
 
 public:
-    using get_json_t = static_string<27 + TMetadata::TTypeName::size() + get_all_properties_json_t::size()>;
+    using get_json_t = sstring<27 + TMetadata::TTypeName::size() + get_all_properties_json_t::size()>;
 
     // @brief Returns a JSON snippet that describes this type
     static constexpr get_json_t
     get_as_json(const TMetadata& metadata) {
-        return const_str_concat(
-            make_const_string("{\"name\":\""),
-            metadata.get_type_name(),
-            make_const_string("\",\"properties\":["),
-            get_all_properties_json(metadata, std::make_index_sequence<TMetadata::NProperties>()),
-            make_const_string("]}")
-        );
+        return make_sstring("{\"name\":\"") +
+               metadata.get_type_name() +
+               make_sstring("\",\"properties\":[") +
+               get_all_properties_json(metadata, std::make_index_sequence<TMetadata::NProperties>()) +
+               make_sstring("]}");
     }
 };
 
 struct property_metadata_item_tag {};
 
 template<size_t INameLength, typename TProp, typename TObj>
-using PropertyMetadata = std::tuple<property_metadata_item_tag, static_string<INameLength>, TProp TObj::*>;
+using PropertyMetadata = std::tuple<property_metadata_item_tag, sstring<INameLength>, TProp TObj::*>;
 
 template<size_t INameLengthPlus1, typename TProp, typename TObj>
 constexpr PropertyMetadata<(INameLengthPlus1-1), TProp, TObj> make_property_metadata(const char (&name)[INameLengthPlus1], TProp TObj::* prop) {
     return PropertyMetadata<(INameLengthPlus1-1), TProp, TObj>(
         property_metadata_item_tag(),
-        make_const_string(name),
+        make_sstring(name),
         std::forward<TProp TObj::*>(prop));
 }
 
@@ -187,10 +183,10 @@ struct StaticRefTypeMetadata;
 
 template<size_t IFun, typename... TProperties>
 struct StaticRefTypeMetadata<
-        static_string<IFun>,
+        sstring<IFun>,
         std::tuple<TProperties...>> {
     static constexpr const size_t NProperties = (sizeof...(TProperties));
-    using TTypeName = static_string<IFun>;
+    using TTypeName = sstring<IFun>;
     using TPropertyMetadata = std::tuple<TProperties...>;
 
     TTypeName type_name;
@@ -200,8 +196,8 @@ struct StaticRefTypeMetadata<
         : type_name(type_name), property_metadata(property_metadata) {}
 
     /*template<size_t ... Is>
-    constexpr StaticRefTypeMetadata<TTypeName, static_string_arr<(Is-1)...>> with_properties(const char (&...names)[Is], TArgs TObj::* ... props) {
-        return StaticRefTypeMetadata<TTypeName, static_string_arr<(Is-1)...>>(
+    constexpr StaticRefTypeMetadata<TTypeName, sstring_arr<(Is-1)...>> with_properties(const char (&...names)[Is], TArgs TObj::* ... props) {
+        return StaticRefTypeMetadata<TTypeName, sstring_arr<(Is-1)...>>(
             type_name,
             std::tuple_cat(property_names, std::tuple<const char (&)[Is]...>(names...)));
     }*/
@@ -231,8 +227,8 @@ struct StaticRefTypeMetadata<
 };
 
 template<size_t INameLength_Plus1>
-static constexpr StaticRefTypeMetadata<static_string<INameLength_Plus1-1>, std::tuple<>> make_ref_type_metadata(const char (&type_name)[INameLength_Plus1]) {
-    return StaticRefTypeMetadata<static_string<INameLength_Plus1-1>, std::tuple<>>(static_string<INameLength_Plus1-1>(type_name), std::tuple<>());
+static constexpr StaticRefTypeMetadata<sstring<INameLength_Plus1-1>, std::tuple<>> make_ref_type_metadata(const char (&type_name)[INameLength_Plus1]) {
+    return StaticRefTypeMetadata<sstring<INameLength_Plus1-1>, std::tuple<>>(sstring<INameLength_Plus1-1>(type_name), std::tuple<>());
 }
 
 

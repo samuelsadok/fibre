@@ -668,20 +668,19 @@ for_each_in_tuple_result_t<Fn, Tuple> for_each_in_tuple(Fn&& f, Tuple&& t) {
 */
 
 template <size_t N>
-class static_string
-{
+class sstring {
     char _array[N + 1];
 
     template<size_t... PACK>
-    constexpr static_string(const char string_literal[N+1],
+    constexpr sstring(const char string_literal[N+1],
                            std::index_sequence<PACK...>)
     : _array{string_literal[PACK]..., '\0'}
     {
     }
 
     template<size_t N1, size_t... PACK1, size_t... PACK2>
-    constexpr static_string(const static_string<N1>&     s1,
-                           const static_string<N - N1>& s2,
+    constexpr sstring(const sstring<N1>&     s1,
+                           const sstring<N - N1>& s2,
                            std::index_sequence<PACK1...>,
                            std::index_sequence<PACK2...>)
     : _array{s1[PACK1]..., s2[PACK2]..., '\0'}
@@ -689,7 +688,7 @@ class static_string
     }
 
     template<size_t NOther, size_t... PACK>
-    constexpr static_string(const static_string<NOther>& other,
+    constexpr sstring(const sstring<NOther>& other,
                            std::index_sequence<PACK...>)
     : _array{other[PACK]..., '\0'}
     {
@@ -705,20 +704,20 @@ public:
     }
 
     template<size_t N1, ENABLE_IF(N1 <= N)>
-    constexpr static_string(const static_string<N1>& s1, const static_string<N - N1>& s2)
-        : static_string{ s1, s2, std::make_index_sequence<N1>{},
+    constexpr sstring(const sstring<N1>& s1, const sstring<N - N1>& s2)
+        : sstring{ s1, s2, std::make_index_sequence<N1>{},
                                 std::make_index_sequence<N - N1>{} }
     {
     }
 
-    constexpr static_string(const char string_literal[N+1])
-        : static_string{ string_literal, std::make_index_sequence<N>{} }
+    constexpr sstring(const char string_literal[N+1])
+        : sstring{ string_literal, std::make_index_sequence<N>{} }
     {
     }
 
 //    template<size_t NOther, size_t START_IDX, size_t END_IDX, ENABLE_IF(END_IDX - START_IDX == N)>
-//    constexpr static_string(const static_string<NOther>& other, std::index_sequence<START_IDX, END_IDX>)
-//        : static_string{other, fibre::make_integer_sequence_from_to<size_t, START_IDX, END_IDX>{}}
+//    constexpr sstring(const sstring<NOther>& other, std::index_sequence<START_IDX, END_IDX>)
+//        : sstring{other, fibre::make_integer_sequence_from_to<size_t, START_IDX, END_IDX>{}}
 //    {
 //    }
 
@@ -737,60 +736,55 @@ public:
     }
 
     template<size_t IFrom, size_t ITo = N>
-    constexpr static_string<ITo - IFrom> substring() const {
-        return static_string<ITo - IFrom>(*this, fibre::make_integer_sequence_from_to<size_t, IFrom, ITo>{});
+    constexpr sstring<ITo - IFrom> substring() const {
+        return sstring<ITo - IFrom>(*this, fibre::make_integer_sequence_from_to<size_t, IFrom, ITo>{});
     }
 
-    //constexpr static_string<N - last_index_of('/')> get_last_part(char c) {
+    //constexpr sstring<N - last_index_of('/')> get_last_part(char c) {
     //    return substring<file_path.last_index_of('/')>();
     //}
 };
 
 // @brief Constructs a fixed length string from a string literal
 template<size_t N_PLUS_1>
-constexpr static_string<N_PLUS_1-1> make_const_string(const char (&string_literal)[N_PLUS_1]) {
-    return static_string<N_PLUS_1-1>{string_literal};
+constexpr sstring<N_PLUS_1-1> make_sstring(const char (&string_literal)[N_PLUS_1]) {
+    return sstring<N_PLUS_1-1>{string_literal};
 }
 
 // @brief Constructs a fixed length string by concatenating two strings
-constexpr static_string<0> const_str_concat() {
-    return static_string<0>("");
-}
-
-// @brief Constructs a fixed length string by concatenating two strings
-template<size_t I1, size_t... ILengths>
-constexpr static_string<I1+sum<ILengths...>::value> const_str_concat(const static_string<I1>& s1, const static_string<ILengths>& ... strings) {
-    return static_string<I1+sum<ILengths...>::value>{s1, const_str_concat(strings...)};
+template<size_t I1, size_t I2>
+constexpr sstring<I1+I2> operator+(const sstring<I1>& lhs, const sstring<I2>& rhs) {
+    return sstring<I1+I2>{lhs, rhs};
 }
 
 // @brief Constructs a fixed length string by concatenating two strings
 template<size_t IDelim>
-constexpr static_string<0> const_str_join(const static_string<IDelim>& delimiter) {
-    return static_string<0>("");
+constexpr sstring<0> join_sstring(const sstring<IDelim>& delimiter) {
+    return sstring<0>("");
 }
 
 template<size_t IDelim, size_t I1>
-constexpr static_string<I1> const_str_join(const static_string<IDelim>& delimiter, const static_string<I1>& s1) {
+constexpr sstring<I1> join_sstring(const sstring<IDelim>& delimiter, const sstring<I1>& s1) {
     return s1;
 }
 
 // @brief Constructs a fixed length string by concatenating two strings
 template<size_t IDelim, size_t I1, size_t I2, size_t... ILengths>
-constexpr static_string<I1 + I2 + sum<ILengths...>::value + sizeof...(ILengths) + 1>
-const_str_join(
-    const static_string<IDelim>& delimiter,
-    const static_string<I1>& s1, const static_string<I2>& s2, const static_string<ILengths>& ... strings) {
-    return const_str_concat(s1, delimiter, const_str_join(delimiter, s2, strings...));
+constexpr sstring<I1 + I2 + sum<ILengths...>::value + sizeof...(ILengths) + 1>
+join_sstring(
+    const sstring<IDelim>& delimiter,
+    const sstring<I1>& s1, const sstring<I2>& s2, const sstring<ILengths>& ... strings) {
+    return s1 + delimiter + join_sstring(delimiter, s2, strings...);
 }
 
 template<size_t IDelim, size_t... ILengths>
-using const_str_join_t = decltype(const_str_join(std::declval<static_string<IDelim>>(), std::declval<static_string<ILengths>>()...));
+using join_sstring_t = decltype(join_sstring(std::declval<sstring<IDelim>>(), std::declval<sstring<ILengths>>()...));
 
 template<size_t... ILengths>
-using static_string_arr = std::tuple<static_string<ILengths>...>;
+using sstring_arr = std::tuple<sstring<ILengths>...>;
 
-static constexpr const static_string<0> empty_static_string("");
-static constexpr const static_string_arr<> empty_static_string_arr;
+static constexpr const sstring<0> empty_sstring("");
+static constexpr const sstring_arr<> empty_sstring_arr;
 
 
 // source: https://stackoverflow.com/questions/40159732/return-other-value-if-key-not-found-in-the-map
