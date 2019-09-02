@@ -18,7 +18,7 @@ int BluetoothCentralSideDiscoverer::deinit() {
 }
 
 using fancy_type = std::unordered_map<DBusObject, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>;
-fibre::Callback<fancy_type> callback = {
+static fibre::Callback<fancy_type> callback = {
     [](void*, fancy_type objects) {
         printf("got %zu objects\n", objects.size());
         for (auto& it : objects) {

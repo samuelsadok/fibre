@@ -4,104 +4,13 @@
 #include <sys/epoll.h>
 #include <fibre/worker.hpp>
 #include <fibre/timer.hpp>
-#include <fibre/../../dbus_interfaces/org.freedesktop.DBus.Introspectable.hpp>
-#include <fibre/bluetooth_discoverer.hpp>
+#include <fibre/../../dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp>
 #include <fibre/print_utils.hpp>
 #include <unistd.h>
 
+#include "test_utils.hpp"
 
 using namespace fibre;
-
-
-// TODO: look into testing framework http://aceunit.sourceforge.net
-
-template<typename TFunc, typename ... TCtx>
-struct SafeContext {
-    SafeContext(TFunc dtor, TCtx... ctx)
-        : dtor_(dtor), ctx_(std::make_tuple(ctx...)) {}
-
-    ~SafeContext() {
-        std::apply(dtor_, ctx_);
-    }
-private:
-    TFunc dtor_;
-    std::tuple<TCtx...> ctx_;
-};
-
-template<typename TFunc, typename ... TCtx>
-SafeContext<TFunc, TCtx...> on_leave_scope(TFunc dtor, TCtx... ctx) {
-    return SafeContext<TFunc, TCtx...>(dtor, ctx...);
-}
-
-/*struct cmp {
-    template<typename T>
-    bool operator()(T a, T b) {
-        return a == b;
-    }
-
-    bool operator()(const char* a, const char* b) {
-        return strcmp(a, b) == 0;
-    }
-
-    template<typename T>
-    bool operator()(std::vector<T> a, std::vector<T> b) {
-        return std::equal(a.begin(), a.end(), b.begin(), [](T& a, T& b){ return cmp()(a, b); });
-    }
-
-    template<typename T, typename ... Ts>
-    bool operator()(std::tuple<T, Ts...> a, std::tuple<T, Ts...> b) {
-        return cmp()(std::get<0>(a), std::get<0>(b)) && cmp()(tuple_skip<1>(a), tuple_skip<1>(b));
-    }
-
-    template<typename ... Ts, size_t ... Is>
-    bool cmp_variant(std::variant<Ts...> a, std::variant<Ts...> b, std::index_sequence<Is...>) {
-        bool is_equal[sizeof...(Ts)] = { ((a.index() == Is) && (b.index() == Is) && cmp()(std::get<Is>(a), std::get<Is>(b)))... };
-        for (size_t i = 0; i < sizeof...(Ts); ++i)
-            if (is_equal[i])
-                return true;
-        return false;
-    }
-
-    template<typename ... Ts>
-    bool operator()(std::variant<Ts...> a, std::variant<Ts...> b) {
-        return cmp_variant(a, b, std::make_index_sequence<sizeof...(Ts)>());
-    }
-};*/
-
-template<typename ... Ts>
-bool test_assert(bool val, const char* file, size_t line, Ts... args) {
-    if (!val) {
-        fprintf(stderr, "error in %s:%zu: ", file, line);
-        int dummy[sizeof...(Ts)] = { (std::cerr << args, 0)... };
-        (void) dummy;
-        fprintf(stderr, "\n");
-        return false;
-    }
-    return true;
-}
-
-template<typename T>
-bool test_zero(T val, const char* file, size_t line) {
-    return test_assert(val == 0, __FILE__, __LINE__, "expected zero, got ", val);
-}
-
-template<typename T>
-bool test_equal(T val1, T val2, const char* file, size_t line) {
-    return test_assert(val1 == val2, __FILE__, __LINE__, "expected equal values, got ", val1, " and ", val2);
-}
-
-template<typename T>
-bool test_not_equal(T val1, T val2, const char* file, size_t line) {
-    return test_assert(val1 != val2, __FILE__, __LINE__, "expected unequal values, got ", val1, " and ", val2);
-}
-
-#define TEST_NOT_NULL(ptr)      do { if (!test_assert(ptr, __FILE__, __LINE__, "pointer is NULL")) return false; } while (0)
-#define TEST_ZERO(val)          do { if (!test_zero(val, __FILE__, __LINE__)) return false; } while (0)
-#define TEST_ASSERT(val, ...)   do { if (!test_assert(val, __FILE__, __LINE__, "assert failed")) return false; } while (0)
-#define TEST_EQUAL(val1, val2)   do { if (!test_equal(val1, val2, __FILE__, __LINE__)) return false; } while (0)
-#define TEST_NOT_EQUAL(val1, val2)   do { if (!test_not_equal(val1, val2, __FILE__, __LINE__)) return false; } while (0)
-
-
 
 template<typename ... Ts>
 bool test_pack_unpack_with_vals(Ts&&... vals) {
@@ -130,16 +39,6 @@ bool test_pack_unpack_with_vals(Ts&&... vals) {
 
 bool test_pack_unpack() {
     printf("start test\n");
-
-    /*printf("signature is %s\n", get_signature<int>());
-    printf("signature is %s\n", get_signature<std::vector<int>>());
-    printf("signature is %s\n", get_signature<std::variant<int>>());*/
-    //printf("signature is %s\n");
-
-    /*char aaa[] = "asd";
-    if (cmp()("asd", aaa)) {
-        printf("strings are equal\n");
-    }*/
 
     std::variant<int, std::string> var = 5;
     std::cout << "variant is now " << var << std::endl;
@@ -198,6 +97,19 @@ bool test_pack_unpack() {
     return true;
 }
 
+volatile bool callback_did_complete = false;
+
+using fancy_type = std::unordered_map<DBusObject, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>;
+fibre::Callback<fancy_type> callback = {
+    [](void*, fancy_type objects) {
+        printf("got %zu objects\n", objects.size());
+        for (auto& it : objects) {
+            std::cout << "key: " << it.first << ", value: " << it.second << std::endl;
+        }
+        callback_did_complete = true;
+    }, nullptr
+};
+
 
 int main(int argc, const char** argv) {
     if (!test_pack_unpack()) {
@@ -216,42 +128,18 @@ int main(int argc, const char** argv) {
         printf("DBus init failed.\n");
         return -1;
     }
+    
+    org_freedesktop_DBus_ObjectManager root_obj(&dbus_connection, "org.bluez", "/");
+    root_obj.GetManagedObjects_async(&callback);
 
-
-    /*printf("dispatch message...\n");
-    org_freedesktop_DBus_Introspectable bluez_root_obj(&dbus_connection, "org.bluez", "/");
-    //DBusObject bluez(&dbus_connection, "org.bluez", "/org/bluez");
-
-    Callback<const char*> callback = {
-        [](void*, const char* xml) { printf("XML: %s", xml); }, nullptr
-    };
-    bluez_root_obj.Introspect_async(&callback);
-    bluez_root_obj.Introspect_async(&callback);
-    bluez_root_obj.Introspect_async(&callback);*/
-
-    BluetoothCentralSideDiscoverer bluetooth_discoverer;
-    if (bluetooth_discoverer.init(&worker, &dbus_connection) != 0) {
-        printf("Discoverer init failed\n");
+    printf("For callback to arrive...\n");
+    usleep(1000000);
+    if (!callback_did_complete) {
+        printf("no callback received\n");
         return -1;
     }
-
-    void* ctx;
-    if (bluetooth_discoverer.start_channel_discovery(nullptr, &ctx) != 0) {
-        printf("Discoverer start failed\n");
-        return -1;
-    }
-
-    printf("waiting for a bit...\n");
-    //usleep(3000000);
-    getchar(); // TODO: make stdin unbuffered
     printf("done...\n");
 
-
-
-
-    if (bluetooth_discoverer.deinit() != 0) {
-        printf("Discoverer deinit failed.\n");
-    }
 
     if (dbus_connection.deinit() != 0) {
         printf("Connection deinit failed.\n");

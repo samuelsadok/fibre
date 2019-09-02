@@ -5,7 +5,6 @@ function fibre_package(platform)
     local pkg = {
         root = fibre_dir,
         sources = {
-            'cpp_utils_tests.cpp',
             'fibre.cpp',
             'input.cpp',
             'output.cpp',

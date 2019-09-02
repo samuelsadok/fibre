@@ -4,60 +4,7 @@
 
 #include <unistd.h>
 
-
 using namespace fibre;
-
-int worker_test() {
-    printf("testing worker and timer...\n");
-
-    Worker worker;
-    if (worker.init() != 0) {
-        printf("worker init failed.\n");
-        return -1;
-    }
-
-    Timer timer;
-    if (timer.init(&worker) != 0) {
-        printf("timer init failed.\n");
-        return -1;
-    }
-
-    uint32_t counter = 0;
-    Timer::callback_t callback = {
-        .callback = [](void* ctx) { (*((uint32_t*)ctx))++; },
-        .ctx = &counter
-    };
-    if (timer.start(100, true, &callback) != 0) {
-        printf("timer start failed.\n");
-        return -1;
-    }
-
-    usleep(1000000);
-
-    if (timer.stop() != 0) {
-        printf("timer stop failed.\n");
-        return -1;
-    }
-
-    if (counter < 8 || counter > 12) {
-        printf("counter not as expected.\n");
-        return -1;
-    }
-
-    if (timer.deinit() != 0) {
-        printf("timer deinit failed.\n");
-        return -1;
-    }
-    printf("timer deinit() complete\n");
-
-    if (worker.deinit() != 0) {
-        printf("worker deinit failed.\n");
-        return -1;
-    }
-
-    printf("test succeeded!\n");
-    return 0;
-}
 
 int usb_start_stop_test() {
     Worker worker;
@@ -99,8 +46,6 @@ int usb_start_stop_test() {
 }
 
 int main(int argc, const char** argv) {
-    if (worker_test() != 0)
-        return -1;
     for (size_t i = 0; i < 10; ++i)
         if (usb_start_stop_test() != 0)
             return -1;
@@ -123,10 +68,9 @@ int main(int argc, const char** argv) {
         return -1;
     }
 
-    printf("waiting for a bit...\n");
-    //usleep(3000000);
+    printf("Waiting for hotplug events. Press [ENTER] to quit.\n");
     getchar(); // TODO: make stdin unbuffered
-    printf("done...\n");
+    printf("exit...\n");
 
     /*
 

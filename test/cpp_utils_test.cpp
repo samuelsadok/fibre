@@ -49,3 +49,9 @@ static_assert(std::is_same<tuple_skip_t<0, std::tuple<int>>, std::tuple<int>>::v
 static_assert(std::is_same<tuple_skip_t<1, std::tuple<int>>, std::tuple<>>::value, "tuple_skip_t broken");
 static_assert(std::is_same<tuple_skip_t<1, std::tuple<uint8_t, uint16_t, uint32_t>>, std::tuple<uint16_t, uint32_t>>::value, "tuple_skip_t broken");
 static_assert(std::is_same<tuple_skip_t<2, std::tuple<uint8_t, uint16_t, uint32_t>>, std::tuple<uint32_t>>::value, "tuple_skip_t broken");
+
+int main(int argc, const char** argv) {
+    // All tests in this file are compile-time asserts.
+    printf("tests succeded!\n");
+    return 0;
+}

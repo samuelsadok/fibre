@@ -2,21 +2,32 @@
 tup.include('../tupfiles/build.lua') -- import build system functions
 tup.include('../cpp/package.lua') -- import fibre package
 
-
-usb_test = make_exe_package({
-    sources = {'usb_test.cpp'},
-    depends = {'fibre'}
-})
-
-dbus_test = make_exe_package({
-    sources = {'dbus_test.cpp'},
-    depends = {'fibre', 'libdbus'}
-})
-
-unit_tests = make_exe_package({
-    sources = {'run_tests.cpp'},
-    depends = {'fibre'}
-})
+packages = {
+    make_exe_package({
+        sources = {'cpp_utils_test.cpp'},
+        depends = {'fibre'}
+    }),
+    make_exe_package({
+        sources = {'worker_test.cpp'},
+        depends = {'fibre'}
+    }),
+    make_exe_package({
+        sources = {'usb_test.cpp'},
+        depends = {'fibre'}
+    }),
+    make_exe_package({
+        sources = {'dbus_test.cpp'},
+        depends = {'fibre', 'libdbus'}
+    }),
+    make_exe_package({
+        sources = {'bluetooth_test.cpp'},
+        depends = {'fibre', 'libdbus'}
+    }),
+    --make_exe_package({
+    --    sources = {'run_tests.cpp'},
+    --    depends = {'fibre'}
+    --})
+}
 
 
 --toolchain=GCCToolchain('', 'build', {'-O3', '-fvisibility=hidden', '-frename-registers', '-funroll-loops'}, {})
@@ -38,6 +49,5 @@ potential_platforms = {
 
 for _, platform_name in ipairs(potential_platforms) do
     platform = make_platform(platform_name)
-    try_build_package(usb_test, platform)
-    try_build_package(dbus_test, platform)
+    build_packages(packages, {}, platform)
 end
