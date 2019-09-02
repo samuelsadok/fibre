@@ -1,40 +1,43 @@
 
+tup.include('../tupfiles/build.lua') -- import build system functions
+tup.include('../cpp/package.lua') -- import fibre package
 
-tup.include('../tupfiles/build.lua')
-tup.include('../cpp/package.lua')
 
-test_server = define_package{
-    packages={fibre_package},
-    sources={'test_server.cpp'}
-}
+usb_test = make_exe_package({
+    sources = {'usb_test.cpp'},
+    depends = {'fibre'}
+})
 
-test2 = define_package{
-    packages={fibre_package},
-    sources={'test2.cpp'}
-}
+dbus_test = make_exe_package({
+    sources = {'dbus_test.cpp'},
+    depends = {'fibre', 'libdbus'}
+})
 
-dbus_test = define_package{
-    packages={fibre_package},
-    sources={'dbus_test.cpp'}
-}
-
-unit_tests = define_package{
-    packages={fibre_package},
-    sources={'run_tests.cpp'}
-}
+unit_tests = make_exe_package({
+    sources = {'run_tests.cpp'},
+    depends = {'fibre'}
+})
 
 
 --toolchain=GCCToolchain('', 'build', {'-O3', '-fvisibility=hidden', '-frename-registers', '-funroll-loops'}, {})
-toolchain=GCCToolchain('', 'build', {'-O3', '-g', '-Wall'}, {})
+--toolchain=GCCToolchain('', 'build', {'-O3', '-g', '-Wall'}, {})
 --toolchain=GCCToolchain('avr-', {'-Ofast', '-fvisibility=hidden', '-frename-registers', '-funroll-loops', '-I/home/samuel/stlport-avr/stlport'}, {})
 --toolchain=LLVMToolchain('x86_64', {'-O3', '-fno-sanitize=safe-stack', '-fno-stack-protector'}, {'-flto', '-Wl,-s'})
 --toolchain=LLVMToolchain('avr', {'-O3', '-std=gnu++11', '--target=avr', '-fno-sanitize=safe-stack', '-fno-stack-protector', '-I/home/samuel/stlport-avr/stlport'}, {'-flto', '-Wl,-s'})
 
+potential_platforms = {
+    '',
+    --'arm-none-eabi', std::mutex not supported
+    --'arm-linux-gnueabi', -- compiler not installed
+    --'arm-linux-gnueabihf', -- Raspberry Pi (armv7l) (static assert fails)
+    --'mipsel-linux-gnu', -- MIPS (missing the STL on my installation, std::tuple not supported)
+    --'avr', -- Atmel/Microchip AVR (std::vector not supported)
+    --'i686-w64-mingw32', -- Windows 32bit (eventfd not found)
+    --'x86_64-w64-mingw32' -- Windows 64bit (eventfd not found)
+}
 
---if tup.getconfig("BUILD_FIBRE_TESTS") == "true" then
---	build_executable('test_server', test_server, toolchain)
---	--build_executable('run_tests', unit_tests, toolchain)
---end
-
---build_executable('test2', test2, toolchain)
-build_executable('dbus_test', dbus_test, toolchain)
+for _, platform_name in ipairs(potential_platforms) do
+    platform = make_platform(platform_name)
+    try_build_package(usb_test, platform)
+    try_build_package(dbus_test, platform)
+end

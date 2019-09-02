@@ -6,9 +6,6 @@
 #include <fibre/dbus.hpp>
 #include <fibre/channel_discoverer.hpp>
 
-#include <libusb.h>
-#include <libudev.h>
-
 namespace fibre {
 
 class BluetoothCentralSideDiscoverer : ChannelDiscoverer {

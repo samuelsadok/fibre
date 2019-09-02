@@ -1,24 +1,41 @@
 
-tup.include('../tupfiles/build.lua')
+fibre_dir = tup.getcwd()
 
-fibre_package = define_package{
-    sources={
-        'cpp_utils_tests.cpp',
-        'fibre.cpp',
-        'input.cpp',
-        'output.cpp',
-        'remote_node.cpp',
-        'posix_tcp.cpp',
-        'worker.cpp',
-        'timer.cpp',
-        'signal.cpp',
-        'usb_discoverer.cpp',
-        'bluetooth_discoverer.cpp',
-        'dbus.cpp'
-    }, -- 'posix_udp.cpp'},
-    libs={'pthread', 'usb-1.0', 'udev', 'dbus-1'},
-    headers={'include',
-        '/usr/include/libusb-1.0', -- todo: pkg-config libusb --cflags
-        '/usr/include/dbus-1.0', '/usr/lib/dbus-1.0/include' -- todo: pkg-config dbus-1 --cflags
+function fibre_package(platform)
+    local pkg = {
+        root = fibre_dir,
+        sources = {
+            'cpp_utils_tests.cpp',
+            'fibre.cpp',
+            'input.cpp',
+            'output.cpp',
+            'remote_node.cpp',
+            'posix_tcp.cpp',
+            'worker.cpp',
+            'timer.cpp',
+            'signal.cpp',
+            'usb_discoverer.cpp',
+            'bluetooth_discoverer.cpp',
+            'dbus.cpp'
+        }, -- 'posix_udp.cpp'},
+        include_dirs = {'include'},
+        depends = {'pthread'},
+        outputs = {exported_includes = {'include'}}
     }
-}
+
+    -- If WinUSB is available, we are probably on Windows and there we prefer
+    -- WinUSB over libusb because WinUSB.sys can be loaded automatically based
+    -- on the USB device descriptors.
+    if try_build_package('winusb', platform) then
+        pkg.optional_depends += 'winusb'
+    else
+        pkg.optional_depends += 'libusb'
+    end
+
+    pkg.optional_depends += 'libdbus'
+    pkg.optional_depends += 'libudev'
+
+    return make_obj_package(pkg)(platform)
+end
+
+register_package('fibre', fibre_package)
