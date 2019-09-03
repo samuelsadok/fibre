@@ -8,6 +8,8 @@ using namespace fibre;
 int BluetoothCentralSideDiscoverer::init(Worker* worker, DBusConnectionWrapper* dbus) {
     worker_ = worker;
     dbus_ = dbus;
+    bluez_root_obj.~org_freedesktop_DBus_ObjectManager();
+    new (&bluez_root_obj) org_freedesktop_DBus_ObjectManager{dbus_, "org.bluez", "/"};
     return 0;
 }
 
@@ -17,26 +19,49 @@ int BluetoothCentralSideDiscoverer::deinit() {
     return 0;
 }
 
-using fancy_type = std::unordered_map<DBusObject, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>;
-static fibre::Callback<fancy_type> callback = {
-    [](void*, fancy_type objects) {
+using interface_map = std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>;
+
+static fibre::Callback<DBusObject, interface_map> handle_interfaces_added = {
+    [](void*, DBusObject object, interface_map interfaces) {
+        std::cout << "DBus Object " << object << " obtained the interfaces " << interfaces;
+    }, nullptr
+};
+
+static fibre::Callback<DBusObject, std::vector<std::string>> handle_interfaces_removed = {
+    [](void*, DBusObject object, std::vector<std::string> interfaces) {
+        std::cout << "DBus Object " << object << " lost the interfaces " << interfaces;
+    }, nullptr
+};
+
+static fibre::Callback<std::unordered_map<DBusObject, interface_map>> handle_initial_search_completed = {
+    [](void*, std::unordered_map<DBusObject, interface_map> objects) {
         printf("got %zu objects\n", objects.size());
         for (auto& it : objects) {
-            std::cout << "key: " << it.first << ", value: " << it.second << std::endl;
+            // TODO: make nicer interface to invoke callback
+            handle_interfaces_added.callback(nullptr, it.first, it.second);
         }
     }, nullptr
 };
 
 int BluetoothCentralSideDiscoverer::start_ble_adapter_monitor() {
-    org_freedesktop_DBus_ObjectManager bluez_root_obj(dbus_, "org.bluez", "/");
+    if (!bluez_root_obj.conn_) {
+        std::cerr << "discoverer object not initialized\n";
+        return -1;
+    }
     //DBusObject bluez(&dbus_connection, "org.bluez", "/org/bluez");
 
-    bluez_root_obj.GetManagedObjects_async(&callback);
+    bluez_root_obj.InterfacesAdded += &handle_interfaces_added;
+    bluez_root_obj.InterfacesRemoved += &handle_interfaces_removed;
+    //bluez_root_obj.GetManagedObjects_async(&handle_initial_search_completed);
+    // TODO: error handling
 
     return 0;
 }
 
 int BluetoothCentralSideDiscoverer::stop_ble_adapter_monitor() {
+    bluez_root_obj.InterfacesAdded += &handle_interfaces_added;
+    bluez_root_obj.InterfacesRemoved += &handle_interfaces_removed;
+    // TODO: cancel call to GetManagedObjects_async
     return 0;
 }
 

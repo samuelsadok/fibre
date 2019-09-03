@@ -29,6 +29,11 @@ packages = {
     --})
 }
 
+tup.foreach_rule(
+    {"../tools/dbus_interface_definitions/*.xml"},
+    "python ../tools/dbus_interface_parser.py -d %f -t ../tools/dbus_interface.c.j2 -o %o",
+    {"../cpp/dbus_interfaces/%B.hpp"}
+)
 
 --toolchain=GCCToolchain('', 'build', {'-O3', '-fvisibility=hidden', '-frename-registers', '-funroll-loops'}, {})
 --toolchain=GCCToolchain('', 'build', {'-O3', '-g', '-Wall'}, {})

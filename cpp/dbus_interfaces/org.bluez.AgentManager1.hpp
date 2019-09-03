@@ -11,6 +11,11 @@ public:
 
     org_bluez_AgentManager1(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
         : DBusObject(conn, service_name, object_name) {}
+    
+    // For now we delete the copy constructor as we would need to change the references within the signal objects for copying an object properly
+    org_bluez_AgentManager1(const org_bluez_AgentManager1 &) = delete;
+    org_bluez_AgentManager1& operator=(const org_bluez_AgentManager1 &) = delete;
+
 
     int RegisterAgent_async(DBusObject agent, std::string capability, fibre::Callback<>* callback) {
         return method_call_async(interface_name, "RegisterAgent", agent, capability, callback);

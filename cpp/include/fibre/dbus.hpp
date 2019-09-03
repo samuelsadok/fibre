@@ -139,6 +139,39 @@ void handle_reply_message(DBusMessage* msg, Callback<TOutputs...>* callback) {
     }
 }
 
+// TODO: merge with handle_reply_message from above
+template<typename ... TOutputs>
+void handle_signal_message(DBusMessage* msg, const std::vector<Callback<TOutputs...>*>& callbacks) {
+    DBusMessageIter args;
+    dbus_message_iter_init(msg, &args);
+
+    int type = dbus_message_get_type(msg);
+    if (type == DBUS_MESSAGE_TYPE_ERROR) {
+        std::string error_msg;
+        if (unpack_message(&args, error_msg) != 0) {
+            printf("Failed to unpack error message. Will not invoke callback.\n");
+        }
+        std::cerr << "DBus error received: " << error_msg;
+        return;
+    }
+    if (type != DBUS_MESSAGE_TYPE_SIGNAL) {
+        printf("the message is type %d. Will not invoke callback.\n", type);
+        return;
+    }
+    std::tuple<TOutputs...> values;
+    if (unpack_message_to_tuple(&args, values) != 0) {
+        printf("Failed to unpack message. Will not invoke callback.\n");
+        return;
+    }
+    printf("message unpacking complete\n");
+
+    for (auto& callback : callbacks) {
+        if (callback && callback->callback) {
+            apply(callback->callback, std::tuple_cat(std::make_tuple(callback->ctx), values));
+        }
+    }
+}
+
 
 /* Class definitions ---------------------------------------------------------*/
 
@@ -256,6 +289,89 @@ fail1:
     DBusConnectionWrapper* conn_;
     std::string service_name_;
     std::string object_name_;
+};
+
+template<typename TInterface, typename ... TArgs>
+class DBusRemoteSignal {
+public:
+    DBusRemoteSignal(TInterface* parent, const char* name)
+        : parent_(parent), name_(name)
+    {
+        std::cerr << "init remote signal with " << (parent_->conn_ ? "nonzero" : "null") << " connection\n";
+    }
+
+    DBusRemoteSignal& operator+=(Callback<TArgs...>* callback) {
+        callbacks_.push_back(callback);
+        std::cerr << "act filter\n";
+        if (callbacks_.size() == 1) {
+            activate_filter(); // TODO: error handling
+        }
+        std::cerr << "act filter done\n";
+        return *this;
+    }
+
+    DBusRemoteSignal& operator-=(Callback<TArgs...>* callback) {
+        callbacks_.erase(callback);
+        if (callbacks_.size() == 0) {
+            deactivate_filter();
+        }
+        return *this;
+    }
+
+private:
+    static DBusHandlerResult filter_callback(DBusConnection *connection, DBusMessage *message, void *user_data) {
+        if (dbus_message_get_type(message) == DBUS_MESSAGE_TYPE_SIGNAL) {
+            DBusRemoteSignal* self = (DBusRemoteSignal*)user_data;
+
+            // TODO: compare sender
+            // The sender may be reported as ":1.10" even if the match was registered as "sender='org.bluez'"
+            bool matches = (strcmp(dbus_message_get_interface(message), TInterface::interface_name) == 0)
+                    && (strcmp(dbus_message_get_member(message), self->name_) == 0)
+                    && (strcmp(dbus_message_get_path(message), self->parent_->object_name_.c_str()) == 0);
+
+            if (matches) {
+                std::cout << "have a match!\n";
+                //std::cout << "filter called with serial " << std::string(dbus_message_get_serial(message));
+                //// TODO: filter signals only for this method
+                handle_signal_message(message, self->callbacks_); // TODO: error handling
+                return DBUS_HANDLER_RESULT_HANDLED;
+            } else {
+                return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+            }
+        }
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    };
+
+    int activate_filter() {
+        if (!parent_ || !parent_->conn_) {
+            std::cerr << "object not initialized properly\n";
+            return -1;
+        }
+
+        if (!dbus_connection_add_filter(parent_->conn_->get_libdbus_ptr(), filter_callback, this, nullptr)) {
+            printf("failed to add filter\n");
+            return -1;
+        }
+
+        std::string rule = "type='signal',"
+            "sender='" + parent_->service_name_ + "',"
+            "interface='" + TInterface::interface_name + "',"
+            "member='" + std::string(name_) + "',"
+            "path='" + parent_->object_name_ + "'";
+        
+        std::cerr << "adding rule " << rule << " to connection\n";
+        dbus_bus_add_match(parent_->conn_->get_libdbus_ptr(), rule.c_str(), nullptr);
+        dbus_connection_flush(parent_->conn_->get_libdbus_ptr());
+        return 0;
+    }
+
+    void deactivate_filter() {
+        dbus_connection_remove_filter(parent_->conn_->get_libdbus_ptr(), filter_callback, this);
+    }
+
+    TInterface* parent_;
+    const char* name_;
+    std::vector<Callback<TArgs...>*> callbacks_;
 };
 
 

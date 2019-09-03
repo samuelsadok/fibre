@@ -5,6 +5,7 @@
 #include <fibre/timer.hpp>
 #include <fibre/dbus.hpp>
 #include <fibre/channel_discoverer.hpp>
+#include "../../dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
 
 namespace fibre {
 
@@ -21,6 +22,7 @@ private:
 
     Worker* worker_ = nullptr;
     DBusConnectionWrapper* dbus_ = nullptr;
+    org_freedesktop_DBus_ObjectManager bluez_root_obj{nullptr, "", ""};
     int n_discovery_requests = 0;
 };
 

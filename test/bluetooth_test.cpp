@@ -1,4 +1,10 @@
 
+// note: on my machine the bluetooth card is on usb1/1-8, it can thus be removed
+// and added back via
+//
+// echo "1-8" | sudo tee /sys/bus/usb/drivers/usb/unbind
+// echo "1-8" | sudo tee /sys/bus/usb/drivers/usb/bind
+
 #include <fibre/worker.hpp>
 #include <fibre/dbus.hpp>
 

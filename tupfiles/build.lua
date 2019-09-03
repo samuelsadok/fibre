@@ -219,7 +219,7 @@ function make_gcc_compiler(command, builddir, default_flags, gen_su_file)
         return nil -- compiler not found
     end
 
-    return function(src, flags, outputs)
+    return function(src, extra_inputs, flags, outputs)
         local obj_file = builddir.."/"..src:gsub("/","_"):gsub("%.","_")..".o"
         outputs.exported_obj_files += obj_file
         if gen_su_file then
@@ -231,7 +231,7 @@ function make_gcc_compiler(command, builddir, default_flags, gen_su_file)
         end
 
         add_rule{
-            inputs= { src },
+            inputs= { src, extra_inputs = extra_inputs },
             command=command..' -c %f '..
                     tostring(default_flags)..' '.. -- CFLAGS for this compiler
                     tostring(flags).. -- CFLAGS for this translation unit
@@ -322,19 +322,24 @@ function make_obj_package(pkg)
             error("unknown argument type "..type(pkg))
         end
 
+        local root = pkg.root or called_from
+
         local sources = shallow_copy(pkg.sources or {})
+        local extra_inputs = resolve_path(root, shallow_copy(pkg.extra_inputs or {}))
         local include_dirs = shallow_copy(pkg.include_dirs or {})
         local cpp_flags = shallow_copy(pkg.cpp_flags or {})
         local c_flags = shallow_copy(pkg.c_flags or {})
         local cxx_flags = shallow_copy(pkg.cxx_flags or {})
         local asm_flags = shallow_copy(pkg.asm_flags or {})
-        local root = pkg.root or called_from
+
+        print("have extra_inputs "..tostring(extra_inputs))
 
         local outputs = shallow_copy(pkg.outputs or {})
         outputs.exported_obj_files = outputs.exported_obj_files or {}
         outputs.exported_cpp_flags = outputs.exported_cpp_flags or {}
         outputs.exported_lib_flags = outputs.exported_lib_flags or {}
         outputs.exported_includes = resolve_path(root, outputs.exported_includes or {})
+        outputs.exported_extra_inputs = resolve_path(root, outputs.exported_extra_inputs or {})
 
         dep_outputs = build_packages(pkg.depends or {}, pkg.optional_depends or {}, platform)
         tup.append_table(outputs.exported_obj_files, dep_outputs.exported_obj_files or {})
@@ -343,6 +348,8 @@ function make_obj_package(pkg)
         tup.append_table(outputs.exported_includes, dep_outputs.exported_includes or {}) -- note: this is only necessary because header files of this package may be contaminated with including header files from dependencies
         tup.append_table(cpp_flags, dep_outputs.exported_cpp_flags or {})
         tup.append_table(outputs.exported_cpp_flags, dep_outputs.exported_cpp_flags or {}) -- note: this is only necessary because header files of this package may be contaminated with including header files from dependencies
+        tup.append_table(extra_inputs, dep_outputs.exported_extra_inputs or {})
+        tup.append_table(outputs.exported_extra_inputs, dep_outputs.exported_extra_inputs or {})
 
         -- convert include list to flags
         for _, inc in pairs(include_dirs) do
@@ -358,13 +365,13 @@ function make_obj_package(pkg)
             ext = tup.ext(src)
             if ext == 'c' then
                 if not platform.c_compiler then return nil end
-                platform.c_compiler(src, c_flags, outputs)
+                platform.c_compiler(src, extra_inputs, c_flags, outputs)
             elseif ext == 'cpp' then
                 if not platform.cpp_compiler then return nil end
-                platform.cpp_compiler(src, cxx_flags, outputs)
+                platform.cpp_compiler(src, extra_inputs, cxx_flags, outputs)
             elseif ext == 's' or tup.ext(src) == 'asm' then
                 if not platform.asm_compiler then return nil end
-                platform.asm_compiler(src, asm_flags, outputs)
+                platform.asm_compiler(src, extra_inputs, asm_flags, outputs)
             else
                 error('unrecognized file ending '..ext)
             end

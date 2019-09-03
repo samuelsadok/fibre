@@ -17,6 +17,11 @@ public:
 
     {{interface.name | replace('.', '_')}}(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
         : DBusObject(conn, service_name, object_name) {}
+    
+    // For now we delete the copy constructor as we would need to change the references within the signal objects for copying an object properly
+    {{interface.name | replace('.', '_')}}(const {{interface.name | replace('.', '_')}} &) = delete;
+    {{interface.name | replace('.', '_')}}& operator=(const {{interface.name | replace('.', '_')}} &) = delete;
+
 {% for method in interface.methods %}
     int {{method.name}}_async({% for arg in method.inputs %}{{arg.type | dbus_type_to_cpp_type}} {{arg.name}}, {% endfor %}fibre::Callback<{{args_to_types(method.outputs)}}>* callback) {
         return method_call_async(interface_name, "{{method.name}}", {% for arg in method.inputs %}{{arg.name}}, {% endfor %}callback);
@@ -28,7 +33,7 @@ public:
 {%- endfor %}
 
 {%- for signal in interface.signals %}
-    // Callback<{{args_to_types(signal.args)}}> {{signal.name}};
+    fibre::DBusRemoteSignal<{{interface.name | replace('.', '_')}}, {{args_to_types(signal.args)}}> {{signal.name}}{this, "{{signal.name}}"};
 {%- endfor %}
 };
 

@@ -17,9 +17,13 @@ function fibre_package(platform)
             'bluetooth_discoverer.cpp',
             'dbus.cpp'
         }, -- 'posix_udp.cpp'},
+        extra_inputs = {'dbus_interfaces/*.hpp'},
         include_dirs = {'include'},
         depends = {'pthread'},
-        outputs = {exported_includes = {'include'}}
+        outputs = {
+            exported_includes = {'include'}, -- todo: consistent naming
+            exported_extra_inputs = {'dbus_interfaces/*.hpp'}
+        }
     }
 
     -- If WinUSB is available, we are probably on Windows and there we prefer
