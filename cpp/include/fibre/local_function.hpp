@@ -3,13 +3,16 @@
 * nodes.
 * This file is analogous and similar in structure to local_ref_types.hpp.
 */
-#ifndef __FIBRE_LOCAL_ENDPOINT
-#define __FIBRE_LOCAL_ENDPOINT
+#ifndef __FIBRE_LOCAL_FUNCTION_HPP
+#define __FIBRE_LOCAL_FUNCTION_HPP
 
 //#ifndef __FIBRE_HPP
 //#error "This file should not be included directly. Include fibre.hpp instead."
 //#endif
 #include <fibre/fibre.hpp>
+
+DEFINE_LOG_TOPIC(LOCAL_FUNCTION);
+#define current_log_topic LOG_TOPIC_LOCAL_FUNCTION
 
 namespace fibre {
 
@@ -87,11 +90,11 @@ public:
         uint32_t i = str ? length : 0;
         size_t processed_bytes = 0;
         uint8_t buf[4];
-        LOG_FIBRE(SERDES, "will encode string of length ", length);
+        FIBRE_LOG(D) << "will encode string of length " << length;
         write_le<uint32_t>(i, buf);
         StreamSink::status_t status = output->process_bytes(buf, sizeof(buf), &processed_bytes);
         if (status != StreamSink::OK || processed_bytes != sizeof(buf)) {
-            LOG_FIBRE_W(SERDES, "not everything processed");
+            FIBRE_LOG(W) << "not everything processed";
             return;
         }
 
@@ -99,13 +102,13 @@ public:
             processed_bytes = 0;
             StreamSink::status_t status = output->process_bytes(reinterpret_cast<const uint8_t*>(str), length, &processed_bytes);
             if (processed_bytes != length) {
-                LOG_FIBRE_W(SERDES, "not everything processed: ", processed_bytes);
+                FIBRE_LOG(W) << "not everything processed: " << processed_bytes;
             }
             if (status != StreamSink::OK) {
-                LOG_FIBRE_W(SERDES, "error in output");
+                FIBRE_LOG(W) << "error in output";
             }
         } else {
-            LOG_FIBRE_W(SERDES, "attempt to serialize null string");
+            FIBRE_LOG(W) << "attempt to serialize null string";
         }
     }
 };
@@ -498,7 +501,7 @@ public:
         write_le<uint32_t>(i, buf, sizeof(buf));
         StreamSink::status_t status = output->process_bytes(buf, sizeof(buf), &processed_bytes);
         if (status != StreamSink::OK || processed_bytes != sizeof(buf)) {
-            LOG_FIBRE_W(SERDES, "not everything processed");
+            FIBRE_LOG(W) << "not everything processed";
             return;
         }
 
@@ -506,13 +509,13 @@ public:
             processed_bytes = 0;
             StreamSink::status_t status = output->process_bytes(reinterpret_cast<const uint8_t*>(str), length, &processed_bytes);
             if (processed_bytes != length) {
-                LOG_FIBRE_W(SERDES, "not everything processed: ", processed_bytes);
+                FIBRE_LOG(W) << "not everything processed: " << processed_bytes;
             }
             if (status != StreamSink::OK) {
-                LOG_FIBRE_W(SERDES, "error in output");
+                FIBRE_LOG(W) << "error in output";
             }
         } else {
-            LOG_FIBRE_W(SERDES, "attempt to serialize null string");
+            FIBRE_LOG(W) << "attempt to serialize null string";
         }
         tail::serialize(output, std::forward<Ts>(tail_values)...);
     }
@@ -637,14 +640,14 @@ public:
 
 
         //printf("first arg is ", std::hex, std::get<0>(inputs));
-        //LOG_FIBRE(SERDES, "will write output of type ", typeid(TOutputs).name()...);
+        //FIBRE_LOG(D) << "will write output of type " << typeid(TOutputs).name()...;
         //Serializer<std::tuple<TOutputs...>>::serialize(outputs, output);
     }
 */
 
     void decoder_finished(const IncomingConnectionDecoder& incoming_connection_decoder, OutputPipe* output) const final {
         const stream_chain* decoder = incoming_connection_decoder.get_stream<stream_chain>();
-        LOG_FIBRE(INPUT, "received all function arguments");
+        FIBRE_LOG(D) << "received all function arguments";
 
         // build tuple with references to all input values
         impl_in_vals_t in_vals = stream_chain::get_inputs(*decoder);
@@ -660,7 +663,7 @@ public:
         // call the function by passing tuple's content as arguments
         as_tuple_t<result_of_t<TFunc>> out_ret_vals = std::apply(func_, std::forward<impl_arg_refs_t>(in_and_out_refs));
 
-        //LOG_FIBRE(SERDES, "will write output of types ", typeid(TOutputs).name()...);
+        //FIBRE_LOG(D) << "will write output of types " << typeid(TOutputs).name()...;
 
         // serialize all outputs TODO: ignore some
         TMetadata::TOutputEncoders::serialize(output, std::tuple_cat(out_arg_vals, out_ret_vals));
@@ -704,4 +707,6 @@ LocalFunctionEndpoint<TFunc, TMetadata> make_local_function_endpoint(TFunc&& fun
 
 }
 
-#endif // __FIBRE_LOCAL_ENDPOINT
+#undef current_log_topic
+
+#endif // __FIBRE_LOCAL_FUNCTION_HPP

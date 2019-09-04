@@ -5,7 +5,10 @@
 #include "stream.hpp"
 #include "crc.hpp"
 #include "cpp_utils.hpp"
+#include "logging.hpp"
 #include <utility>
+
+DEFINE_LOG_TOPIC(DECODERS);
 
 namespace fibre {
 
@@ -174,6 +177,7 @@ public:
 template<typename T>
 class VarintDecoder : public StreamSink {
 public:
+    USE_LOG_TOPIC(DECODERS);
     static constexpr T BIT_WIDTH = (CHAR_BIT * sizeof(T));
 
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
@@ -181,7 +185,7 @@ public:
             uint8_t input_byte = *buffer;
             state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
             if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
-                LOG_FIBRE_W(SERDES, "varint overflow: tried to add ", std::hex, input_byte, " << ", bit_pos_);
+                FIBRE_LOG(E) << "varint overflow: tried to add " << as_hex(input_byte) << " << " << bit_pos_;
                 bit_pos_ = BIT_WIDTH;
                 return ERROR; // overflow
             }

@@ -1,5 +1,6 @@
 
 #include <fibre/worker.hpp>
+#include <fibre/logging.hpp>
 
 #include <sys/epoll.h>
 #include <sys/types.h>
@@ -7,6 +8,9 @@
 #include <string.h>
 
 using namespace fibre;
+
+DEFINE_LOG_TOPIC(WORKER);
+USE_LOG_TOPIC(WORKER);
 
 /**
  * @brief Starts the worker thread(s).
@@ -20,12 +24,12 @@ int Worker::init() {
 
     epoll_fd_ = epoll_create1(0);
     if (epoll_fd_ < 0) {
-        printf("epoll_create1() failed\n");
+        FIBRE_LOG(E) << "epoll_create1() failed";
         goto fail0;
     }
 
     if (stop_signal.init(this, &stop_handler_obj) != 0) {
-        printf("signal init failed\n");
+        FIBRE_LOG(E) << "signal init failed";
         goto fail1;
     }
 
@@ -53,27 +57,27 @@ int Worker::deinit() {
 
     should_run_ = false;
     if (stop_signal.set() != 0) {
-        printf("failed to set stop signal\n");
+        FIBRE_LOG(E) << "failed to set stop signal";
         result = -1;
     }
 
-    printf("wait for worker thread...\n");
+    FIBRE_LOG(D) << "wait for worker thread...";
     thread_->join();
     delete thread_;
-    printf("worker finished\n");
+    FIBRE_LOG(D) << "worker thread finished";
 
     if (stop_signal.deinit() != 0) {
-        printf("stop signal deinit failed\n");
+        FIBRE_LOG(E) << "stop signal deinit failed";
         result = -1;
     }
 
     if (n_events_) {
-        printf("Warning: closed epoll instance before all events were deregistered.\n");
+        FIBRE_LOG(W) << "closed epoll instance before all events were deregistered.";
         result = -1;
     }
 
     if (close(epoll_fd_) != 0) {
-        printf("close() failed\n");
+        FIBRE_LOG(E) << "close() failed";
         result = -1;
     }
 
@@ -104,7 +108,7 @@ int Worker::register_event(int event_fd, uint32_t events, callback_t* callback) 
     };
 
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, event_fd, &ev) != 0) {
-        printf("epoll_ctl() failed\n");
+        FIBRE_LOG(E) << "epoll_ctl() failed: " << sys_err();
         n_events_--;
         return -1;
     }
@@ -123,7 +127,7 @@ int Worker::register_event(int event_fd, uint32_t events, callback_t* callback) 
     };
 
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, event_fd, &ev) != 0) {
-        printf("epoll_ctl() failed\n");
+        FIBRE_LOG(E) << "epoll_ctl() failed: " << sys_err();
         return -1;
     }
     
@@ -141,7 +145,7 @@ int Worker::deregister_event(int event_fd) {
     int result = 0;
 
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, event_fd, nullptr) != 0) {
-        printf("epoll_ctl() failed\n");
+        FIBRE_LOG(E) << "epoll_ctl() failed: " << sys_err();
         result = -1;
     }
 
@@ -163,7 +167,7 @@ int Worker::deregister_event(int event_fd) {
             // Trigger one iteration of the event loop, so that will_enter_epoll_ is
             // encountered.
             if (stop_signal.set() != 0) {
-                printf("stop signal set failed\n");
+                FIBRE_LOG(E) << "stop signal set failed";
                 result = -1;
             }
 
@@ -183,15 +187,15 @@ int Worker::deregister_event(int event_fd) {
 
 void Worker::event_loop() {
     while (should_run_) {
-        //printf("epoll_wait...\n");
         iterations_++;
 
         do {
+            FIBRE_LOG(D) << "epoll_wait...";
             n_triggered_events_ = epoll_wait(epoll_fd_, triggered_events_, max_triggered_events_, -1);
         } while (n_triggered_events_ < 0 && errno == EINTR); // ignore syscall interruptions. This happens for instance during suspend.
 
         if (n_triggered_events_ <= 0) {
-            printf("epoll_wait() failed with %d (%s). Terminating worker thread.\n", n_triggered_events_, strerror(errno));
+            FIBRE_LOG(E) << "epoll_wait() failed with " <<  n_triggered_events_ << ": " << sys_err() << " - Terminating worker thread.";
             break;
         }
 
@@ -207,6 +211,5 @@ void Worker::event_loop() {
 }
 
 void Worker::stop_handler() {
-    printf("stop handler\n");
-    printf("stop handler completed\n");
+    FIBRE_LOG(D) << "stop handler\n";
 }

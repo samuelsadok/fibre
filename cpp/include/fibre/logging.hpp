@@ -1,51 +1,199 @@
+/**
+ * @brief Provides logging facilities
+ * 
+ * Log entries are associated with user defined topics. A user can define a
+ * topic using DEFINE_LOG_TOPIC(topicname) and activate the topic for the
+ * current scope using USE_LOG_TOPIC(topicname).
+ * 
+ * Currently all log entries are posted to stderr in a thread-safe way.
+ *
+ * Whether an event is actually logged depends on the current log verbosity of
+ * the corresponding topic. The log verbosity is defined by the following
+ * sources (in order of their precedence).
+ * 
+ *  0. maximum log verbosity setting (see below)
+ *  1. runtime environment variable "FIBRE_LOG_[topicname]"
+ *  2. runtime environment variable "FIBRE_LOG"
+ *  3. topic specific default log verbosity defined using CONFIG_LOG_TOPIC(...)
+ *  4. FIBRE_DEFAULT_LOG_VERBOSITY defined before this file (using #define or -D compiler flag)
+ *  5. FIBRE_DEFAULT_LOG_VERBOSITY defined in this file
+ * 
+ * The maximum log verbosity can be defined separately from the default log
+ * verbosity. The maximum log verbosity bound always applies, regardless of how
+ * the actual log verbosity is specified. This allows keeping the binary small
+ * by optimizing away unnecessary log entries at compile time.
+ * The maximum log verbosity is defined by the following sources (in order of
+ * their precedence):
+ * 
+ *  1. topic specific max log verbosity defined using CONFIG_LOG_TOPIC(...)
+ *  2. FIBRE_MAX_LOG_VERBOSITY defined before this file (using #define or -D compiler flag)
+ *  3. FIBRE_MAX_LOG_VERBOSITY defined in this file
+ * 
+ * TODO: ensure that the optimizer can indeed strip the unused strings (currently not the case)
+ * 
+ * 
+ * Example:
+ * 
+ * @code
+ * 
+ * DEFINE_LOG_TOPIC(MAIN);
+ * USE_LOG_TOPIC(MAIN);
+ * 
+ * int main(void) {
+ *     FIBRE_LOG(D) << "Hello Log!";
+ *     if (open("inexistent_file", O_RDONLY) < 0) {
+ *         FIBRE_LOG(E) << "Could not open file: " << sys_err();
+ *     }
+ *     return 0;
+ * }
+ * 
+ * @endcode
+ */
+
 #ifndef __FIBRE_LOGGING_HPP
 #define __FIBRE_LOGGING_HPP
 
 #include "cpp_utils.hpp"
 
-#ifndef __FIBRE_HPP
-#error "This file should not be included directly. Include fibre.hpp instead."
-#endif
-
 #include <iostream>
 #include <mutex>
+#include <string.h>
 
 namespace fibre {
 
-#define GET_LOG_TOPIC_NAME(NAME, STR) LOG_TOPIC_ ## NAME,
-#define LOG_TOPIC_STR(NAME, STR) template<> struct topic_name<LOG_TOPIC_ ## NAME> { constexpr static const char * name = STR; };
+// Maximum log verbosity that should be compiled into the binary.
+// Log entries with a higher verbosity should be optimized away.
+#ifndef FIBRE_MAX_LOG_VERBOSITY
+#  define FIBRE_MAX_LOG_VERBOSITY LOG_LEVEL_T
+#endif
 
-enum log_topic_t {
-    LOG_TOPICS(GET_LOG_TOPIC_NAME)
+// Default log verbosity that should be used for all topic. This may be
+// overridden by other sources, see description in the beginning of this file.
+#ifndef FIBRE_DEFAULT_LOG_VERBOSITY
+#  define FIBRE_DEFAULT_LOG_VERBOSITY LOG_LEVEL_W
+#endif
+
+/**
+ * @brief Generates one log entry.
+ * 
+ * The log entry will be associates with the topic specified in "USE_LOG_TOPIC".
+ * 
+ * Note that the log entry must only be used in the statement it is generated. (TODO: fix)
+ * 
+ * @param level: Can be one of "E", "W", "D", or other levels defined in
+ *        log_level_t.
+ * @returns a stream for writing into the log entry
+ */
+#define FIBRE_LOG(level) \
+    fibre::make_log_entry<current_log_topic, fibre::LOG_LEVEL_ ## level>( \
+        fibre::get_file_name(__FILE__), __LINE__, __func__ \
+    ).get_stream()
+
+/**
+ * @brief Defines a log topic. A log topic must be defined exactly once in every
+ * translation unit it is used.
+ */
+#define DEFINE_LOG_TOPIC(name) \
+    struct LOG_TOPIC_ ## name { \
+        static const char * get_label() { \
+            static const char label[] = #name; \
+            return label; \
+        } \
+    }
+
+/**
+ * @brief Activates the use of the specified log topic for the current scope
+ * (and all subscopes)
+ */
+#define USE_LOG_TOPIC(name) using current_log_topic = LOG_TOPIC_ ## name
+
+/**
+ * @brief Overrides the general log verbosity settings for a specific topic.
+ * If used, this should be placed in the same scope as the corresponding
+ * DEFINE_LOG_TOPIC.
+ */
+#define CONFIG_LOG_TOPIC(topic, default_verbosity, max_verbosity) \
+template<> constexpr log_level_t get_default_log_verbosity<LOG_TOPIC_ ## topic>() { return (default_verbosity); } \
+template<> constexpr log_level_t get_max_log_verbosity<LOG_TOPIC_ ## topic>() { return (max_verbosity); }
+
+
+/** @brief Log verbosity levels */
+enum log_level_t {
+    LOG_LEVEL_F = 0, // fatal
+    LOG_LEVEL_E = 1, // error
+    LOG_LEVEL_W = 2, // warning
+    LOG_LEVEL_I = 3, // info
+    LOG_LEVEL_D = 4, // debug
+    LOG_LEVEL_T = 5, // trace
 };
 
-template<log_topic_t TOPIC>
-struct topic_name;
+class NullBuffer : public std::streambuf {
+public:
+    int overflow(int c) { return c; }
+};
 
-LOG_TOPICS(LOG_TOPIC_STR)
+class Logger {
+public:
+    class Entry {
+    public:
+        Entry() : base_stream_(null_stream), lock_() {}
 
-template<log_topic_t TOPIC>
-const char * get_topic_name() {
-    return topic_name<TOPIC>::name;
+        Entry(std::ostream& base_stream, const char* topic, const char* filename, size_t line_no, const char *funcname, std::mutex& mutex)
+            : base_stream_(base_stream), lock_(mutex)
+        {
+            base_stream << std::dec << "[" << topic << "] ";
+            //base_stream << std::dec << filename << ":" << line_no << " in " << funcname << "(): ";
+        }
+        ~Entry() { get_stream() << std::endl; }
+        std::ostream& get_stream() { return base_stream_; };
+    private:
+        NullBuffer null_buffer{};
+        std::ostream null_stream{&null_buffer};
+        std::ostream& base_stream_;
+        std::unique_lock<std::mutex> lock_;
+    };
+    
+    std::mutex mutex_;
+};
+
+
+
+template<typename TOPIC>
+constexpr log_level_t get_default_log_verbosity() { return FIBRE_DEFAULT_LOG_VERBOSITY; }
+
+template<typename TOPIC>
+constexpr log_level_t get_max_log_verbosity() { return FIBRE_MAX_LOG_VERBOSITY; }
+
+/**
+ * @brief Resolves the currently active log verbosity for the given topic.
+ * See top of this file for a detailed description of the algorithm.
+ */
+template<typename TOPIC>
+log_level_t get_current_log_verbosity() {
+    char var_name[sizeof("FIBRE_LOG_") + strlen(TOPIC::get_label())] = "FIBRE_LOG_";
+    strcat(var_name, TOPIC::get_label());
+
+    // TODO: provide a way to disable the 
+    const char * var_val = std::getenv(var_name);
+    if (!var_val) {
+        var_val = std::getenv("FIBRE_LOG");
+    }
+
+    log_level_t log_level = get_default_log_verbosity<TOPIC>();
+    if (var_val) {
+        unsigned long num = strtoul(var_val, nullptr, 10);
+        log_level = (log_level_t)num;
+    }
+
+    if (log_level > get_max_log_verbosity<TOPIC>()) {
+        log_level = get_max_log_verbosity<TOPIC>();
+    }
+    return log_level;
 }
 
 
-enum log_config_t {
-    ENABLED,
-    DYNAMIC,
-    OFF
-};
 
-enum log_level_t {
-    INFO,
-    WARNING
-};
-
-template<log_topic_t topic>
-constexpr log_config_t get_config() { return DYNAMIC; }
-
-
-
+/*
 template<typename TStream, typename T, typename... Ts>
 void send_to_stream(TStream&& stream);
 
@@ -55,82 +203,40 @@ void send_to_stream(TStream&& stream) { }
 template<typename TStream, typename T, typename... Ts>
 void send_to_stream(TStream&& stream, T&& value, Ts&&... values) {
     send_to_stream(std::forward<TStream>(stream) << std::forward<T>(value), std::forward<Ts>(values)...);
-}
+}*/
 
 
-class Logger {
-public:
+Logger* get_logger(); // defined in logging.cpp
 
-    class new_entry {
-    public:
-        new_entry(std::unique_lock<std::mutex>&& lock)
-            : lock_(std::move(lock)) {}
-        new_entry(new_entry&& other)
-            : lock_(std::move(other.lock_)) {}
-        ~new_entry() {
-            get_stream() << "\n";
-        }
-        std::ostream& get_stream() {
-            return std::cerr;
-        };
-    private:
-        std::unique_lock<std::mutex> lock_;
-    };
-
-    new_entry log(const char* topic, const char* filename, size_t line_no, const char *funcname) {
-        std::unique_lock<std::mutex> lock(mutex_);
-        std::cerr << std::dec << "[" << topic << "] ";
-        //std::cerr << std::dec << filename << ":" << line_no << " in " << funcname << "(): ";
-        return new_entry(std::move(lock));
+template<typename TOPIC, log_level_t LEVEL>
+Logger::Entry make_log_entry(const char *filename, size_t line_no, const char *funcname) {
+    if (get_current_log_verbosity<TOPIC>() < LEVEL) {
+        return {};
+    } else {
+        Logger* logger = get_logger();
+        return { std::cerr, TOPIC::get_label(), filename, line_no, funcname, logger->mutex_ };
     }
-    
-private:
-    std::mutex mutex_;
-};
-
-
-Logger* get_logger();
-
-template<log_topic_t TOPIC, log_level_t LEVEL, typename... Ts>
-void log(const char *filename, size_t line_no, const char *funcname, Ts&& ... values) {
-    if (get_config<TOPIC>() == OFF) {
-        return;
-    }
-
-    Logger* logger = get_logger();
-    Logger::new_entry entry = logger->log(get_topic_name<TOPIC>(), filename, line_no, funcname);
-    send_to_stream(entry.get_stream(), std::forward<Ts>(values)...);
 }
-
 
 template<size_t I>
 constexpr const char * get_file_name(const char (&file_path)[I]) {
     return file_path + make_sstring(file_path).after_last_index_of('/');
 }
 
+}
 
-#define CONFIG_LOG_TOPIC(topic, mode) 
+/**
+ * @brief Tag type to print the last system error
+ * 
+ * The statement `std::out << sys_err();` will print the last system error
+ * (based on `errno`) in the following format: "error description (errno)"
+ */
+struct sys_err {};
 
-//CONFIG_LOG_TOPIC(GENERAL, DYNAMIC);
-//CONFIG_LOG_TOPIC(SCHEDULER, DYNAMIC);
-//CONFIG_LOG_TOPIC(TCP, DYNAMIC);
-#define LOG_FIBRE_(topic, level, ...) \
-    fibre::log<fibre::LOG_TOPIC_ ## topic, level>(fibre::get_file_name(__FILE__), __LINE__, __func__, __VA_ARGS__)
-
-#define LOG_FIBRE(topic, ...) LOG_FIBRE_(topic, fibre::INFO, __VA_ARGS__)
-#define LOG_FIBRE_W(topic, ...) LOG_FIBRE_(topic, fibre::WARNING, __VA_ARGS__)
-
-
-
-/*
-template<>
-constexpr log_level_t is_enabled<CONFIG_LOG_GENERAL>() { return DYNAMIC; }
-template<>
-constexpr log_level_t is_enabled<CONFIG_LOG_TCP>() { return DYNAMIC; }
-*/
-
-//log(TCP, "sent ", hex(chunk), " bytes");
-
+namespace std {
+static std::ostream& operator<<(std::ostream& stream, const sys_err&) {
+    return stream << strerror(errno) << " (" << errno << ")";
+}
 }
 
 #endif // __FIBRE_LOGGING_HPP

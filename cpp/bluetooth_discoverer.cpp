@@ -4,6 +4,8 @@
 
 using namespace fibre;
 
+DEFINE_LOG_TOPIC(BLUETOOTH);
+USE_LOG_TOPIC(BLUETOOTH);
 
 int BluetoothCentralSideDiscoverer::init(Worker* worker, DBusConnectionWrapper* dbus) {
     worker_ = worker;
@@ -23,19 +25,19 @@ using interface_map = std::unordered_map<std::string, std::unordered_map<std::st
 
 static fibre::Callback<DBusObject, interface_map> handle_interfaces_added = {
     [](void*, DBusObject object, interface_map interfaces) {
-        std::cout << "DBus Object " << object << " obtained the interfaces " << interfaces;
+        FIBRE_LOG(D) << "DBus Object " << object << " obtained the interfaces " << interfaces;
     }, nullptr
 };
 
 static fibre::Callback<DBusObject, std::vector<std::string>> handle_interfaces_removed = {
     [](void*, DBusObject object, std::vector<std::string> interfaces) {
-        std::cout << "DBus Object " << object << " lost the interfaces " << interfaces;
+        FIBRE_LOG(D) << "DBus Object " << object << " lost the interfaces " << interfaces;
     }, nullptr
 };
 
 static fibre::Callback<std::unordered_map<DBusObject, interface_map>> handle_initial_search_completed = {
     [](void*, std::unordered_map<DBusObject, interface_map> objects) {
-        printf("got %zu objects\n", objects.size());
+        FIBRE_LOG(D) << "found " << objects.size() << " objects";
         for (auto& it : objects) {
             // TODO: make nicer interface to invoke callback
             handle_interfaces_added.callback(nullptr, it.first, it.second);
@@ -45,7 +47,7 @@ static fibre::Callback<std::unordered_map<DBusObject, interface_map>> handle_ini
 
 int BluetoothCentralSideDiscoverer::start_ble_adapter_monitor() {
     if (!bluez_root_obj.conn_) {
-        std::cerr << "discoverer object not initialized\n";
+        FIBRE_LOG(E) << "discoverer object not initialized";
         return -1;
     }
     //DBusObject bluez(&dbus_connection, "org.bluez", "/org/bluez");
@@ -75,7 +77,7 @@ int BluetoothCentralSideDiscoverer::start_channel_discovery(interface_specs* int
     // if there are already discovery requests in place, there's nothing to do
     if (!n_discovery_requests) {
         if (start_ble_adapter_monitor() != 0) {
-            printf("Failed to start USB device discovery\n");
+            FIBRE_LOG(E) << "Failed to start bluetooth device discovery";
             return -1;
         }
     }
@@ -90,7 +92,7 @@ int BluetoothCentralSideDiscoverer::stop_channel_discovery(void* discovery_ctx) 
     int result = 0;
     if (n_discovery_requests == 1) {
         if (stop_ble_adapter_monitor() != 0) {
-            printf("Stop USB device discovery\n");
+            FIBRE_LOG(E) << "Failed to stop bluetooth device discovery";
             result = -1;
         }
     }

@@ -10,6 +10,8 @@
 #define UDP_RX_BUF_LEN	512
 #define UDP_TX_BUF_LEN	512
 
+DEFINE_LOG_TOPIC(UDP);
+USE_LOG_TOPIC(UDP);
 
 class UDPPacketSender : public PacketSink {
 public:
@@ -59,8 +61,9 @@ int serve_on_udp(unsigned int port) {
         ssize_t n_received = recvfrom(s, buf, sizeof(buf), 0, reinterpret_cast<struct sockaddr *>(&si_other), &slen);
         if (n_received == -1)
             return -1;
-        //printf("Received packet from %s:%d\nData: %s\n\n",
-        //    inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port), buf);
+        //FIBRE_LOG(D) << "Received packet from " <<
+        //      inet_ntoa(si_other.sin_addr) << ":" << ntohs(si_other.sin_port) <<
+        //      "Data: " << buf << "\n";
 
         UDPPacketSender udp_packet_output(s, &si_other);
         // TODO: register output

@@ -1,10 +1,13 @@
 
 #include <fibre/fibre.hpp>
+#include <fibre/logging.hpp>
 
 using namespace fibre;
 
+USE_LOG_TOPIC(OUTPUT);
+
 OutputPipe::status_t OutputPipe::process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) {
-    LOG_FIBRE(OUTPUT, "processing ", length, " bytes");
+    FIBRE_LOG(D) << "processing " << length << " bytes";
     size_t chunk = std::min(length, sizeof(buffer_) - buffer_pos_);
     memcpy(buffer_ + buffer_pos_, buffer, chunk);
     buffer_pos_ += chunk;

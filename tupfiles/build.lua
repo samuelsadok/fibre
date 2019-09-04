@@ -278,10 +278,10 @@ function make_platform(input)
     end
 
 
-    platform.c_compiler = make_gcc_compiler(platform.prefix..'gcc -std=c99', builddir, {}, true)
-    platform.cpp_compiler = make_gcc_compiler(platform.prefix..'g++ -std=c++11', builddir, {}, true)
+    platform.c_compiler = make_gcc_compiler(platform.prefix..'gcc -std=c99 -g -O3', builddir, {}, true)
+    platform.cpp_compiler = make_gcc_compiler(platform.prefix..'g++ -std=c++11 -g -O3', builddir, {}, true)
     platform.asm_compiler = make_gcc_compiler(platform.prefix..'gcc -x assembler-with-cpp', builddir, {}, false)
-    platform.linker = make_gcc_linker(platform.prefix..'g++', platform.prefix..'size', platform.prefix..'objcopy', builddir)
+    platform.linker = make_gcc_linker(platform.prefix..'g++ -g -O3', platform.prefix..'size', platform.prefix..'objcopy', builddir)
 
     if run_now(platform.prefix..'pkg-config --version') then
         platform.pkg_config_path = platform.prefix..'pkg-config'

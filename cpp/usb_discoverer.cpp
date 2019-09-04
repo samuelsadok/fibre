@@ -1,11 +1,15 @@
 
 #include <fibre/usb_discoverer.hpp>
+#include <fibre/logging.hpp>
 
 #include <iostream>
 #include <unistd.h>
 #include <sys/epoll.h>
 
 using namespace fibre;
+
+DEFINE_LOG_TOPIC(USB);
+USE_LOG_TOPIC(USB);
 
 /**
  * @brief Initializes the discoverer.
@@ -25,18 +29,18 @@ int USBHostSideDiscoverer::init(Worker* worker) {
 
     udev_ctx = udev_new();
     if (!udev_ctx) {
-        fprintf(stderr, "udev_new() failed\n");
+        FIBRE_LOG(E) << "udev_new() failed: " << sys_err();
         goto fail0;
     }
 
     if (libusb_init(&libusb_ctx) != LIBUSB_SUCCESS) {
-        fprintf(stderr, "libusb_init() failed\n");
+        FIBRE_LOG(E) << "libusb_init() failed: " << sys_err();
         goto fail1;
     }
 
     // Check if libusb needs special time-based polling on this platform
     if (libusb_pollfds_handle_timeouts(libusb_ctx) == 0) {
-        fprintf(stderr, "libusb needs time-based polling on this platform, which is not yet implemented\n");
+        FIBRE_LOG(E) << "libusb needs time-based polling on this platform, which is not yet implemented";
         goto fail2;
     }
 
@@ -66,7 +70,7 @@ int USBHostSideDiscoverer::init(Worker* worker) {
         libusb_free_pollfds(pollfds);
         pollfds = nullptr;
     } else {
-        fprintf(stderr, "Warning: libusb_get_pollfds() returned NULL. Probably we won't catch USB events.\n");
+        FIBRE_LOG(W) << "libusb_get_pollfds() returned NULL. Probably we won't catch USB events.";
     }
 
     return 0;
@@ -110,19 +114,21 @@ int USBHostSideDiscoverer::deinit() {
 
 
 void USBHostSideDiscoverer::udev_handler() {
-    printf("udev handler\n");
+    FIBRE_LOG(D) << "udev handler";
     struct udev_device* dev = udev_monitor_receive_device(udev_mon);
     (void) dev; // the device is not actually being used
-    printf("udev handler completed\n");
+    // TODO: we actually don't use udev monitor for hotplug detection. Libusb
+    // does this just fine.
+    FIBRE_LOG(D) << "udev handler completed";
 }
 
 void USBHostSideDiscoverer::usb_handler() {
-    printf("usb handler\n");
+    FIBRE_LOG(D) << "usb handler";
     timeval tv = { .tv_sec = 0, .tv_usec = 0 };
     if (libusb_handle_events_timeout(libusb_ctx, &tv) != 0) {
-        printf("libusb_handle_events_timeout() failed\n");
+        FIBRE_LOG(E) << "libusb_handle_events_timeout() failed";
     }
-    printf("usb handler completed\n");
+    FIBRE_LOG(D) << "usb handler completed";
 }
 
 void USBHostSideDiscoverer::pollfd_added_handler(int fd, short events) {
@@ -147,12 +153,12 @@ int USBHostSideDiscoverer::hotplug_callback(struct libusb_context *ctx, struct l
     struct libusb_config_descriptor* config_desc = nullptr;
     int rc;
 
-    printf("hotplug callback\n");
+    FIBRE_LOG(D) << "hotplug callback";
     
     if (LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED == event) {
         (void) libusb_get_device_descriptor(dev, &dev_desc); // currently not used
         if (libusb_get_active_config_descriptor(dev, &config_desc) != LIBUSB_SUCCESS) {
-            printf("Failed to get active config descriptor\n");
+            FIBRE_LOG(E) << "Failed to get active config descriptor: " << sys_err();
             return 0; // ignore errors
         }
         for (uint8_t i = 0; i < config_desc->bNumInterfaces; ++i) {
@@ -162,7 +168,7 @@ int USBHostSideDiscoverer::hotplug_callback(struct libusb_context *ctx, struct l
                     // OPEN DEVICE AND PRESENT ENDPOINTS TO FIBRE
                     rc = libusb_open(dev, &handle);
                     if (LIBUSB_SUCCESS != rc) {
-                        printf("Could not open USB device\n");
+                        FIBRE_LOG(E) << "Could not open USB device: " << sys_err();
                     }
                 }
             }
@@ -170,7 +176,7 @@ int USBHostSideDiscoverer::hotplug_callback(struct libusb_context *ctx, struct l
         libusb_free_config_descriptor(config_desc);
         config_desc = nullptr;
     } else {
-        printf("Unhandled event %d\n", event);
+        FIBRE_LOG(W) << "Unhandled event: " << event;
     }
     
     return 0;
@@ -191,21 +197,21 @@ int USBHostSideDiscoverer::start_udev_monitor() {
     udev_mon = udev_monitor_new_from_netlink(udev_ctx, "udev");
 
     if (!udev_mon) {
-        printf("Error creating udev monitor\n");
+        FIBRE_LOG(E) << "Error creating udev monitor: " << sys_err();
         return -1;
     }
     if (udev_monitor_filter_add_match_subsystem_devtype(udev_mon, "usb", nullptr) != 0) {
-        printf("udev_monitor_filter_add_match_subsystem_devtype() failed\n");
+        FIBRE_LOG(E) << "udev_monitor_filter_add_match_subsystem_devtype() failed: " << sys_err();
         goto fail;
     }
     if (udev_monitor_enable_receiving(udev_mon) != 0) {
-        printf("udev_monitor_enable_receiving() failed\n");
+        FIBRE_LOG(E) << "udev_monitor_enable_receiving() failed: " << sys_err();
         goto fail;
     }
 
     mon_fd = udev_monitor_get_fd(udev_mon);
     if (!worker_ || (worker_->register_event(mon_fd, EPOLLIN, &udev_handler_obj) != 0)) {
-        printf("register_event(mon_fd) failed\n");
+        FIBRE_LOG(E) << "register_event(mon_fd) failed: " << sys_err();
         goto fail;
     }
     return 0;
@@ -229,7 +235,7 @@ int USBHostSideDiscoverer::stop_udev_monitor() {
 
     int mon_fd = udev_monitor_get_fd(udev_mon);
     if (!worker_ || (worker_->deregister_event(mon_fd) != 0)) {
-        printf("deregister_event(mon_fd) failed\n");
+        FIBRE_LOG(E) << "deregister_event(mon_fd) failed";
         result = -1;
     }
 
@@ -248,11 +254,12 @@ int USBHostSideDiscoverer::start_libusb_monitor() {
         return -1;
 
     if (start_udev_monitor() != 0) {
-        printf("Could not start udev monitor. Fall back to polling.\n");
+        FIBRE_LOG(W) << "Could not start udev monitor. Fall back to polling.";
     }
 
+    // TODO: this timer is unnecessary just like udev hotplug detection is unnecessary
     if (!is_udev_monitor_started() && timer_.start(1000, true, nullptr) != 0) {
-        printf("Could not start polling timer.\n");
+        FIBRE_LOG(E) << "Could not start polling timer.";
         goto fail;
     }
 
@@ -264,12 +271,12 @@ int USBHostSideDiscoverer::start_libusb_monitor() {
                 return ((USBHostSideDiscoverer*)user_data)->hotplug_callback(ctx, dev, event);
             }, this, &hotplug_callback_handle);
     if (LIBUSB_SUCCESS != result) {
-        printf("Error creating a hotplug callback\n");
+        FIBRE_LOG(E) << "Error creating a hotplug callback";
         goto fail;
     }
 
     /*while (1) {
-        printf("wait for USB activity...\n");
+        FIBRE_LOG(D) << "wait for USB activity...";
         libusb_handle_events_completed(libusb_ctx, NULL);
     }*/
 
@@ -309,7 +316,7 @@ int USBHostSideDiscoverer::start_channel_discovery(interface_specs* interface_sp
     // if there are already discovery requests in place, there's nothing to do
     if (!n_discovery_requests) {
         if (start_libusb_monitor() != 0) {
-            printf("Failed to start USB device discovery\n");
+            FIBRE_LOG(E) << "Failed to start USB device discovery";
             return -1;
         }
     }
@@ -324,7 +331,7 @@ int USBHostSideDiscoverer::stop_channel_discovery(void* discovery_ctx) {
     int result = 0;
     if (n_discovery_requests == 1) {
         if (stop_libusb_monitor() != 0) {
-            printf("Stop USB device discovery\n");
+            FIBRE_LOG(E) << "Failed to stop USB device discovery";
             result = -1;
         }
     }

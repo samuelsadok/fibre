@@ -2,10 +2,14 @@
 /* Includes ------------------------------------------------------------------*/
 
 #include <fibre/fibre.hpp>
+#include <fibre/logging.hpp>
 
 #include <memory>
 #include <stdlib.h>
 #include <random>
+
+DEFINE_LOG_TOPIC(GENERAL);
+USE_LOG_TOPIC(GENERAL);
 
 namespace fibre {
     global_state_t global_state;
@@ -170,32 +174,32 @@ uint32_t get_function_count() {
 }
 
 bool get_function_json(uint32_t endpoint_id, const char ** output, size_t* length) {
-    LOG_FIBRE(GENERAL, "fetching JSON of function ", as_hex(endpoint_id));
-    LOG_FIBRE(GENERAL, "length ptr = ", as_hex(length));
+    FIBRE_LOG(D) << "fetching JSON of function " << as_hex(endpoint_id);
+    FIBRE_LOG(D) << "length ptr = " << as_hex(length);
 
     if (output) *output = nullptr;
     if (length) *length = 0;
 
     // TODO: behold, a race condition
     if (endpoint_id >= global_state.functions_.size()) {
-        LOG_FIBRE_W(GENERAL, "endpoint_id out of range: ", endpoint_id, " >= ", global_state.functions_.size());
+        FIBRE_LOG(W) << "endpoint_id out of range: " << endpoint_id << " >= " << global_state.functions_.size();
         return false;
     }
     const fibre::LocalEndpoint* endpoint = global_state.functions_[endpoint_id];
     endpoint->get_as_json(output, length);
-    LOG_FIBRE(GENERAL, "result has length ", *length);
+    FIBRE_LOG(D) << "result has length " << *length;
     return true;
 }
 
 bool get_ref_type_json(uint32_t ref_type_id, const char ** output, size_t* length) {
-    LOG_FIBRE(GENERAL, "fetching JSON of ref type ", as_hex(ref_type_id));
+    FIBRE_LOG(D) << "fetching JSON of ref type " << as_hex(ref_type_id);
 
     if (output) *output = nullptr;
     if (length) *length = 0;
 
     // TODO: behold, a race condition
     if (ref_type_id >= global_state.ref_types_.size()) {
-        LOG_FIBRE_W(GENERAL, "ref_type_id out of range: ", ref_type_id, " >= ", global_state.functions_.size());
+        FIBRE_LOG(W) << "ref_type_id out of range: " << ref_type_id << " >= " << global_state.functions_.size();
         return false;
     }
     const fibre::LocalRefType* type = global_state.ref_types_[ref_type_id];
@@ -242,14 +246,14 @@ FIBRE_EXPORT_BUILTIN_FUNCTION(
  */
 void schedule_all() {
     // TODO: make thread-safe
-    LOG_FIBRE(GENERAL, "running global scheduler");
+    FIBRE_LOG(D) << "running global scheduler";
     for (std::pair<const Uuid, RemoteNode>& kv : global_state.remote_nodes_) {
         kv.second.schedule();
     }
 }
 
 void scheduler_loop() {
-    LOG_FIBRE(GENERAL, "global scheduler thread started");
+    FIBRE_LOG(D) << "global scheduler thread started";
     for (;;) {
         global_state.output_pipe_ready.wait();
         //global_state.output_channel_ready.wait();
@@ -257,13 +261,11 @@ void scheduler_loop() {
     }
 }
 
-Logger logger;
-Logger* get_logger() { return &logger; }
 
 /* @brief Initializes Fibre */
 void init() {
     if (global_state.initialized) {
-        LOG_FIBRE_W(GENERAL, "already initialized");
+        FIBRE_LOG(W) << "already initialized";
         return;
     }
 
@@ -276,11 +278,11 @@ void init() {
     for (const LocalEndpoint* ep : StaticLinkedListElement<const LocalEndpoint*, user_function_tag>::get_list()) {
         fibre::publish_function(ep);
     }
-    LOG_FIBRE(GENERAL, "published ", global_state.functions_.size(), " functions:");
+    FIBRE_LOG(D) << "published " << global_state.functions_.size() << " functions:";
     for (const LocalEndpoint* ep : global_state.functions_) {
         const char * str = nullptr;
         ep->get_as_json(&str, nullptr);
-        LOG_FIBRE(GENERAL, "  fn at ", as_hex(reinterpret_cast<uintptr_t>(ep)), ": ", str);
+        FIBRE_LOG(D) << "  fn at " << as_hex(reinterpret_cast<uintptr_t>(ep)) << ": " << str;
     }
 
     for (const LocalRefType* t : StaticLinkedListElement<const LocalRefType*, builtin_function_tag>::get_list()) {
@@ -289,11 +291,11 @@ void init() {
     for (const LocalRefType* t : StaticLinkedListElement<const LocalRefType*, user_function_tag>::get_list()) {
         fibre::publish_ref_type(t);
     }
-    LOG_FIBRE(GENERAL, "published ", global_state.ref_types_.size(), " ref types");
+    FIBRE_LOG(D) << "published " << global_state.ref_types_.size() << " ref types";
     for (const LocalRefType* tp : global_state.ref_types_) {
         const char * str = nullptr;
         tp->get_as_json(&str, nullptr);
-        LOG_FIBRE(GENERAL, "  tp at ", as_hex(reinterpret_cast<uintptr_t>(tp)), ": ", str);
+        FIBRE_LOG(D) << "  tp at " << as_hex(reinterpret_cast<uintptr_t>(tp)) << ": " << str;
     }
 
 
@@ -306,7 +308,7 @@ void init() {
 
 #if CONFIG_SCHEDULER_MODE == SCHEDULER_MODE_GLOBAL_THREAD
     global_state.scheduler_thread = std::thread(scheduler_loop);
-    LOG_FIBRE(GENERAL, "launched scheduler thread");
+    FIBRE_LOG(D) << "launched scheduler thread";
     //global_state.scheduler_thread.start();
     // TODO: support shutdown
 #else

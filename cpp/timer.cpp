@@ -1,11 +1,15 @@
 
 #include <fibre/timer.hpp>
+#include <fibre/logging.hpp>
 #include <sys/epoll.h>
 #include <sys/fcntl.h>
 #include <unistd.h>
 #include <string.h>
 
 using namespace fibre;
+
+DEFINE_LOG_TOPIC(TIMER);
+USE_LOG_TOPIC(TIMER);
 
 int Timer::init(Worker* worker) {
     if (is_initialized())
@@ -20,17 +24,17 @@ int Timer::init(Worker* worker) {
 
     tim_fd_ = timerfd_create(CLOCK_MONOTONIC, O_NONBLOCK);
     if (tim_fd_ < 0) {
-        printf("timerfd_create() failed\n");
+        FIBRE_LOG(E) << "timerfd_create() failed: " << sys_err();
         goto fail1;
     }
 
     if (timerfd_settime(tim_fd_, 0, &itimerspec, nullptr) != 0) {
-        printf("timerfd_settime() failed\n");
+        FIBRE_LOG(E) << "timerfd_settime() failed: " << sys_err();
         goto fail2;
     }
 
     if (!worker_ || (worker_->register_event(tim_fd_, EPOLLIN, &timer_handler_obj) != 0)) {
-        printf("register_event() failed\n");
+        FIBRE_LOG(E) << "register_event() failed: " << sys_err();
         goto fail2;
     }
     return 0;
@@ -50,17 +54,16 @@ int Timer::deinit() {
     int result = 0;
 
     if (!worker_ || (worker_->deregister_event(tim_fd_) != 0)) {
-        printf("deregister_event() failed\n");
+        FIBRE_LOG(E) << "deregister_event() failed";
         result = -1;
     }
-    //printf("deregister status %d\n", result);
 
     // TODO: wait until the timer is really stopped and it is guaranteed that no
     // more callbacks will be triggered.
     //usleep(100000);
 
     if (close(tim_fd_) != 0) {
-        printf("close() failed\n");
+        FIBRE_LOG(E) << "close() failed: " << sys_err();
         result = -1;
     }
     tim_fd_ = -1;
@@ -132,7 +135,7 @@ int Timer::set_time(uint32_t interval_ms, bool repeat) {
 
     int val = timerfd_settime(tim_fd_, 0, &itimerspec, nullptr);
     if (val != 0) {
-        printf("timerfd_settime() failed: %s\n", strerror(errno));
+        FIBRE_LOG(E) << "timerfd_settime() failed: " << sys_err();
         return -1;
     }
 
@@ -140,7 +143,7 @@ int Timer::set_time(uint32_t interval_ms, bool repeat) {
 }
 
 void Timer::timer_handler() {
-    printf("timer handler\n");
+    FIBRE_LOG(D) << "timer handler";
     uint64_t val;
 
     // If the timer was already disarmed by timerfd_settime(), read() may fail
@@ -151,5 +154,5 @@ void Timer::timer_handler() {
             callback->callback(callback->ctx);
     }
 
-    printf("timer handler completed\n");
+    FIBRE_LOG(D) << "timer handler completed";
 }

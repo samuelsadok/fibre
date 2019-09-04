@@ -1,9 +1,12 @@
 
 #include <fibre/dbus.hpp>
 #include <fibre/timer.hpp>
+#include <fibre/logging.hpp>
 #include <sys/epoll.h>
 
 using namespace fibre;
+
+USE_LOG_TOPIC(DBUS);
 
 struct watch_ctx_t {
     DBusConnectionWrapper* conn;
@@ -20,7 +23,7 @@ struct timeout_ctx_t {
 
 
 static void handle_watch(void* ctx, uint32_t events) {
-    printf("handle watch\n");
+    FIBRE_LOG(D) << "handle watch";
     watch_ctx_t* watch_ctx = (watch_ctx_t*)ctx;
     unsigned int flags = 0;
     if (events & EPOLLIN)
@@ -31,14 +34,18 @@ static void handle_watch(void* ctx, uint32_t events) {
         flags |= DBUS_WATCH_HANGUP;
     if (events & EPOLLERR)
         flags |= DBUS_WATCH_ERROR;
-    dbus_watch_handle(watch_ctx->watch, flags);
+    if (!dbus_watch_handle(watch_ctx->watch, flags)) {
+        FIBRE_LOG(E) << "dbus_watch_handle() failed";
+    }
     dbus_connection_dispatch(watch_ctx->conn->get_libdbus_ptr());
 }
 
 static void handle_timer(void* ctx) {
-    printf("handle timer\n");
+    FIBRE_LOG(D) << "handle timer";
     timeout_ctx_t* timeout_ctx = (timeout_ctx_t*)ctx;
-    dbus_timeout_handle(timeout_ctx->timeout);
+    if (!dbus_timeout_handle(timeout_ctx->timeout)) {
+        FIBRE_LOG(E) << "dbus_timeout_handle() failed";
+    }
     dbus_connection_dispatch(timeout_ctx->conn->get_libdbus_ptr());
 }
 
@@ -55,10 +62,10 @@ int DBusConnectionWrapper::init(Worker* worker) {
     // connect to the bus
     conn_ = dbus_bus_get(DBUS_BUS_SYSTEM, &err_);
     if (dbus_error_is_set(&err_)) {
-        fprintf(stderr, "dbus_bus_get() failed (%s)\n", err_.message);
+        FIBRE_LOG(E) << "dbus_bus_get() failed: " << err_.message;
         goto fail1;
     } else if (NULL == conn_) {
-        fprintf(stderr, "dbus_bus_get() failed (retured NULL)\n");
+        FIBRE_LOG(E) << "dbus_bus_get() failed (retured NULL)";
         goto fail1;
     }
 
@@ -66,7 +73,7 @@ int DBusConnectionWrapper::init(Worker* worker) {
     ret = dbus_bus_request_name(conn_, "test.method.server", 
             DBUS_NAME_FLAG_ALLOW_REPLACEMENT, &err_);
     if (dbus_error_is_set(&err_)) {
-        fprintf(stderr, "Name Error (%s)\n", err_.message);
+        FIBRE_LOG(E) << "Name Error: " << err_.message;
         dbus_error_free(&err_);
     }
     if (DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER != ret) {
@@ -88,7 +95,7 @@ int DBusConnectionWrapper::init(Worker* worker) {
         [](void*){} /* free_data_function */
     );
     if (!status) {
-        printf("dbus_connection_set_watch_functions() failed\n");
+        FIBRE_LOG(E) << "dbus_connection_set_watch_functions() failed";
         goto fail2;
     }
 
@@ -107,12 +114,12 @@ int DBusConnectionWrapper::init(Worker* worker) {
         [](void*){} /* free_data_function */
     );
     if (!status) {
-        printf("dbus_connection_set_timeout_functions() failed\n");
+        FIBRE_LOG(E) << "dbus_connection_set_timeout_functions() failed";
         goto fail2;
     }
 
     if (dispatch_signal_.init(worker_, &dispatch_callback_obj_) != 0) {
-        printf("dispatch signal init failed\n");
+        FIBRE_LOG(E) << "dispatch signal init failed";
         goto fail2;
     }
 
@@ -146,10 +153,10 @@ int DBusConnectionWrapper::deinit() {
     int result = 0;
 
     // TODO: wait until DISCONNECT message is received
-    printf("will close connection\n");
+    FIBRE_LOG(D) << "will close connection";
     dbus_connection_close(conn_);
     dbus_connection_unref(conn_);
-    printf("connection closed\n");
+    FIBRE_LOG(D) << "connection closed";
 
     dbus_connection_set_watch_functions(conn_, nullptr, nullptr, nullptr, nullptr, nullptr);
     dbus_connection_set_timeout_functions(conn_, nullptr, nullptr, nullptr, nullptr, nullptr);
@@ -157,7 +164,7 @@ int DBusConnectionWrapper::deinit() {
     dbus_connection_set_wakeup_main_function(conn_, nullptr, nullptr, nullptr);
 
     if (dispatch_signal_.deinit() != 0) {
-        printf("signal deinit failed\n");
+        FIBRE_LOG(E) << "signal deinit failed";
         result = -1;
     }
 
@@ -166,7 +173,7 @@ int DBusConnectionWrapper::deinit() {
 }
 
 int DBusConnectionWrapper::handle_add_watch(DBusWatch *watch) {
-    printf("add watch\n");
+    FIBRE_LOG(D) << "add watch";
     /* TODO: The documentation says:
      * "dbus_watch_handle() cannot be called during the
      * DBusAddWatchFunction, as the connection will not be ready to
@@ -191,7 +198,7 @@ int DBusConnectionWrapper::handle_add_watch(DBusWatch *watch) {
 }
 
 void DBusConnectionWrapper::handle_remove_watch(DBusWatch *watch) {
-    printf("remove watch\n");
+    FIBRE_LOG(D) << "remove watch";
     // If the watch was not already disabled, disable it now
     if (dbus_watch_get_enabled(watch)) {
         handle_toggle_watch(watch, false);
@@ -225,7 +232,7 @@ int DBusConnectionWrapper::handle_toggle_watch(DBusWatch *watch, bool enable) {
 }
 
 int DBusConnectionWrapper::handle_add_timeout(DBusTimeout* timeout) {
-    printf("add timeout\n");
+    FIBRE_LOG(D) << "add timeout";
     timeout_ctx_t* ctx = new timeout_ctx_t{
         this, timeout, {} /* timer */, { handle_timer, nullptr }
     };
@@ -243,7 +250,7 @@ int DBusConnectionWrapper::handle_add_timeout(DBusTimeout* timeout) {
 }
 
 void DBusConnectionWrapper::handle_remove_timeout(DBusTimeout* timeout) {
-    printf("remove timeout\n");
+    FIBRE_LOG(D) << "remove timeout";
     if (dbus_timeout_get_enabled(timeout)) {
         handle_toggle_timeout(timeout, false);
     }

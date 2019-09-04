@@ -5,7 +5,10 @@
 #include "stream.hpp"
 #include "crc.hpp"
 #include "cpp_utils.hpp"
+#include "logging.hpp"
 #include <utility>
+
+DEFINE_LOG_TOPIC(ENCODERS);
 
 namespace fibre {
 
@@ -163,6 +166,7 @@ private:
 template<typename T>
 class VarintByteEncoder : public ByteEncoder {
 public:
+    USE_LOG_TOPIC(ENCODERS);
     static constexpr T BIT_WIDTH = (CHAR_BIT * sizeof(T));
 
     VarintByteEncoder(const T& state_variable) :
@@ -179,14 +183,15 @@ public:
 
     int get_byte(uint8_t *output_byte) final {
         if (bit_pos_ == 0)
-            LOG_FIBRE(SERDES, "start encoding varint, from pos %d\n", bit_pos_);
+            FIBRE_LOG(D) << "start encoding varint, from pos " << bit_pos_;
         *output_byte = (state_variable_ >> bit_pos_) & 0x7f;
         bit_pos_ += 7;
         if (bit_pos_ < BIT_WIDTH && (state_variable_ >> bit_pos_)) {
-            LOG_FIBRE(SERDES, "remainder: %x\n", state_variable_ >> bit_pos_);
+            FIBRE_LOG(D) << "remainder: " << as_hex(state_variable_ >> bit_pos_);
             *output_byte |= 0x80;
-        }else
+        } else {
             done_ = true;
+        }
         return 0;
     }
 

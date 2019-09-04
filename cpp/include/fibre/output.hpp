@@ -5,6 +5,9 @@
 #error "This file should not be included directly. Include fibre.hpp instead."
 #endif
 
+DEFINE_LOG_TOPIC(OUTPUT);
+#define current_log_topic LOG_TOPIC_OUTPUT
+
 namespace fibre {
 
 /**
@@ -97,11 +100,11 @@ public:
 
     void drop_chunk(size_t offset, size_t length) {
         if (offset > pipe_pos_) {
-            LOG_FIBRE(OUTPUT, "attempt to drop chunk at 0x", as_hex(offset), " but there's pending data before that at 0x", as_hex(pipe_pos_));
+            FIBRE_LOG(D) << "attempt to drop chunk at 0x" << as_hex(offset) << " but there's pending data before that at 0x" << as_hex(pipe_pos_);
             return;
         }
         if (offset + length <= pipe_pos_) {
-            LOG_FIBRE(OUTPUT, "already acknowledged");
+            FIBRE_LOG(D) << "already acknowledged";
             return;
         }
         if (offset < pipe_pos_) {
@@ -109,7 +112,7 @@ public:
             length -= (pipe_pos_ - offset);
         }
         if (length > buffer_pos_) {
-            LOG_FIBRE(OUTPUT, "ackowledged bytes that werent even available");
+            FIBRE_LOG(D) << "ackowledged bytes that werent even available";
             return;
         }
 
@@ -173,5 +176,7 @@ public:
 };
 
 }
+
+#undef current_log_topic
 
 #endif // __FIBRE_OUTPUT_HPP

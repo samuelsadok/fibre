@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+DEFINE_LOG_TOPIC(STREAM);
+#define current_log_topic LOG_TOPIC_STREAM
+
 namespace fibre {
 
 /**
@@ -310,7 +313,7 @@ public:
     }
 
     status_t process_bytes(const uint8_t *buffer, size_t length, size_t* processed_bytes) final {
-        LOG_FIBRE(SERDES, "static stream chain: process ", length, " bytes");
+        FIBRE_LOG(D) << "static stream chain: process " << length << " bytes";
         while (length) {
             StreamSink *stream = get_stream(current_stream_idx_);
             if (!stream)
@@ -402,7 +405,7 @@ public:
     }
 
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
-        LOG_FIBRE(SERDES, "dynamic stream chain: process ", length, " bytes");
+        FIBRE_LOG(D) << "dynamic stream chain: process " << length << " bytes";
         while (current_stream_) {
             size_t chunk = 0;
             status_t result = current_stream_->process_bytes(buffer, length, &chunk);
@@ -473,7 +476,7 @@ template<typename TStreamSink>
 class StreamRepeater : public StreamSink {
 public:
     status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
-        LOG_FIBRE(SERDES, "stream repeater: process ", length, " bytes");
+        FIBRE_LOG(D) << "stream repeater: process " << length << " bytes";
         while (length && active_) {
             size_t chunk = 0;
             status_t result = stream_sink_.process_bytes(buffer, length, &chunk);
@@ -507,5 +510,7 @@ private:
 };
 
 } // namespace fibre
+
+#undef current_log_topic
 
 #endif // __STREAM_HPP

@@ -11,6 +11,10 @@
 #include <fibre/worker.hpp>
 #include <fibre/cpp_utils.hpp>
 #include <fibre/print_utils.hpp>
+#include <fibre/logging.hpp>
+
+DEFINE_LOG_TOPIC(DBUS);
+#define current_log_topic LOG_TOPIC_DBUS
 
 namespace fibre {
 
@@ -62,7 +66,7 @@ inline int pack_message(DBusMessageIter* iter) {
 template<typename T, typename ... Ts>
 inline int pack_message(DBusMessageIter* iter, T arg, Ts... args) {
     if (DBusTypeTraits<T>::push(iter, arg) != 0) {
-        printf("Failed to pack message\n");
+        FIBRE_LOG(E) << "Failed to pack message\n";
         return -1;
     }
     int result = pack_message<Ts...>(iter, args...);
@@ -79,7 +83,7 @@ static int unpack_message(DBusMessageIter* iter, Ts& ... args);
 template<>
 inline int unpack_message(DBusMessageIter* iter) {
     if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_INVALID) {
-        printf("Too many arguments\n");
+        FIBRE_LOG(E) << "Too many arguments";
         return -1;
     }
     return 0;
@@ -88,11 +92,11 @@ inline int unpack_message(DBusMessageIter* iter) {
 template<typename T, typename ... Ts>
 inline int unpack_message(DBusMessageIter* iter, T& arg, Ts&... args) {
     if (dbus_message_iter_get_arg_type(iter) != DBusTypeTraits<T>::type_id::value) {
-        printf("Argument type mismatch. Expected %d, got %d\n", DBusTypeTraits<T>::type_id::value, dbus_message_iter_get_arg_type(iter));
+        FIBRE_LOG(E) << "Argument type mismatch. Expected " << DBusTypeTraits<T>::type_id::value << ", got " << dbus_message_iter_get_arg_type(iter);
         return -1;
     }
     if (DBusTypeTraits<T>::pop(iter, arg) != 0) {
-        printf("Failed to unpack message\n");
+        FIBRE_LOG(E) << "Failed to unpack message";
         return -1;
     }
     dbus_message_iter_next(iter);
@@ -118,21 +122,21 @@ void handle_reply_message(DBusMessage* msg, Callback<TOutputs...>* callback) {
     if (type == DBUS_MESSAGE_TYPE_ERROR) {
         std::string error_msg;
         if (unpack_message(&args, error_msg) != 0) {
-            printf("Failed to unpack error message. Will not invoke callback.\n");
+            FIBRE_LOG(E) << "Failed to unpack error message. Will not invoke callback.";
         }
-        std::cerr << "DBus error received: " << error_msg;
+        FIBRE_LOG(E) << "DBus error received: " << error_msg;
         return;
     }
     if (type != DBUS_MESSAGE_TYPE_METHOD_RETURN) {
-        printf("the message is type %d. Will not invoke callback.\n", type);
+        FIBRE_LOG(E) << "the message is type " << type << ". Will not invoke callback.";
         return;
     }
     std::tuple<TOutputs...> values;
     if (unpack_message_to_tuple(&args, values) != 0) {
-        printf("Failed to unpack message. Will not invoke callback.\n");
+        FIBRE_LOG(E) << "Failed to unpack message. Will not invoke callback.";
         return;
     }
-    printf("message unpacking complete\n");
+    FIBRE_LOG(D) << "message unpacking complete";
 
     if (callback && callback->callback) {
         apply(callback->callback, std::tuple_cat(std::make_tuple(callback->ctx), values));
@@ -149,21 +153,21 @@ void handle_signal_message(DBusMessage* msg, const std::vector<Callback<TOutputs
     if (type == DBUS_MESSAGE_TYPE_ERROR) {
         std::string error_msg;
         if (unpack_message(&args, error_msg) != 0) {
-            printf("Failed to unpack error message. Will not invoke callback.\n");
+            FIBRE_LOG(E) << "Failed to unpack error message. Will not invoke callback.";
         }
-        std::cerr << "DBus error received: " << error_msg;
+        FIBRE_LOG(E) << "DBus error received: " << error_msg;
         return;
     }
     if (type != DBUS_MESSAGE_TYPE_SIGNAL) {
-        printf("the message is type %d. Will not invoke callback.\n", type);
+        FIBRE_LOG(E) << "the message is type " << type << ". Will not invoke callback.";
         return;
     }
     std::tuple<TOutputs...> values;
     if (unpack_message_to_tuple(&args, values) != 0) {
-        printf("Failed to unpack message. Will not invoke callback.\n");
+        FIBRE_LOG(E) << "Failed to unpack message. Will not invoke callback.";
         return;
     }
-    printf("message unpacking complete\n");
+    FIBRE_LOG(D) << "message unpacking complete";
 
     for (auto& callback : callbacks) {
         if (callback && callback->callback) {
@@ -197,7 +201,7 @@ private:
 
     Signal dispatch_signal_ = Signal("dbus dispatch");
     Signal::callback_t dispatch_callback_obj_ = {
-        .callback = [](void* ctx){ printf("dispatch\n"); dbus_connection_dispatch(((DBusConnectionWrapper*)ctx)->conn_); },
+        .callback = [](void* ctx){ FIBRE_LOG(D) << "dispatch"; dbus_connection_dispatch(((DBusConnectionWrapper*)ctx)->conn_); },
         .ctx = this
     };
 };
@@ -240,33 +244,33 @@ public:
                 interface_name, // interface to call on
                 method_name); // method name
         if (!msg) {
-            fprintf(stderr, "Message Null\n");
+            FIBRE_LOG(E) << "Message Null";
             goto fail1;
         }
 
         dbus_message_iter_init_append(msg, &args);
         if (pack_message(&args, inputs...) != 0) {
-            fprintf(stderr, "failed to pack args");
+            FIBRE_LOG(E) << "failed to pack args";
             goto fail2;
         }
 
         // send message and get a handle for a reply
         if (!dbus_connection_send_with_reply(conn_->get_libdbus_ptr(), msg, &pending, -1)) { // -1 is default timeout
-            fprintf(stderr, "Out Of Memory!\n"); 
+            FIBRE_LOG(E) << "Out Of Memory!";
             goto fail2;
         }
         if (!pending) { 
-            fprintf(stderr, "Pending Call Null\n"); 
+            FIBRE_LOG(E) << "Pending Call Null";
             goto fail2; 
         }
         dbus_connection_flush(conn_->get_libdbus_ptr()); // TODO: not sure if we should flush here
 
         // free output message
         dbus_message_unref(msg);
-        printf("Dispatched message call\n");
+        FIBRE_LOG(D) << "dispatched method call message";
 
         if (!dbus_pending_call_set_notify(pending, pending_call_handler, callback, nullptr)) {
-            printf("failed to set pending call callback\n");
+            FIBRE_LOG(E) << "failed to set pending call callback";
             goto fail1;
         }
 
@@ -296,17 +300,13 @@ class DBusRemoteSignal {
 public:
     DBusRemoteSignal(TInterface* parent, const char* name)
         : parent_(parent), name_(name)
-    {
-        std::cerr << "init remote signal with " << (parent_->conn_ ? "nonzero" : "null") << " connection\n";
-    }
+    { }
 
     DBusRemoteSignal& operator+=(Callback<TArgs...>* callback) {
         callbacks_.push_back(callback);
-        std::cerr << "act filter\n";
         if (callbacks_.size() == 1) {
             activate_filter(); // TODO: error handling
         }
-        std::cerr << "act filter done\n";
         return *this;
     }
 
@@ -330,9 +330,6 @@ private:
                     && (strcmp(dbus_message_get_path(message), self->parent_->object_name_.c_str()) == 0);
 
             if (matches) {
-                std::cout << "have a match!\n";
-                //std::cout << "filter called with serial " << std::string(dbus_message_get_serial(message));
-                //// TODO: filter signals only for this method
                 handle_signal_message(message, self->callbacks_); // TODO: error handling
                 return DBUS_HANDLER_RESULT_HANDLED;
             } else {
@@ -344,12 +341,12 @@ private:
 
     int activate_filter() {
         if (!parent_ || !parent_->conn_) {
-            std::cerr << "object not initialized properly\n";
+            FIBRE_LOG(E) << "object not initialized properly";
             return -1;
         }
 
         if (!dbus_connection_add_filter(parent_->conn_->get_libdbus_ptr(), filter_callback, this, nullptr)) {
-            printf("failed to add filter\n");
+            FIBRE_LOG(E) << "failed to add filter";
             return -1;
         }
 
@@ -359,7 +356,7 @@ private:
             "member='" + std::string(name_) + "',"
             "path='" + parent_->object_name_ + "'";
         
-        std::cerr << "adding rule " << rule << " to connection\n";
+        FIBRE_LOG(D) << "adding rule " << rule << " to connection";
         dbus_bus_add_match(parent_->conn_->get_libdbus_ptr(), rule.c_str(), nullptr);
         dbus_connection_flush(parent_->conn_->get_libdbus_ptr());
         return 0;
@@ -439,7 +436,7 @@ struct DBusTypeTraits<bool> {
         } else if (val_as_int == 1) {
             val = true;
         } else {
-            printf("Invalid boolean value %d\n", val_as_int);
+            FIBRE_LOG(E) << "Invalid boolean value " << val_as_int;
             return -1;
         }
         return 0;
@@ -461,7 +458,7 @@ struct DBusTypeTraits<std::string> {
         char* c_str = nullptr;
         dbus_message_iter_get_basic(iter, &c_str);
         if (c_str == nullptr) {
-            printf("Popped invalid string\n");
+            FIBRE_LOG(E) << "Popped invalid string";
             return -1;
         }
         val = std::string(c_str);
@@ -492,24 +489,23 @@ struct DBusTypeTraits<std::vector<TElement>> {
     static int push(DBusMessageIter* iter, std::vector<TElement> val) {
         DBusMessageIter subiter;
         if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, get_signature<TElement>(), &subiter)) {
-            printf("failed to open container\n");
+            FIBRE_LOG(E) << "failed to open container";
             return -1;
         }
         for (TElement& el: val) {
             if (DBusTypeTraits<TElement>::push(&subiter, el) != 0) {
-                printf("failed to append array element\n");
+                FIBRE_LOG(E) << "failed to append array element";
                 return -1;
             }
         }
         if (!dbus_message_iter_close_container(iter, &subiter)) {
-            printf("failed to close container\n");
+            FIBRE_LOG(E) << "failed to close container";
             return -1;
         }
         return 0;
     }
 
     static int pop(DBusMessageIter* iter, std::vector<TElement>& val) {
-        printf("pop vector\n");
         DBusMessageIter subiter;
         dbus_message_iter_recurse(iter, &subiter);
         while (dbus_message_iter_get_arg_type(&subiter) != DBUS_TYPE_INVALID) {
@@ -538,26 +534,26 @@ struct DBusTypeTraits<std::unordered_map<TKey, TVal>> {
         static auto elem_sig = element_signature;
         DBusMessageIter dict;
         if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, elem_sig.c_str(), &dict)) {
-            printf("failed to open dict container\n");
+            FIBRE_LOG(E) << "failed to open dict container";
             return -1;
         }
 
         for (auto& it: val) {
             DBusMessageIter entry;
             if (!dbus_message_iter_open_container(&dict, DBUS_TYPE_DICT_ENTRY, nullptr, &entry)) {
-                printf("failed to open dict entry container\n");
+                FIBRE_LOG(E) << "failed to open dict entry container";
                 return -1;
             }
             DBusTypeTraits<TKey>::push(&entry, it.first);
             DBusTypeTraits<TVal>::push(&entry, it.second);
             if (!dbus_message_iter_close_container(&dict, &entry)) {
-                printf("failed to close container\n");
+                FIBRE_LOG(E) << "failed to close container";
                 return -1;
             }
         }
 
         if (!dbus_message_iter_close_container(iter, &dict)) {
-            printf("failed to close container\n");
+            FIBRE_LOG(E) << "failed to close container";
             return -1;
         }
         return 0;
@@ -573,14 +569,14 @@ struct DBusTypeTraits<std::unordered_map<TKey, TVal>> {
             DBusMessageIter dict_entry;
             dbus_message_iter_recurse(&dict, &dict_entry);
             if (unpack_message(&dict_entry, dict_entry_key, dict_entry_val) != 0) {
-                printf("failed to unpack dict entry\n");
+                FIBRE_LOG(E) << "failed to unpack dict entry";
                 return -1;
             }
             val[dict_entry_key] = dict_entry_val;
             dbus_message_iter_next(&dict);
         }
         if (dbus_message_iter_get_arg_type(&dict) != DBUS_TYPE_INVALID) {
-            printf("dict contains something else than dict entry\n");
+            FIBRE_LOG(E) << "dict contains something else than dict entry";
             return -1;
         }
         return 0;
@@ -644,17 +640,17 @@ struct variant_helper<I, N, std::variant<Ts...>> {
 template<size_t I, typename ... Ts>
 struct variant_helper<I, I, std::variant<Ts...>> {
     static const char* get_element_signature(std::variant<Ts...>& val) {
-        printf("variant implementation broken\n");
+        FIBRE_LOG(E) << "variant implementation broken";
         return nullptr;
     }
 
     static int push(DBusMessageIter* iter, std::variant<Ts...>& val) {
-        printf("variant implementation broken\n");
+        FIBRE_LOG(E) << "variant implementation broken";
         return -1;
     }
 
     static int pop(DBusMessageIter* iter, std::variant<Ts...>& val, const char* signature) {
-        printf("signature %s not supported by this variant implementation\n", signature);
+        FIBRE_LOG(E) << "signature " << signature << " not supported by this variant implementation";
         return -1;
     }
 };
@@ -669,12 +665,12 @@ struct DBusTypeTraits<std::variant<Ts...>> {
     static int push(DBusMessageIter* iter, std::variant<Ts...>& val) {
         DBusMessageIter subiter;
         if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, helper::get_element_signature(val), &subiter)) {
-            printf("failed to open container\n");
+            FIBRE_LOG(E) << "failed to open container";
             return -1;
         }
         int result = helper::push(&subiter, val);
         if (!dbus_message_iter_close_container(iter, &subiter)) {
-            printf("failed to close container\n");
+            FIBRE_LOG(E) << "failed to close container";
             result = -1;
         }
         return result;
@@ -713,5 +709,7 @@ struct hash<fibre::DBusObject> {
 };
 
 }
+
+#undef current_log_topic
 
 #endif // __FIBRE_DBUS_HPP

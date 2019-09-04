@@ -10,6 +10,7 @@ function fibre_package(platform)
             'output.cpp',
             'remote_node.cpp',
             'posix_tcp.cpp',
+            'logging.cpp',
             'worker.cpp',
             'timer.cpp',
             'signal.cpp',

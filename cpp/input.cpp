@@ -3,14 +3,17 @@
 
 using namespace fibre;
 
+DEFINE_LOG_TOPIC(INPUT);
+USE_LOG_TOPIC(INPUT);
+
 void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool packet_break) {
     if (offset > pos_) {
-        LOG_FIBRE_W(INPUT, "disjoint chunk reassembly not implemented");
+        FIBRE_LOG(W) << "disjoint chunk reassembly not implemented";
         // TODO: implement disjoint chunk reassembly
         return;
     }
     if ((offset + length < pos_) || ((offset + length == pos_) && at_packet_break)) {
-        LOG_FIBRE_W(INPUT, "duplicate data received");
+        FIBRE_LOG(W) << "duplicate data received";
         return;
     }
     // dump the beginning of the chunk if it's already known
@@ -22,10 +25,10 @@ void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t lengt
         length -= diff;
     }
     if (crc != crc_) {
-        LOG_FIBRE_W(INPUT, "received dangling chunk: expected CRC ", as_hex(crc_), " but got ", as_hex(crc));
+        FIBRE_LOG(W) << "received dangling chunk: expected CRC " << as_hex(crc_) << " but got " << as_hex(crc);
         return;
     }
-    LOG_FIBRE(INPUT, "input pipe ", id_, ": process ", as_hex(length), " bytes...");
+    FIBRE_LOG(D) << "input pipe " << id_ << ": process " << as_hex(length) << " bytes...";
 
     // Open connection on demand
     if (!input_handler_ && at_packet_break) {
@@ -39,15 +42,15 @@ void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t lengt
 
             if (status != StreamSink::OK || processed_bytes != length) {
                 if (status != StreamSink::CLOSED || processed_bytes != length) {
-                    LOG_FIBRE_W(INPUT, "input handler for pipe ", id_, " terminated abnormally: status ", status, ", processed ", processed_bytes, " bytes, should have processed ", length, " bytes");
+                    FIBRE_LOG(W) << "input handler for pipe " << id_ << " terminated abnormally: status " << status << ", processed " << processed_bytes << " bytes, should have processed " << length << " bytes";
                 }
                 set_handler(nullptr);
             }
         } else {
-            LOG_FIBRE_W(INPUT, "the pipe ", id_, " has no input handler - maybe the input handler terminated abnormally");
+            FIBRE_LOG(W) << "the pipe " << id_ << " has no input handler - maybe the input handler terminated abnormally";
         }
     } else {
-        LOG_FIBRE(INPUT, "received standalone packet break");
+        FIBRE_LOG(D) << "received standalone packet break";
     }
 
     pos_ = offset + length;
@@ -56,16 +59,16 @@ void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t lengt
     if (packet_break) {
         if (input_handler_) {
             set_handler(nullptr);
-            LOG_FIBRE_W(INPUT, "packet break on pipe ", id_, " but the input handler was not done");
+            FIBRE_LOG(W) << "packet break on pipe " << id_ << " but the input handler was not done";
         }
-        LOG_FIBRE(INPUT, "received packet break");
+        FIBRE_LOG(D) << "received packet break";
     }
 
     //// TODO: ACK/NACK received bytes
 }
 
 InputChannelDecoder::status_t InputChannelDecoder::process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) {
-    LOG_FIBRE(INPUT, "received ", length, " bytes from ", remote_node_->get_uuid());
+    FIBRE_LOG(D) << "received " << length << " bytes from " << remote_node_->get_uuid();
     while (length) {
         size_t chunk = 0;
         if (in_header) {
@@ -78,7 +81,7 @@ InputChannelDecoder::status_t InputChannelDecoder::process_bytes(const uint8_t* 
 
             // finished receiving chunk header
             if (status == CLOSED) {
-                LOG_FIBRE(INPUT, "received chunk header: pipe ", get_pipe_no(), ", offset ", as_hex(get_chunk_offset()), ", (length << 1) | packet_break ", as_hex(get_chunk_length()), ", crc ", as_hex(get_chunk_crc()));
+                FIBRE_LOG(D) << "received chunk header: pipe " << get_pipe_no() << ", offset " << as_hex(get_chunk_offset()) << ", (length << 1) | packet_break " << as_hex(get_chunk_length()) << ", crc " << as_hex(get_chunk_crc());
                 in_header = false;
             }
         } else {
@@ -95,7 +98,7 @@ InputChannelDecoder::status_t InputChannelDecoder::process_bytes(const uint8_t* 
             std::tie(input_pipe, output_pipe)
                 = remote_node_->get_pipe_pair(pipe_id, !(pipe_id & 1));
             if (!input_pipe) {
-                LOG_FIBRE_W(INPUT, "no pipe ", pipe_id, " associated with this source");
+                FIBRE_LOG(W) << "no pipe " << pipe_id << " associated with this source";
                 reset();
                 continue;
             }
@@ -134,7 +137,7 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 HeaderDecoderChain *header_decoder = get_stream<HeaderDecoderChain>();
                 uint16_t endpoint_id = header_decoder->get_stream<0>().get_value();
                 uint16_t endpoint_hash = header_decoder->get_stream<1>().get_value();
-                LOG_FIBRE(INPUT, "finished receiving header: endpoint ", endpoint_id, ", hash ", as_hex(endpoint_hash));
+                FIBRE_LOG(D) << "finished receiving header: endpoint " << endpoint_id << ", hash " << as_hex(endpoint_hash);
                 
                 // TODO: behold, a race condition
                 if (endpoint_id >= global_state.functions_.size())
@@ -142,7 +145,7 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 endpoint_ = global_state.functions_[endpoint_id];
 
                 if (!endpoint_) {
-                    LOG_FIBRE_W(INPUT, "no endpoint at ", endpoint_id);
+                    FIBRE_LOG(W) << "no endpoint at " << endpoint_id;
                     return ERROR;
                 }
 
@@ -151,10 +154,10 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 // CRC over the entire JSON descriptor tree (this may change in future versions).
                 uint16_t expected_hash = endpoint_->get_hash();
                 if (expected_hash != endpoint_hash) {
-                    LOG_FIBRE_W(INPUT, "hash mismatch for endpoint ", endpoint_id, ": expected ", as_hex(expected_hash), ", got ", as_hex(endpoint_hash));
+                    FIBRE_LOG(W) << "hash mismatch for endpoint " << endpoint_id << ": expected " << as_hex(expected_hash) << ", got " << as_hex(endpoint_hash);
                     return ERROR;
                 }
-                LOG_FIBRE(INPUT, "hash ok for endpoint ", endpoint_id);
+                FIBRE_LOG(D) << "hash ok for endpoint " << endpoint_id;
 
                 endpoint_->open_connection(*this);
                 //set_stream(nullptr);
@@ -163,7 +166,7 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 return OK;
             }
         case RECEIVING_PAYLOAD:
-            LOG_FIBRE(INPUT, "finished receiving payload");
+            FIBRE_LOG(D) << "finished receiving payload";
             if (endpoint_)
                 endpoint_->decoder_finished(*this, output_pipe_);
             set_stream(nullptr);

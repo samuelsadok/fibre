@@ -5,6 +5,9 @@
 
 using namespace fibre;
 
+DEFINE_LOG_TOPIC(REMOTE_NODE);
+USE_LOG_TOPIC(REMOTE_NODE);
+
 std::pair<InputPipe*, OutputPipe*> RemoteNode::get_pipe_pair(size_t id, bool server_pool) {
     std::unordered_map<size_t, std::pair<InputPipe, OutputPipe>>& pipe_pool =
         server_pool ? server_pipe_pairs_ : client_pipe_pairs_;
@@ -58,21 +61,21 @@ void RemoteNode::schedule() {
     constexpr size_t per_packet_overhead = 16 + 2;
     constexpr size_t per_chunk_overhead = 8;
     
-    LOG_FIBRE(OUTPUT, "schedule for remote node ", uuid_);
+    FIBRE_LOG(D) << "schedule for remote node " << uuid_;
 
     for (OutputChannel* channel : output_channels_) {
         size_t free_space = channel->get_min_non_blocking_bytes();
         if (free_space < per_packet_overhead) {
-            LOG_FIBRE(OUTPUT, "channel ", (*channel), " is busy");
+            FIBRE_LOG(D) << "channel " << (*channel) << " is busy";
             continue;
         }
-        LOG_FIBRE(OUTPUT, "channel ", (*channel), " has ", free_space, " free bytes");
+        FIBRE_LOG(D) << "channel " << (*channel) << " has " << free_space << " free bytes";
 
-        LOG_FIBRE(GENERAL, "array at ", as_hex(reinterpret_cast<uintptr_t>(&server_pipe_pairs_)));
+        FIBRE_LOG(D) << "array at " << as_hex(reinterpret_cast<uintptr_t>(&server_pipe_pairs_));
         using pipe_entry_t = std::pair<const size_t, std::pair<InputPipe, OutputPipe>>;
         for (pipe_entry_t& pipe_entry : server_pipe_pairs_) { // TODO: include client
             OutputPipe& pipe = pipe_entry.second.second;
-            LOG_FIBRE(OUTPUT, "looking at pipe ", pipe.get_id());
+            FIBRE_LOG(D) << "looking at pipe " << pipe.get_id();
 
             monotonic_time_t due_time = pipe.get_due_time();
             if (due_time > now())
@@ -88,7 +91,7 @@ void RemoteNode::schedule() {
                 size_t offset = 0, length = 0;
                 uint16_t crc_init = 0;
                 if (!chunk.get_properties(&offset, &length, &crc_init)) {
-                    LOG_FIBRE_W(OUTPUT, "get_properties failed");
+                    FIBRE_LOG(W) << "get_properties failed";
                 }
                 length = std::min(length, max_chunk_len);
                 uint8_t buffer[8];
@@ -96,21 +99,21 @@ void RemoteNode::schedule() {
                 write_le<uint16_t>(offset, buffer + 2, 2);
                 write_le<uint16_t>(crc_init, buffer + 4, 2);
                 write_le<uint16_t>(length, buffer + 6, 2);
-                LOG_FIBRE(OUTPUT, "emitting pipe id ", pipe.get_id(), " chunk ", offset, " - ", offset + length - 1, ", crc ", as_hex(crc_init));
+                FIBRE_LOG(D) << "emitting pipe id " << pipe.get_id() << " chunk " << offset << " - " << offset + length - 1 << ", crc " << as_hex(crc_init);
                 size_t processed_bytes = 0;
                 if (channel->process_bytes(buffer, sizeof(buffer), &processed_bytes) != StreamSink::OK) {
-                    LOG_FIBRE_W(OUTPUT, "channel failed");
+                    FIBRE_LOG(W) << "channel failed";
                     // TODO: remove channel
                     break;
                 }
                 if (processed_bytes != sizeof(buffer)) {
-                    LOG_FIBRE_W(OUTPUT, "expected to process ", sizeof(buffer), " bytes but only processed ", processed_bytes, " bytes");
+                    FIBRE_LOG(W) << "expected to process " << sizeof(buffer) << " bytes but only processed " << processed_bytes << " bytes";
                     break;
                 }
 
                 // send chunk paylaod
                 if (!chunk.write_to(channel, length)) {
-                    LOG_FIBRE_W(OUTPUT, "the chunk could not be fully sent - get_min_non_blocking_bytes lied to us.");
+                    FIBRE_LOG(W) << "the chunk could not be fully sent - get_min_non_blocking_bytes lied to us.";
                     break;
                 }
 

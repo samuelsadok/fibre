@@ -27,6 +27,7 @@ SafeContext<TFunc, TCtx...> on_leave_scope(TFunc dtor, TCtx... ctx) {
 template<typename ... Ts>
 bool test_assert(bool val, const char* file, size_t line, Ts... args) {
     if (!val) {
+        // TODO: use logging stubs
         fprintf(stderr, "error in %s:%zu: ", file, line);
         int dummy[sizeof...(Ts)] = { (std::cerr << args, 0)... };
         (void) dummy;

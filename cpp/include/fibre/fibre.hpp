@@ -31,29 +31,9 @@
 
 
 
-// log topics
-//struct CONFIG_LOG_INPUT {};
-//struct CONFIG_LOG_OUTPUT {};
-//struct CONFIG_LOG_GENERAL {};
-//struct CONFIG_LOG_TCP {};
-//struct CONFIG_LOG_USB {};
-
-#define LOG_TOPICS(X) \
-    X(GENERAL, "general") \
-    X(INPUT, "input") \
-    X(OUTPUT, "output") \
-    X(SERDES, "serdes") \
-    X(TCP, "tcp")
-
 #include "logging.hpp"
 
 #include "fibre_config.hpp"
-
-//#ifdef DEBUG_FIBRE
-//#define LOG_FIBRE(...)  do { printf("%s %s(): ", __FILE__, __func__); printf(__VA_ARGS__); printf("\r\n"); } while (0)
-//#else
-//#define LOG_FIBRE(...)  ((void) 0)
-//#endif
 
 
 
