@@ -49,7 +49,7 @@ static void handle_timer(void* ctx) {
     dbus_connection_dispatch(timeout_ctx->conn->get_libdbus_ptr());
 }
 
-int DBusConnectionWrapper::init(Worker* worker) {
+int DBusConnectionWrapper::init(Worker* worker, bool system_bus) {
     if (!worker)
         return -1;
     worker_ = worker;
@@ -60,7 +60,7 @@ int DBusConnectionWrapper::init(Worker* worker) {
     dbus_error_init(&err_);
 
     // connect to the bus
-    conn_ = dbus_bus_get(DBUS_BUS_SYSTEM, &err_);
+    conn_ = dbus_bus_get(system_bus ? DBUS_BUS_SYSTEM : DBUS_BUS_SESSION, &err_);
     if (dbus_error_is_set(&err_)) {
         FIBRE_LOG(E) << "dbus_bus_get() failed: " << err_.message;
         goto fail1;
@@ -68,6 +68,8 @@ int DBusConnectionWrapper::init(Worker* worker) {
         FIBRE_LOG(E) << "dbus_bus_get() failed (retured NULL)";
         goto fail1;
     }
+
+    FIBRE_LOG(D) << "my name on the bus is " << dbus_bus_get_unique_name(conn_);
 
     /*// request a name on the bus
     ret = dbus_bus_request_name(conn_, "test.method.server", 
@@ -137,13 +139,20 @@ int DBusConnectionWrapper::init(Worker* worker) {
                 ((DBusConnectionWrapper*)data)->dispatch_signal_.set();
         }, this, nullptr);
 
+    // TODO: remove this filter
+    status = dbus_connection_add_filter(conn_, handle_method_call_stub, this, nullptr);
+    if (!status) {
+        FIBRE_LOG(E) << "failed to add filter";
+        return -1;
+    }
+
     if (dbus_connection_get_dispatch_status(conn_) == DBUS_DISPATCH_DATA_REMAINS)
         dispatch_signal_.set();
 
     return 0;
 
 fail2:
-    dbus_connection_close(conn_);
+    dbus_connection_unref(conn_);
 fail1:
     dbus_error_free(&err_);
     return -1;
@@ -152,16 +161,18 @@ fail1:
 int DBusConnectionWrapper::deinit() {
     int result = 0;
 
-    // TODO: wait until DISCONNECT message is received
-    FIBRE_LOG(D) << "will close connection";
-    dbus_connection_close(conn_);
-    dbus_connection_unref(conn_);
-    FIBRE_LOG(D) << "connection closed";
+    // TODO: ensure all method calls are finished
 
+    dbus_connection_remove_filter(conn_, handle_method_call_stub, this);
     dbus_connection_set_watch_functions(conn_, nullptr, nullptr, nullptr, nullptr, nullptr);
     dbus_connection_set_timeout_functions(conn_, nullptr, nullptr, nullptr, nullptr, nullptr);
     dbus_connection_set_dispatch_status_function(conn_, nullptr, nullptr, nullptr);
     dbus_connection_set_wakeup_main_function(conn_, nullptr, nullptr, nullptr);
+    
+    FIBRE_LOG(D) << "will close connection";
+    //dbus_connection_close(conn_);
+    dbus_connection_unref(conn_);
+    FIBRE_LOG(D) << "connection closed";
 
     if (dispatch_signal_.deinit() != 0) {
         FIBRE_LOG(E) << "signal deinit failed";
@@ -272,3 +283,68 @@ int DBusConnectionWrapper::handle_toggle_timeout(DBusTimeout *timeout, bool enab
     }
 }
 
+DBusHandlerResult DBusConnectionWrapper::handle_method_call(DBusMessage* rx_msg) {
+    if (dbus_message_get_type(rx_msg) != DBUS_MESSAGE_TYPE_METHOD_CALL) {
+        FIBRE_LOG(D) << "rx_msg type " << dbus_message_get_type(rx_msg);
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    }
+
+    FIBRE_LOG(D) << "method call received";
+
+    const char* interface_name = dbus_message_get_interface(rx_msg);
+    const char* method_name = dbus_message_get_member(rx_msg);
+    const char* object_path = dbus_message_get_path(rx_msg);
+
+    if (!interface_name || !method_name || !object_path) {
+        FIBRE_LOG(W) << "malformed method call: "
+            << " intf: " << (interface_name ? "not null" : "null")
+            << " member: " << (method_name ? "not null" : "null")
+            << " object: " << (object_path ? "not null" : "null");
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    }
+
+    ExportTableBase* interface = interface_table[interface_name];
+    if (!interface) {
+        FIBRE_LOG(W) << "method call for unknown interface " << interface_name << " received";
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    }
+
+    // Fetch object pointer and type ID of object
+    dbus_type_id_t type_id;
+    void* obj_ptr;
+    std::tie(type_id, obj_ptr) = object_table[object_path];
+    if (type_id == dbus_type_id_t{} || obj_ptr == nullptr) {
+        FIBRE_LOG(W) << "object " << interface_name << " unknown";
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    }
+
+    // Find the function pointer that implements the function for this object
+    FunctionImplTable method_table = (*interface)[method_name]; // TODO: this generates an instance of a dictionary, which may be undesired
+    auto unpack_invoke_pack = method_table[type_id];
+    if (!unpack_invoke_pack) {
+        FIBRE_LOG(W) << "method " << interface_name << "." << method_name << " not implemented for object " << object_path << " (internal type " << type_id << ")";
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    }
+
+    // Prepare reply message
+    DBusMessage* tx_msg = dbus_message_new_method_return(rx_msg);
+    if (!tx_msg) {
+        FIBRE_LOG(E) << "reply msg NULL. Will not send reply.";
+        return DBUS_HANDLER_RESULT_NEED_MEMORY;
+    }
+
+    if (unpack_invoke_pack(obj_ptr, rx_msg, tx_msg) != 0) {
+        FIBRE_LOG(W) << "method call failed";
+        dbus_message_unref(tx_msg);
+        tx_msg = dbus_message_new_error(rx_msg, "io.fibre.DBusServerError", "the method call failed on the server");
+    }
+
+    if (!dbus_connection_send(get_libdbus_ptr(), tx_msg, nullptr)) {
+        FIBRE_LOG(E) << "failed to send reply";
+    } else {
+        FIBRE_LOG(D) << "method call was handled successfully";
+    }
+
+    dbus_message_unref(tx_msg);
+    return DBUS_HANDLER_RESULT_HANDLED;
+}

@@ -2,12 +2,12 @@
 #define __INTERFACES__ORG_BLUEZ_AGENTMANAGER1_HPP
 
 #include <fibre/dbus.hpp>
+#include <fibre/callback.hpp>
 #include <vector>
-
 
 class org_bluez_AgentManager1 : public fibre::DBusObject {
 public:
-    static constexpr const char* interface_name = "org.bluez.AgentManager1";
+    static const char* get_interface_name() { return "org.bluez.AgentManager1"; }
 
     org_bluez_AgentManager1(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
         : DBusObject(conn, service_name, object_name) {}
@@ -18,17 +18,33 @@ public:
 
 
     int RegisterAgent_async(DBusObject agent, std::string capability, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "RegisterAgent", agent, capability, callback);
+        return method_call_async(get_interface_name(), "RegisterAgent", callback, agent, capability);
     }
 
     int UnregisterAgent_async(DBusObject agent, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "UnregisterAgent", agent, callback);
+        return method_call_async(get_interface_name(), "UnregisterAgent", callback, agent);
     }
 
     int RequestDefaultAgent_async(DBusObject agent, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "RequestDefaultAgent", agent, callback);
+        return method_call_async(get_interface_name(), "RequestDefaultAgent", callback, agent);
     }
 
+
+    struct ExportTable : fibre::ExportTableBase {
+        ExportTable() : fibre::ExportTableBase{
+            { "RegisterAgent", fibre::FunctionImplTable{} },
+            { "UnregisterAgent", fibre::FunctionImplTable{} },
+            { "RequestDefaultAgent", fibre::FunctionImplTable{} },
+        } {}
+
+        template<typename TImpl>
+        int register_implementation(TImpl& obj) {
+            (*this)["RegisterAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject, std::string>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::RegisterAgent>((TImpl*)obj)); }});
+            (*this)["UnregisterAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::UnregisterAgent>((TImpl*)obj)); }});
+            (*this)["RequestDefaultAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::RequestDefaultAgent>((TImpl*)obj)); }});
+            return 0;
+        }
+    };
 };
 
 #endif // __INTERFACES__ORG_BLUEZ_AGENTMANAGER1_HPP

@@ -6,6 +6,7 @@
 #include <dbus/dbus.h>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
 #include <limits.h>
 #include <string.h>
 #include <fibre/worker.hpp>
@@ -20,6 +21,7 @@ namespace fibre {
 
 /* Forward declarations ------------------------------------------------------*/
 
+class DBusConnectionWrapper;
 class DBusObject;
 
 /**
@@ -49,8 +51,16 @@ using dbus_variant = std::variant<
     std::vector<std::string>
 >;
 
+using dbus_type_id_t = std::string; // Used as a key in internal data structures
+
+using FunctionImplTable = std::unordered_map<fibre::dbus_type_id_t, int(*)(void*, DBusMessage*, DBusMessage*)>;
+using ExportTableBase = std::unordered_map<std::string, FunctionImplTable>;
+
 
 /* Function definitions ------------------------------------------------------*/
+
+template<typename T>
+dbus_type_id_t get_type_id() { return std::string(typeid(T).name()); }
 
 /**
  * @brief Appends the given arguments to the message iterator.
@@ -71,6 +81,14 @@ inline int pack_message(DBusMessageIter* iter, T arg, Ts... args) {
     }
     int result = pack_message<Ts...>(iter, args...);
     return result;
+}
+
+
+template<typename ... Ts, size_t ... Is>
+inline int pack_message(DBusMessage* msg, std::tuple<Ts...> args, std::index_sequence<Is...>) {
+    DBusMessageIter iter;
+    dbus_message_iter_init_append(msg, &iter);
+    return pack_message(&iter, std::get<Is>(args)...);
 }
 
 
@@ -113,61 +131,59 @@ int unpack_message_to_tuple(DBusMessageIter* iter, std::tuple<Ts...>& tuple) {
     return unpack_message_to_tuple_impl(iter, tuple, std::make_index_sequence<sizeof...(Ts)>());
 }
 
+template<typename ... Ts>
+int unpack_message(DBusMessage* message, std::tuple<Ts...>& tuple, int expected_type = DBUS_MESSAGE_TYPE_INVALID) {
+    DBusMessageIter args;
+    dbus_message_iter_init(message, &args);
+
+    if (expected_type != DBUS_MESSAGE_TYPE_INVALID) {
+        int type = dbus_message_get_type(message);
+        if (type == DBUS_MESSAGE_TYPE_ERROR) {
+            std::string error_msg;
+            if (unpack_message(&args, error_msg) != 0) {
+                FIBRE_LOG(E) << "DBus error received but failted to unpack error message.";
+            } else {
+                FIBRE_LOG(E) << "DBus error received: " << error_msg;
+            }
+            return -1;
+        }
+        if (type != expected_type) {
+            FIBRE_LOG(E) << "unexpected message with type " << type;
+            return -1;
+        }
+    }
+
+    if (unpack_message_to_tuple(&args, tuple) != 0) {
+        FIBRE_LOG(E) << "Failed to unpack message content.";
+        return -1;
+    }
+
+    FIBRE_LOG(D) << "message unpacking complete";
+    return 0;
+}
+
 template<typename ... TOutputs>
 void handle_reply_message(DBusMessage* msg, Callback<TOutputs...>* callback) {
-    DBusMessageIter args;
-    dbus_message_iter_init(msg, &args);
-
-    int type = dbus_message_get_type(msg);
-    if (type == DBUS_MESSAGE_TYPE_ERROR) {
-        std::string error_msg;
-        if (unpack_message(&args, error_msg) != 0) {
-            FIBRE_LOG(E) << "Failed to unpack error message. Will not invoke callback.";
-        }
-        FIBRE_LOG(E) << "DBus error received: " << error_msg;
-        return;
-    }
-    if (type != DBUS_MESSAGE_TYPE_METHOD_RETURN) {
-        FIBRE_LOG(E) << "the message is type " << type << ". Will not invoke callback.";
-        return;
-    }
     std::tuple<TOutputs...> values;
-    if (unpack_message_to_tuple(&args, values) != 0) {
-        FIBRE_LOG(E) << "Failed to unpack message. Will not invoke callback.";
+
+    if (unpack_message(msg, values, DBUS_MESSAGE_TYPE_METHOD_RETURN) != 0) {
+        FIBRE_LOG(E) << "Failed to unpack reply. Will not invoke callback.";
+        // TODO: invoke error callback
         return;
     }
-    FIBRE_LOG(D) << "message unpacking complete";
 
     if (callback && callback->callback) {
         apply(callback->callback, std::tuple_cat(std::make_tuple(callback->ctx), values));
     }
 }
 
-// TODO: merge with handle_reply_message from above
-template<typename ... TOutputs>
-void handle_signal_message(DBusMessage* msg, const std::vector<Callback<TOutputs...>*>& callbacks) {
-    DBusMessageIter args;
-    dbus_message_iter_init(msg, &args);
-
-    int type = dbus_message_get_type(msg);
-    if (type == DBUS_MESSAGE_TYPE_ERROR) {
-        std::string error_msg;
-        if (unpack_message(&args, error_msg) != 0) {
-            FIBRE_LOG(E) << "Failed to unpack error message. Will not invoke callback.";
-        }
-        FIBRE_LOG(E) << "DBus error received: " << error_msg;
+template<typename ... TArgs>
+void handle_signal_message(DBusMessage* msg, const std::vector<Callback<TArgs...>*>& callbacks) {
+    std::tuple<TArgs...> values;
+    if (unpack_message(msg, values, DBUS_MESSAGE_TYPE_SIGNAL) != 0) {
+        FIBRE_LOG(E) << "Failed to unpack signal. Will not invoke callback.";
         return;
     }
-    if (type != DBUS_MESSAGE_TYPE_SIGNAL) {
-        FIBRE_LOG(E) << "the message is type " << type << ". Will not invoke callback.";
-        return;
-    }
-    std::tuple<TOutputs...> values;
-    if (unpack_message_to_tuple(&args, values) != 0) {
-        FIBRE_LOG(E) << "Failed to unpack message. Will not invoke callback.";
-        return;
-    }
-    FIBRE_LOG(D) << "message unpacking complete";
 
     for (auto& callback : callbacks) {
         if (callback && callback->callback) {
@@ -181,10 +197,41 @@ void handle_signal_message(DBusMessage* msg, const std::vector<Callback<TOutputs
 
 class DBusConnectionWrapper {
 public:
-    int init(Worker* worker);
+    int init(Worker* worker, bool system_bus = false);
     int deinit();
 
     DBusConnection* get_libdbus_ptr() { return conn_; }
+
+    template<typename ... TInterfaces, typename TImpl>
+    int publish(std::string name, TImpl& obj) {
+        // TODO: Generate object path transparently from object instance.
+        object_table[name] = std::make_tuple(get_type_id<TImpl>(), &obj);
+        int dummy[] = { publish_with_interface<TInterfaces>(obj)... };
+        for (int& it : dummy)
+            if (it)
+                return -1;
+        return 0;
+    }
+
+    // TODO: implement unpublish
+
+    template<typename TCapture, typename ... TOutputs, typename ... TInputs>
+    static int handle_method_call_typed(DBusMessage* rx_msg, DBusMessage* tx_msg, GenericFunction<TCapture, std::tuple<TInputs...>, std::tuple<TOutputs...>> method) {
+        std::tuple<TInputs...> inputs;
+        if (unpack_message(rx_msg, inputs) != 0) {
+            FIBRE_LOG(E) << "Failed to unpack method call. Will not invoke handler.";
+            return -1;
+        }
+
+        std::tuple<TOutputs...> outputs = apply(method, inputs);
+
+        if (pack_message(tx_msg, outputs, std::make_index_sequence<sizeof...(TOutputs)>()) != 0) {
+            FIBRE_LOG(E) << "failed to pack args";
+            return -1;
+        }
+
+        return 0;
+    }
 
 private:
     int handle_add_watch(DBusWatch *watch);
@@ -195,15 +242,46 @@ private:
     void handle_remove_timeout(DBusTimeout* timeout);
     int handle_toggle_timeout(DBusTimeout *timeout, bool enable);
 
+    DBusHandlerResult handle_method_call(DBusMessage* rx_msg);
+
+    static DBusHandlerResult handle_method_call_stub(DBusConnection *connection, DBusMessage *message, void *user_data) {
+        return ((DBusConnectionWrapper*)user_data)->handle_method_call(message);
+    }
+
+    template<typename T>
+    ExportTableBase* construct_export_table() {
+        static T singleton{};
+        return &singleton;
+    }
+
+    template<typename TInterface, typename TImpl>
+    int publish_with_interface(TImpl& obj) {
+        // Create and register exactly one instance of the export table of the
+        // interface and then register this implementation type with the
+        // export table.
+        using exporter_t = typename TInterface::ExportTable;
+        auto insert_result = interface_table.insert({TInterface::get_interface_name(), construct_export_table<exporter_t>()});
+        exporter_t* intf = reinterpret_cast<exporter_t*>(insert_result.first->second);
+        return intf->register_implementation(obj);
+    }
+
     DBusError err_;
     DBusConnection* conn_;
     Worker* worker_;
 
     Signal dispatch_signal_ = Signal("dbus dispatch");
     Signal::callback_t dispatch_callback_obj_ = {
-        .callback = [](void* ctx){ FIBRE_LOG(D) << "dispatch"; dbus_connection_dispatch(((DBusConnectionWrapper*)ctx)->conn_); },
+        .callback = [](void* ctx){
+            do {
+                FIBRE_LOG(D) << "dispatch";
+            } while (dbus_connection_dispatch(((DBusConnectionWrapper*)ctx)->conn_) == DBUS_DISPATCH_DATA_REMAINS);
+        },
         .ctx = this
     };
+
+    // Lookup tables to route incoming method calls to the correct receiver
+    std::unordered_map<std::string, std::tuple<dbus_type_id_t, void*>> object_table{};
+    std::unordered_map<std::string, ExportTableBase*> interface_table{};
 };
 
 
@@ -226,7 +304,7 @@ public:
     }
 
     template<typename ... TInputs, typename ... TOutputs>
-    int method_call_async(const char* interface_name, const char* method_name, TInputs ... inputs, Callback<TOutputs...>* callback) {
+    int method_call_async(const char* interface_name, const char* method_name, Callback<TOutputs...>* callback, TInputs ... inputs) {
         DBusMessage* msg;
         DBusMessageIter args;
         DBusPendingCall* pending;
@@ -238,6 +316,10 @@ public:
             handle_reply_message(msg, callback);
             dbus_message_unref(msg);
         };
+
+        // TODO: we get a segfault if we try to use a service name which does
+        // not include a dot. Find out if this is libdbus' or our fault and
+        // possibly file a bug report.
 
         msg = dbus_message_new_method_call(service_name_.c_str(), // target for the method call
                 object_name_.c_str(), // object to call on
@@ -311,7 +393,7 @@ public:
     }
 
     DBusRemoteSignal& operator-=(Callback<TArgs...>* callback) {
-        callbacks_.erase(callback);
+        callbacks_.erase(std::remove(callbacks_.begin(), callbacks_.end(), callback), callbacks_.end());
         if (callbacks_.size() == 0) {
             deactivate_filter();
         }
@@ -325,7 +407,7 @@ private:
 
             // TODO: compare sender
             // The sender may be reported as ":1.10" even if the match was registered as "sender='org.bluez'"
-            bool matches = (strcmp(dbus_message_get_interface(message), TInterface::interface_name) == 0)
+            bool matches = (strcmp(dbus_message_get_interface(message), TInterface::get_interface_name()) == 0)
                     && (strcmp(dbus_message_get_member(message), self->name_) == 0)
                     && (strcmp(dbus_message_get_path(message), self->parent_->object_name_.c_str()) == 0);
 
@@ -352,7 +434,7 @@ private:
 
         std::string rule = "type='signal',"
             "sender='" + parent_->service_name_ + "',"
-            "interface='" + TInterface::interface_name + "',"
+            "interface='" + TInterface::get_interface_name() + "',"
             "member='" + std::string(name_) + "',"
             "path='" + parent_->object_name_ + "'";
         

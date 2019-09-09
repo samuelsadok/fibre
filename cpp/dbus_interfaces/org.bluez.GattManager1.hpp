@@ -2,12 +2,12 @@
 #define __INTERFACES__ORG_BLUEZ_GATTMANAGER1_HPP
 
 #include <fibre/dbus.hpp>
+#include <fibre/callback.hpp>
 #include <vector>
-
 
 class org_bluez_GattManager1 : public fibre::DBusObject {
 public:
-    static constexpr const char* interface_name = "org.bluez.GattManager1";
+    static const char* get_interface_name() { return "org.bluez.GattManager1"; }
 
     org_bluez_GattManager1(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
         : DBusObject(conn, service_name, object_name) {}
@@ -18,13 +18,27 @@ public:
 
 
     int RegisterApplication_async(DBusObject application, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "RegisterApplication", application, options, callback);
+        return method_call_async(get_interface_name(), "RegisterApplication", callback, application, options);
     }
 
     int UnregisterApplication_async(DBusObject application, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "UnregisterApplication", application, callback);
+        return method_call_async(get_interface_name(), "UnregisterApplication", callback, application);
     }
 
+
+    struct ExportTable : fibre::ExportTableBase {
+        ExportTable() : fibre::ExportTableBase{
+            { "RegisterApplication", fibre::FunctionImplTable{} },
+            { "UnregisterApplication", fibre::FunctionImplTable{} },
+        } {}
+
+        template<typename TImpl>
+        int register_implementation(TImpl& obj) {
+            (*this)["RegisterApplication"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject, std::unordered_map<std::string, fibre::dbus_variant>>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::RegisterApplication>((TImpl*)obj)); }});
+            (*this)["UnregisterApplication"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::UnregisterApplication>((TImpl*)obj)); }});
+            return 0;
+        }
+    };
 };
 
 #endif // __INTERFACES__ORG_BLUEZ_GATTMANAGER1_HPP

@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="io.fibre.TestInterface">
+    <method name="Func1">
+    </method>
+    <method name="Func2">
+      <arg name="in_arg1" type="i" direction="in"/>
+    </method>
+    <method name="Func3">
+      <arg name="in_arg1" type="i" direction="in"/>
+      <arg name="in_arg2" type="s" direction="in"/>
+    </method>
+    <method name="Func4">
+      <arg name="out_arg1" type="i" direction="out"/>
+    </method>
+    <method name="Func5">
+      <arg name="out_arg1" type="i" direction="out"/>
+      <arg name="out_arg2" type="s" direction="out"/>
+    </method>
+    <method name="Func6">
+      <arg name="in_arg1" type="i" direction="in"/>
+      <arg name="in_arg2" type="s" direction="in"/>
+      <arg name="out_arg1" type="s" direction="out"/>
+      <arg name="out_arg2" type="u" direction="out"/>
+    </method>
+
+    <signal name="Signal1">
+    </signal>
+    <signal name="Signal2">
+      <arg name="out_arg1" type="i" direction="out"/>
+    </signal>
+    <signal name="Signal3">
+      <arg name="out_arg1" type="i" direction="out"/>
+      <arg name="out_arg2" type="s" direction="out"/>
+    </signal>
+  </interface>
+</node>

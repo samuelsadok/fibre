@@ -1128,6 +1128,7 @@ bool hex_string_to_int_arr(const char * str, TInt (&output)[ICount]) {
 
 namespace fibre {
 
+// TODO: move to print_utils.hpp
 template<typename T>
 class HexPrinter {
 public:

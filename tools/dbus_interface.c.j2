@@ -2,29 +2,54 @@
 #define __INTERFACES__{{output_name | replace('.', '_') | upper}}
 
 #include <fibre/dbus.hpp>
+#include <fibre/callback.hpp>
 #include <vector>
 
-{% macro args_to_types(args) %}
+{%- macro args_to_types(args) %}
 {%- for arg in args %}
 {{- arg.type | dbus_type_to_cpp_type}}{% if not loop.last %}, {% endif %}
 {%- endfor %}
 {%- endmacro %}
 
-{%- for interface in all_interfaces %}
-class {{interface.name | replace('.', '_')}} : public fibre::DBusObject {
-public:
-    static constexpr const char* interface_name = "{{interface.name}}";
+{%- macro args_to_names(args) %}
+{%- for arg in args %}{{arg.name}}{% if not loop.last %}, {% endif %}{% endfor %}
+{%- endmacro %}
 
-    {{interface.name | replace('.', '_')}}(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
+{%- macro arg_list(args, type, name, prefix, delimiter, suffix) %}
+{%- for arg in args %}
+{{- prefix}}
+{%- if type %}{{arg.type | dbus_type_to_cpp_type}}{% endif %}
+{%- if name and type %} {% endif %}
+{%- if name %}{{arg.name}}{% endif %}
+{%- if not loop.last %}{{delimiter}}{% endif %}
+{{- suffix}}
+{%- endfor %}
+{%- endmacro %}
+
+{%- macro arg_list_t(args) %}{{arg_list(args, true, false, "", ", ", "")}}{%- endmacro %}
+{%- macro arg_list_n(args) %}{{arg_list(args, false, true, "", ", ", "")}}{%- endmacro %}
+{%- macro arg_list_ct(args) %}{{arg_list(args, true, false, ", ", "", "")}}{%- endmacro %}
+{%- macro arg_list_cn(args) %}{{arg_list(args, false, true, ", ", "", "")}}{%- endmacro %}
+{%- macro arg_list_tc(args) %}{{arg_list(args, true, false, "", "", ", ")}}{%- endmacro %}
+{%- macro arg_list_tnc(args) %}{{arg_list(args, true, true, "", "", ", ")}}{%- endmacro %}
+{%- macro arg_list_ctn(args) %}{{arg_list(args, true, true, ", ", "", "")}}{%- endmacro %}
+
+{%- for interface in all_interfaces %}
+{% set interface_name = interface.name | replace('.', '_') %}
+class {{interface_name}} : public fibre::DBusObject {
+public:
+    static const char* get_interface_name() { return "{{interface.name}}"; }
+
+    {{interface_name}}(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
         : DBusObject(conn, service_name, object_name) {}
     
     // For now we delete the copy constructor as we would need to change the references within the signal objects for copying an object properly
-    {{interface.name | replace('.', '_')}}(const {{interface.name | replace('.', '_')}} &) = delete;
-    {{interface.name | replace('.', '_')}}& operator=(const {{interface.name | replace('.', '_')}} &) = delete;
+    {{interface_name}}(const {{interface_name}} &) = delete;
+    {{interface_name}}& operator=(const {{interface_name}} &) = delete;
 
 {% for method in interface.methods %}
-    int {{method.name}}_async({% for arg in method.inputs %}{{arg.type | dbus_type_to_cpp_type}} {{arg.name}}, {% endfor %}fibre::Callback<{{args_to_types(method.outputs)}}>* callback) {
-        return method_call_async(interface_name, "{{method.name}}", {% for arg in method.inputs %}{{arg.name}}, {% endfor %}callback);
+    int {{method.name}}_async({{arg_list_tnc(method.inputs)}}fibre::Callback<{{arg_list_t(method.outputs)}}>* callback) {
+        return method_call_async(get_interface_name(), "{{method.name}}", callback{{arg_list_cn(method.inputs)}});
     }
 {% endfor %}
 
@@ -33,8 +58,24 @@ public:
 {%- endfor %}
 
 {%- for signal in interface.signals %}
-    fibre::DBusRemoteSignal<{{interface.name | replace('.', '_')}}, {{args_to_types(signal.args)}}> {{signal.name}}{this, "{{signal.name}}"};
+    fibre::DBusRemoteSignal<{{interface_name}}{{arg_list_ct(signal.args)}}> {{signal.name}}{this, "{{signal.name}}"};
 {%- endfor %}
+
+    struct ExportTable : fibre::ExportTableBase {
+        ExportTable() : fibre::ExportTableBase{
+{%- for method in interface.methods %}
+            { "{{method.name}}", fibre::FunctionImplTable{} },
+{%- endfor %}
+        } {}
+
+        template<typename TImpl>
+        int register_implementation(TImpl& obj) {
+{%- for method in interface.methods %}
+            (*this)["{{method.name}}"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<{{arg_list_t(method.inputs)}}>, std::tuple<{{arg_list_t(method.outputs)}}>>::template from_member_fn<TImpl, &TImpl::{{method.name}}>((TImpl*)obj)); {{'}})'}};
+{%- endfor %}
+            return 0;
+        }
+    };
 };
 
 

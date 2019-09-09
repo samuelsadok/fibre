@@ -61,8 +61,8 @@ int BluetoothCentralSideDiscoverer::start_ble_adapter_monitor() {
 }
 
 int BluetoothCentralSideDiscoverer::stop_ble_adapter_monitor() {
-    bluez_root_obj.InterfacesAdded += &handle_interfaces_added;
-    bluez_root_obj.InterfacesRemoved += &handle_interfaces_removed;
+    bluez_root_obj.InterfacesAdded -= &handle_interfaces_added;
+    bluez_root_obj.InterfacesRemoved -= &handle_interfaces_removed;
     // TODO: cancel call to GetManagedObjects_async
     return 0;
 }

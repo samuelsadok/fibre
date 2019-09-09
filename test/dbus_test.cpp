@@ -5,6 +5,7 @@
 #include <fibre/worker.hpp>
 #include <fibre/timer.hpp>
 #include <fibre/../../dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp>
+#include <fibre/../../dbus_interfaces/io.fibre.TestInterface.hpp>
 #include <fibre/print_utils.hpp>
 #include <unistd.h>
 
@@ -97,16 +98,82 @@ bool test_pack_unpack() {
     return true;
 }
 
-volatile bool callback_did_complete = false;
+volatile uint32_t invoked_functions = 0;
+volatile uint32_t completed_functions = 0;
 
-using fancy_type = std::unordered_map<DBusObject, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>;
-fibre::Callback<fancy_type> callback = {
-    [](void*, fancy_type objects) {
-        printf("got %zu objects\n", objects.size());
-        for (auto& it : objects) {
-            std::cout << "key: " << it.first << ", value: " << it.second << std::endl;
-        }
-        callback_did_complete = true;
+
+class TestInterfaceImplementation {
+public:
+    void Func1() {
+        std::cout << "Func1 called\n";
+        invoked_functions ^= 0x1;
+    }
+    void Func2(int32_t in_arg1) {
+        std::cout << "Func2 called with " << in_arg1 << "\n";
+        if (in_arg1 == 1234)
+            invoked_functions ^= 0x2;
+    }
+    void Func3(int32_t in_arg1, std::string in_arg2) {
+        std::cout << "Func3 called with " << in_arg1 << ", " << in_arg2 << "\n";
+        if (in_arg1 == 5678 && in_arg2 == "orange")
+            invoked_functions ^= 0x4;
+    }
+    int32_t Func4() {
+        std::cout << "Func4 called";
+        invoked_functions ^= 0x8;
+        return 321;
+    }
+    std::tuple<int32_t, std::string> Func5() {
+        std::cout << "Func5 called\n";
+        invoked_functions |= 0x10;
+        return {123, "ret val"};
+    }
+    std::tuple<std::string, uint32_t> Func6(int32_t in_arg1, std::string in_arg2) {
+        std::cout << "Func6 called with " << in_arg1 << ", " << in_arg2 << "\n";
+        if (in_arg1 == 4321 && in_arg2 == "blue")
+            invoked_functions |= 0x20;
+        return {in_arg2 + "berry", in_arg1 + 5};
+    }
+};
+
+
+fibre::Callback<> fn1_callback = {
+    [](void*) {
+        std::cout << "fn1 call complete\n";
+        completed_functions ^= 0x1;
+    }, nullptr
+};
+fibre::Callback<> fn2_callback = {
+    [](void*) {
+        std::cout << "fn2 call complete\n";
+        completed_functions ^= 0x2;
+    }, nullptr
+};
+fibre::Callback<> fn3_callback = {
+    [](void*) {
+        std::cout << "fn3 call complete\n";
+        completed_functions ^= 0x4;
+    }, nullptr
+};
+fibre::Callback<int32_t> fn4_callback = {
+    [](void*, int32_t ret_arg1) {
+        std::cout << "fn4 call complete\n";
+        if (ret_arg1 == 321)
+            completed_functions ^= 0x8;
+    }, nullptr
+};
+fibre::Callback<int32_t, std::string> fn5_callback = {
+    [](void*, int32_t ret_arg1, std::string ret_arg2) {
+        std::cout << "fn5 call complete\n";
+        if (ret_arg1 == 123 && ret_arg2 == "ret val")
+            completed_functions ^= 0x10;
+    }, nullptr
+};
+fibre::Callback<std::string, uint32_t> fn6_callback = {
+    [](void*, std::string ret_arg1, uint32_t ret_arg2) {
+        std::cout << "fn6 call complete\n";
+        if (ret_arg1 == "blueberry" && ret_arg2 == 4326)
+            completed_functions ^= 0x20;
     }, nullptr
 };
 
@@ -128,18 +195,36 @@ int main(int argc, const char** argv) {
         printf("DBus init failed.\n");
         return -1;
     }
-    
-    org_freedesktop_DBus_ObjectManager root_obj(&dbus_connection, "org.bluez", "/");
-    root_obj.GetManagedObjects_async(&callback);
 
-    printf("For callback to arrive...\n");
+    // Construct and pubslish an object with the TestInterface
+    TestInterfaceImplementation local_test_object{};
+    dbus_connection.publish<io_fibre_TestInterface>("/io/fibre/TestObject1", local_test_object);
+
+    // Instantiate a DBus proxy object for the object we just published
+    const char* own_dbus_name = dbus_bus_get_unique_name(dbus_connection.get_libdbus_ptr());
+    io_fibre_TestInterface remote_test_object(&dbus_connection, own_dbus_name, "/io/fibre/TestObject1");
+
+    // Send method calls over DBus
+    remote_test_object.Func1_async(&fn1_callback);
+    remote_test_object.Func2_async(1234, &fn2_callback);
+    remote_test_object.Func3_async(5678, "orange", &fn3_callback);
+    remote_test_object.Func4_async(&fn4_callback);
+    remote_test_object.Func5_async(&fn5_callback);
+    remote_test_object.Func6_async(4321, "blue", &fn6_callback);
+
+    printf("waiting for callbacks to arrive...\n");
     usleep(1000000);
-    if (!callback_did_complete) {
-        printf("no callback received\n");
+    if (invoked_functions != 0x3f) {
+        printf("not all functions were invoked\n");
+        return -1;
+    }
+    if (completed_functions != 0x3f) {
+        printf("not all functions returned\n");
         return -1;
     }
     printf("done...\n");
 
+    // TODO unpublish object
 
     if (dbus_connection.deinit() != 0) {
         printf("Connection deinit failed.\n");
@@ -149,5 +234,6 @@ int main(int argc, const char** argv) {
         printf("worker deinit failed.\n");
     }
 
+    printf("test passed!\n");
     return 0;
 }

@@ -2,12 +2,12 @@
 #define __INTERFACES__ORG_BLUEZ_ADAPTER1_HPP
 
 #include <fibre/dbus.hpp>
+#include <fibre/callback.hpp>
 #include <vector>
-
 
 class org_bluez_Adapter1 : public fibre::DBusObject {
 public:
-    static constexpr const char* interface_name = "org.bluez.Adapter1";
+    static const char* get_interface_name() { return "org.bluez.Adapter1"; }
 
     org_bluez_Adapter1(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
         : DBusObject(conn, service_name, object_name) {}
@@ -18,23 +18,23 @@ public:
 
 
     int StartDiscovery_async(fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "StartDiscovery", callback);
+        return method_call_async(get_interface_name(), "StartDiscovery", callback);
     }
 
     int SetDiscoveryFilter_async(std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "SetDiscoveryFilter", properties, callback);
+        return method_call_async(get_interface_name(), "SetDiscoveryFilter", callback, properties);
     }
 
     int StopDiscovery_async(fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "StopDiscovery", callback);
+        return method_call_async(get_interface_name(), "StopDiscovery", callback);
     }
 
     int RemoveDevice_async(DBusObject device, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "RemoveDevice", device, callback);
+        return method_call_async(get_interface_name(), "RemoveDevice", callback, device);
     }
 
     int GetDiscoveryFilters_async(fibre::Callback<std::vector<std::string>>* callback) {
-        return method_call_async(interface_name, "GetDiscoveryFilters", callback);
+        return method_call_async(get_interface_name(), "GetDiscoveryFilters", callback);
     }
 
     // DBusProperty<std::string> Address;
@@ -50,6 +50,26 @@ public:
     // DBusProperty<bool> Discovering;
     // DBusProperty<std::vector<std::string>> UUIDs;
     // DBusProperty<std::string> Modalias;
+
+    struct ExportTable : fibre::ExportTableBase {
+        ExportTable() : fibre::ExportTableBase{
+            { "StartDiscovery", fibre::FunctionImplTable{} },
+            { "SetDiscoveryFilter", fibre::FunctionImplTable{} },
+            { "StopDiscovery", fibre::FunctionImplTable{} },
+            { "RemoveDevice", fibre::FunctionImplTable{} },
+            { "GetDiscoveryFilters", fibre::FunctionImplTable{} },
+        } {}
+
+        template<typename TImpl>
+        int register_implementation(TImpl& obj) {
+            (*this)["StartDiscovery"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::StartDiscovery>((TImpl*)obj)); }});
+            (*this)["SetDiscoveryFilter"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<std::unordered_map<std::string, fibre::dbus_variant>>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::SetDiscoveryFilter>((TImpl*)obj)); }});
+            (*this)["StopDiscovery"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::StopDiscovery>((TImpl*)obj)); }});
+            (*this)["RemoveDevice"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::RemoveDevice>((TImpl*)obj)); }});
+            (*this)["GetDiscoveryFilters"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<>, std::tuple<std::vector<std::string>>>::template from_member_fn<TImpl, &TImpl::GetDiscoveryFilters>((TImpl*)obj)); }});
+            return 0;
+        }
+    };
 };
 
 #endif // __INTERFACES__ORG_BLUEZ_ADAPTER1_HPP

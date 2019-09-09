@@ -26,6 +26,8 @@ def get_interfaces(definition_file):
                 in_args = []
                 out_args = []
                 for arg_xml in member_xml:
+                    if arg_xml.tag != "arg":
+                        continue # TODO: support annotation tag
                     arg = {
                         'name': arg_xml.attrib["name"],
                         'type': arg_xml.attrib["type"]
@@ -58,6 +60,8 @@ def get_interfaces(definition_file):
                     'name': member_xml.attrib["name"],
                     'args': args
                 })
+            elif member_xml.tag == "annotation":
+                pass # TODO: support annotation tag
             else:
                 raise Exception("unsupported member type \"{}\"".format(member_xml.tag))
         interfaces.append({

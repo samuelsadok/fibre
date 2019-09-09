@@ -2,12 +2,12 @@
 #define __INTERFACES__ORG_BLUEZ_NETWORKSERVER1_HPP
 
 #include <fibre/dbus.hpp>
+#include <fibre/callback.hpp>
 #include <vector>
-
 
 class org_bluez_NetworkServer1 : public fibre::DBusObject {
 public:
-    static constexpr const char* interface_name = "org.bluez.NetworkServer1";
+    static const char* get_interface_name() { return "org.bluez.NetworkServer1"; }
 
     org_bluez_NetworkServer1(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
         : DBusObject(conn, service_name, object_name) {}
@@ -18,13 +18,27 @@ public:
 
 
     int Register_async(std::string uuid, std::string bridge, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "Register", uuid, bridge, callback);
+        return method_call_async(get_interface_name(), "Register", callback, uuid, bridge);
     }
 
     int Unregister_async(std::string uuid, fibre::Callback<>* callback) {
-        return method_call_async(interface_name, "Unregister", uuid, callback);
+        return method_call_async(get_interface_name(), "Unregister", callback, uuid);
     }
 
+
+    struct ExportTable : fibre::ExportTableBase {
+        ExportTable() : fibre::ExportTableBase{
+            { "Register", fibre::FunctionImplTable{} },
+            { "Unregister", fibre::FunctionImplTable{} },
+        } {}
+
+        template<typename TImpl>
+        int register_implementation(TImpl& obj) {
+            (*this)["Register"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<std::string, std::string>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::Register>((TImpl*)obj)); }});
+            (*this)["Unregister"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<std::string>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::Unregister>((TImpl*)obj)); }});
+            return 0;
+        }
+    };
 };
 
 #endif // __INTERFACES__ORG_BLUEZ_NETWORKSERVER1_HPP
