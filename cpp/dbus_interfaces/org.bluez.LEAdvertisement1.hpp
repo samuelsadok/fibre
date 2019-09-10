@@ -40,7 +40,7 @@ public:
 
         template<typename TImpl>
         int register_implementation(TImpl& obj) {
-            (*this)["Release"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::Release>((TImpl*)obj)); }});
+            (*this)["Release"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::Release, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
             return 0;
         }
     };

@@ -34,8 +34,8 @@ public:
 
         template<typename TImpl>
         int register_implementation(TImpl& obj) {
-            (*this)["Register"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<std::string, std::string>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::Register>((TImpl*)obj)); }});
-            (*this)["Unregister"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<std::string>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::Unregister>((TImpl*)obj)); }});
+            (*this)["Register"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::Register, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+            (*this)["Unregister"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::Unregister, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
             return 0;
         }
     };

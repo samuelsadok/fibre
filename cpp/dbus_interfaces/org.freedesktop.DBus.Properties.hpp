@@ -40,9 +40,9 @@ public:
 
         template<typename TImpl>
         int register_implementation(TImpl& obj) {
-            (*this)["Get"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<std::string, std::string>, std::tuple<fibre::dbus_variant>>::template from_member_fn<TImpl, &TImpl::Get>((TImpl*)obj)); }});
-            (*this)["Set"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<std::string, std::string, fibre::dbus_variant>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::Set>((TImpl*)obj)); }});
-            (*this)["GetAll"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<std::string>, std::tuple<std::unordered_map<std::string, fibre::dbus_variant>>>::template from_member_fn<TImpl, &TImpl::GetAll>((TImpl*)obj)); }});
+            (*this)["Get"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::Get, (TImpl*)obj, (std::tuple<fibre::dbus_variant>*)nullptr)); }});
+            (*this)["Set"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::Set, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+            (*this)["GetAll"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::GetAll, (TImpl*)obj, (std::tuple<std::unordered_map<std::string, fibre::dbus_variant>>*)nullptr)); }});
             return 0;
         }
     };

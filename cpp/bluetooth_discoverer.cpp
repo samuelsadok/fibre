@@ -23,27 +23,27 @@ int BluetoothCentralSideDiscoverer::deinit() {
 
 using interface_map = std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>;
 
-static fibre::Callback<DBusObject, interface_map> handle_interfaces_added = {
-    [](void*, DBusObject object, interface_map interfaces) {
-        FIBRE_LOG(D) << "DBus Object " << object << " obtained the interfaces " << interfaces;
-    }, nullptr
-};
+static auto handle_interfaces_added = make_lambda_closure(
+    [](DBusObject object, interface_map interfaces) {
+            FIBRE_LOG(D) << "DBus Object " << object << " obtained the interfaces " << interfaces;
+    }
+);
 
-static fibre::Callback<DBusObject, std::vector<std::string>> handle_interfaces_removed = {
-    [](void*, DBusObject object, std::vector<std::string> interfaces) {
+static auto handle_interfaces_removed = make_lambda_closure(
+    [](DBusObject object, std::vector<std::string> interfaces) {
         FIBRE_LOG(D) << "DBus Object " << object << " lost the interfaces " << interfaces;
-    }, nullptr
-};
+    }
+);
 
-static fibre::Callback<std::unordered_map<DBusObject, interface_map>> handle_initial_search_completed = {
-    [](void*, std::unordered_map<DBusObject, interface_map> objects) {
+static auto handle_initial_search_completed = make_lambda_closure(
+    [](std::unordered_map<DBusObject, interface_map> objects) {
         FIBRE_LOG(D) << "found " << objects.size() << " objects";
         for (auto& it : objects) {
             // TODO: make nicer interface to invoke callback
-            handle_interfaces_added.callback(nullptr, it.first, it.second);
+            handle_interfaces_added(it.first, it.second);
         }
-    }, nullptr
-};
+    }
+);
 
 int BluetoothCentralSideDiscoverer::start_ble_adapter_monitor() {
     if (!bluez_root_obj.conn_) {

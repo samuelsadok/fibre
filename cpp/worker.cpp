@@ -201,8 +201,8 @@ void Worker::event_loop() {
 
         for (int i = 0; i < n_triggered_events_; ++i) {
             callback_t* callback = (callback_t*)triggered_events_[i].data.ptr;
-            if (callback && callback->callback) {
-                callback->callback(callback->ctx, triggered_events_[i].events);
+            if (callback) {
+                (*callback)(triggered_events_[i].events);
             }
         }
     }

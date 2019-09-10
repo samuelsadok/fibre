@@ -513,12 +513,12 @@ class function_traits {
 public:
     template<unsigned IUnpacked, typename ... TUnpackedArgs, ENABLE_IF(IUnpacked != sizeof...(TArgs))>
     static TRet invoke(TObj& obj, TRet(TObj::*func_ptr)(TArgs...), std::tuple<TArgs...> packed_args, TUnpackedArgs ... args) {
-        return invoke<IUnpacked+1>(obj, func_ptr, packed_args, args..., std::get<IUnpacked>(packed_args));
+        return invoke<IUnpacked+1>(obj, func_ptr, packed_args, std::forward<TArgs>(args)..., std::get<IUnpacked>(packed_args));
     }
 
     template<unsigned IUnpacked>
     static TRet invoke(TObj& obj, TRet(TObj::*func_ptr)(TArgs...), std::tuple<TArgs...> packed_args, TArgs ... args) {
-        return (obj.*func_ptr)(args...);
+        return (obj.*func_ptr)(std::forward<TArgs>(args)...);
     }
 };
 
@@ -545,6 +545,8 @@ struct return_type<T, Ts...> { typedef std::tuple<T, Ts...> type; };
 template<typename ... TInputsAndOutputs>
 struct static_function_traits;
 
+// TODO: All invoke-related functions should be superseeded by a proper std::apply implementation
+#if 0
 template<typename ... TInputs, typename ... TOutputs>
 struct static_function_traits<std::tuple<TInputs...>, std::tuple<TOutputs...>> {
     using TRet = typename return_type<TOutputs...>::type;
@@ -612,6 +614,7 @@ template<typename ... TOut, typename ... TIn, return_type<TOut...>(*Function)(TI
 std::tuple<TOut...> invoke_with_tuples(std::tuple<TIn...> inputs) {
     static_function_traits<TOut..., TIn...>::template invoke<0>(inputs);
 }
+#endif
 
 
 template<typename TInt, TInt... Is>
@@ -1208,6 +1211,11 @@ struct args_of<std::_Mem_fn<TRet (TObj::*)(TArgs...)>> {
     using type = std::tuple<TObj*, TArgs...>;
 };
 
+template<typename TRet, typename TObj, typename... TArgs>
+struct args_of<TRet (TObj::*)(TArgs...) const> {
+    using type = std::tuple<TObj*, TArgs...>;
+};
+
 template<typename TFunc>
 struct args_of<TFunc&> : public args_of<TFunc> {};
 
@@ -1229,6 +1237,11 @@ struct result_of<TRet(TArgs...)> {
 
 template<typename TRet, typename... TArgs>
 struct result_of<TRet(&)(TArgs...)> {
+    using type = TRet;
+};
+
+template<typename TRet, typename TObj, typename... TArgs>
+struct result_of<TRet(TObj::*)(TArgs...) const> {
     using type = TRet;
 };
 

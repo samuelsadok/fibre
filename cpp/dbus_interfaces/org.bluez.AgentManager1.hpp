@@ -39,9 +39,9 @@ public:
 
         template<typename TImpl>
         int register_implementation(TImpl& obj) {
-            (*this)["RegisterAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject, std::string>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::RegisterAgent>((TImpl*)obj)); }});
-            (*this)["UnregisterAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::UnregisterAgent>((TImpl*)obj)); }});
-            (*this)["RequestDefaultAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<DBusObject>, std::tuple<>>::template from_member_fn<TImpl, &TImpl::RequestDefaultAgent>((TImpl*)obj)); }});
+            (*this)["RegisterAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::RegisterAgent, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+            (*this)["UnregisterAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::UnregisterAgent, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+            (*this)["RequestDefaultAgent"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::RequestDefaultAgent, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
             return 0;
         }
     };

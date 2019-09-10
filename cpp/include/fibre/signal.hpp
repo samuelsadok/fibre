@@ -21,18 +21,14 @@ public:
     int set();
 
 private:
-    void signal_handler();
+    void signal_handler(uint32_t);
 
     const char* name_;
     Worker* worker_ = nullptr;
     int event_fd_ = -1;
     callback_t* callback_ = nullptr;
 
-    using Worker_callback_t = Callback<uint32_t>;
-    Worker_callback_t signal_handler_obj = {
-        .callback = [](void* ctx, uint32_t events){ ((Signal*)ctx)->signal_handler(); },
-        .ctx = this
-    };
+    Closure<Signal, std::tuple<Signal*>, std::tuple<uint32_t>, void> signal_handler_obj{&Signal::signal_handler, this};
 };
 
 }

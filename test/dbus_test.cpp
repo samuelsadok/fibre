@@ -137,45 +137,45 @@ public:
 };
 
 
-fibre::Callback<> fn1_callback = {
-    [](void*) {
+static auto fn1_callback = make_lambda_closure(
+    []() {
         std::cout << "fn1 call complete\n";
         completed_functions ^= 0x1;
-    }, nullptr
-};
-fibre::Callback<> fn2_callback = {
-    [](void*) {
+    }
+);
+static auto fn2_callback = make_lambda_closure(
+    []() {
         std::cout << "fn2 call complete\n";
         completed_functions ^= 0x2;
-    }, nullptr
-};
-fibre::Callback<> fn3_callback = {
-    [](void*) {
+    }
+);
+static auto fn3_callback = make_lambda_closure(
+    []() {
         std::cout << "fn3 call complete\n";
         completed_functions ^= 0x4;
-    }, nullptr
-};
-fibre::Callback<int32_t> fn4_callback = {
-    [](void*, int32_t ret_arg1) {
+    }
+);
+static auto fn4_callback = make_lambda_closure(
+    [](int32_t ret_arg1) {
         std::cout << "fn4 call complete\n";
         if (ret_arg1 == 321)
             completed_functions ^= 0x8;
-    }, nullptr
-};
-fibre::Callback<int32_t, std::string> fn5_callback = {
-    [](void*, int32_t ret_arg1, std::string ret_arg2) {
+    }
+);
+static auto fn5_callback = make_lambda_closure(
+    [](int32_t ret_arg1, std::string ret_arg2) {
         std::cout << "fn5 call complete\n";
         if (ret_arg1 == 123 && ret_arg2 == "ret val")
             completed_functions ^= 0x10;
-    }, nullptr
-};
-fibre::Callback<std::string, uint32_t> fn6_callback = {
-    [](void*, std::string ret_arg1, uint32_t ret_arg2) {
+    }
+);
+static auto fn6_callback = make_lambda_closure(
+    [](std::string ret_arg1, uint32_t ret_arg2) {
         std::cout << "fn6 call complete\n";
         if (ret_arg1 == "blueberry" && ret_arg2 == 4326)
             completed_functions ^= 0x20;
-    }, nullptr
-};
+    }
+);
 
 
 int main(int argc, const char** argv) {

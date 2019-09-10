@@ -31,7 +31,7 @@ public:
 
         template<typename TImpl>
         int register_implementation(TImpl& obj) {
-            (*this)["GetManagedObjects"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<>, std::tuple<std::unordered_map<DBusObject, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>>>::template from_member_fn<TImpl, &TImpl::GetManagedObjects>((TImpl*)obj)); }});
+            (*this)["GetManagedObjects"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::GetManagedObjects, (TImpl*)obj, (std::tuple<std::unordered_map<DBusObject, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>>*)nullptr)); }});
             return 0;
         }
     };

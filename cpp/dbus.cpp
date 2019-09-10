@@ -8,46 +8,13 @@ using namespace fibre;
 
 USE_LOG_TOPIC(DBUS);
 
-struct watch_ctx_t {
-    DBusConnectionWrapper* conn;
-    DBusWatch* watch;
-    Worker::callback_t callback;
-};
+using watch_ctx_t =
+    Closure<DBusConnectionWrapper, std::tuple<DBusConnectionWrapper*, DBusWatch*>, std::tuple<uint32_t>, void>;
 
 struct timeout_ctx_t {
-    DBusConnectionWrapper* conn;
-    DBusTimeout* timeout;
     Timer timer;
-    Timer::callback_t callback;
+    Closure<DBusConnectionWrapper, std::tuple<DBusConnectionWrapper*, DBusTimeout*>, std::tuple<>, void> callback;
 };
-
-
-static void handle_watch(void* ctx, uint32_t events) {
-    FIBRE_LOG(D) << "handle watch";
-    watch_ctx_t* watch_ctx = (watch_ctx_t*)ctx;
-    unsigned int flags = 0;
-    if (events & EPOLLIN)
-        flags |= DBUS_WATCH_READABLE;
-    if (events & EPOLLOUT)
-        flags |= DBUS_WATCH_WRITABLE;
-    if (events & EPOLLHUP)
-        flags |= DBUS_WATCH_HANGUP;
-    if (events & EPOLLERR)
-        flags |= DBUS_WATCH_ERROR;
-    if (!dbus_watch_handle(watch_ctx->watch, flags)) {
-        FIBRE_LOG(E) << "dbus_watch_handle() failed";
-    }
-    dbus_connection_dispatch(watch_ctx->conn->get_libdbus_ptr());
-}
-
-static void handle_timer(void* ctx) {
-    FIBRE_LOG(D) << "handle timer";
-    timeout_ctx_t* timeout_ctx = (timeout_ctx_t*)ctx;
-    if (!dbus_timeout_handle(timeout_ctx->timeout)) {
-        FIBRE_LOG(E) << "dbus_timeout_handle() failed";
-    }
-    dbus_connection_dispatch(timeout_ctx->conn->get_libdbus_ptr());
-}
 
 int DBusConnectionWrapper::init(Worker* worker, bool system_bus) {
     if (!worker)
@@ -194,10 +161,7 @@ int DBusConnectionWrapper::handle_add_watch(DBusWatch *watch) {
      */
 
 
-    watch_ctx_t* ctx = new watch_ctx_t {
-        .conn = this, .watch = watch, .callback = { handle_watch, nullptr }
-    };
-    ctx->callback.ctx = ctx;
+    watch_ctx_t* ctx = new watch_ctx_t{&DBusConnectionWrapper::handle_watch, {this, watch}};
     dbus_watch_set_data(watch, ctx, nullptr);
 
     // If the watch is already supposed to be enabled, toggle it on now
@@ -233,7 +197,7 @@ int DBusConnectionWrapper::handle_toggle_watch(DBusWatch *watch, bool enable) {
             events |= EPOLLOUT;
 
         watch_ctx_t* ctx = (watch_ctx_t*)dbus_watch_get_data(watch);
-        return worker_->register_event(fd, events, &ctx->callback);
+        return worker_->register_event(fd, events, ctx);
 
     } else {
         // DBusWatch was disabled - remove it from the worker
@@ -242,12 +206,28 @@ int DBusConnectionWrapper::handle_toggle_watch(DBusWatch *watch, bool enable) {
     }
 }
 
+void DBusConnectionWrapper::handle_watch(DBusWatch* watch, uint32_t events) {
+    FIBRE_LOG(D) << "handle watch";
+    unsigned int flags = 0;
+    if (events & EPOLLIN)
+        flags |= DBUS_WATCH_READABLE;
+    if (events & EPOLLOUT)
+        flags |= DBUS_WATCH_WRITABLE;
+    if (events & EPOLLHUP)
+        flags |= DBUS_WATCH_HANGUP;
+    if (events & EPOLLERR)
+        flags |= DBUS_WATCH_ERROR;
+    if (!dbus_watch_handle(watch, flags)) {
+        FIBRE_LOG(E) << "dbus_watch_handle() failed";
+    }
+    dbus_connection_dispatch(get_libdbus_ptr());
+}
+
 int DBusConnectionWrapper::handle_add_timeout(DBusTimeout* timeout) {
     FIBRE_LOG(D) << "add timeout";
     timeout_ctx_t* ctx = new timeout_ctx_t{
-        this, timeout, {} /* timer */, { handle_timer, nullptr }
+        {} /* timer */, { &DBusConnectionWrapper::handle_timeout, {this, timeout}}
     };
-    ctx->callback.ctx = ctx;
 
     ctx->timer.init(worker_);
     dbus_timeout_set_data(timeout, ctx, nullptr);
@@ -282,6 +262,20 @@ int DBusConnectionWrapper::handle_toggle_timeout(DBusTimeout *timeout, bool enab
         return ctx->timer.stop();
     }
 }
+
+void DBusConnectionWrapper::handle_timeout(DBusTimeout* timeout) {
+    FIBRE_LOG(D) << "handle timer";
+    if (!dbus_timeout_handle(timeout)) {
+        FIBRE_LOG(E) << "dbus_timeout_handle() failed";
+    }
+    dbus_connection_dispatch(get_libdbus_ptr());
+}
+
+void DBusConnectionWrapper::handle_dispatch() {
+    do {
+        FIBRE_LOG(D) << "dispatch";
+    } while (dbus_connection_dispatch(get_libdbus_ptr()) == DBUS_DISPATCH_DATA_REMAINS);
+};
 
 DBusHandlerResult DBusConnectionWrapper::handle_method_call(DBusMessage* rx_msg) {
     if (dbus_message_get_type(rx_msg) != DBUS_MESSAGE_TYPE_METHOD_CALL) {

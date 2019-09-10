@@ -142,7 +142,7 @@ int Timer::set_time(uint32_t interval_ms, bool repeat) {
     return 0;
 }
 
-void Timer::timer_handler() {
+void Timer::timer_handler(uint32_t) {
     FIBRE_LOG(D) << "timer handler";
     uint64_t val;
 
@@ -150,8 +150,9 @@ void Timer::timer_handler() {
     // with EAGAIN (given that we made it non-blocking)
     callback_t* callback = callback_; // TODO: make callback_ volatile
     if (read(tim_fd_, &val, sizeof(val)) == sizeof(val)) {
-        if (callback)
-            callback->callback(callback->ctx);
+        if (callback) {
+            (*callback)();
+        }
     }
 
     FIBRE_LOG(D) << "timer handler completed";

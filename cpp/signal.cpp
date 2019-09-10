@@ -73,7 +73,7 @@ int Signal::set() {
     return 0;
 }
 
-void Signal::signal_handler() {
+void Signal::signal_handler(uint32_t) {
     FIBRE_LOG(D) << "\"" << name_ << "\" handler";
     uint64_t val;
     //read(event_fd_, &val, sizeof(val));
@@ -82,7 +82,7 @@ void Signal::signal_handler() {
     callback_t* callback = callback_; // TODO: make callback_ volatile
     if (read(event_fd_, &val, sizeof(val)) == sizeof(val)) {
         if (callback)
-            callback->callback(callback->ctx);
+            (*callback)();
     }
     
     FIBRE_LOG(D) << "\"" << name_ << "\" handler completed";

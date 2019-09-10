@@ -113,7 +113,7 @@ int USBHostSideDiscoverer::deinit() {
 }
 
 
-void USBHostSideDiscoverer::udev_handler() {
+void USBHostSideDiscoverer::udev_handler(uint32_t) {
     FIBRE_LOG(D) << "udev handler";
     struct udev_device* dev = udev_monitor_receive_device(udev_mon);
     (void) dev; // the device is not actually being used
@@ -122,7 +122,7 @@ void USBHostSideDiscoverer::udev_handler() {
     FIBRE_LOG(D) << "udev handler completed";
 }
 
-void USBHostSideDiscoverer::usb_handler() {
+void USBHostSideDiscoverer::usb_handler(uint32_t) {
     FIBRE_LOG(D) << "usb handler";
     timeval tv = { .tv_sec = 0, .tv_usec = 0 };
     if (libusb_handle_events_timeout(libusb_ctx, &tv) != 0) {

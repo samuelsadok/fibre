@@ -18,8 +18,8 @@ public:
     int stop_channel_discovery(void* discovery_ctx);
 
 private:
-    void udev_handler();
-    void usb_handler();
+    void udev_handler(uint32_t events);
+    void usb_handler(uint32_t events);
 
     void pollfd_added_handler(int fd, short events);
     void pollfd_removed_handler(int fd);
@@ -42,15 +42,9 @@ private:
     Worker* worker_ = nullptr;
     Timer timer_;
 
-    Worker::callback_t udev_handler_obj = {
-        .callback = [](void* ctx, uint32_t events){ ((USBHostSideDiscoverer*)ctx)->udev_handler(); },
-        .ctx = this
-    };
-
-    Worker::callback_t usb_handler_obj = {
-        .callback = [](void* ctx, uint32_t events){ ((USBHostSideDiscoverer*)ctx)->usb_handler(); },
-        .ctx = this
-    };
+    // TODO make templated callback type so we can just write Timer::callback_t<USBHostSideDiscoverer>
+    Closure<USBHostSideDiscoverer, std::tuple<USBHostSideDiscoverer*>, std::tuple<uint32_t>, void> udev_handler_obj{&USBHostSideDiscoverer::udev_handler, this};
+    Closure<USBHostSideDiscoverer, std::tuple<USBHostSideDiscoverer*>, std::tuple<uint32_t>, void> usb_handler_obj{&USBHostSideDiscoverer::usb_handler, this};
 };
 
 

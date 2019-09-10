@@ -46,10 +46,7 @@ private:
     int n_triggered_events_ = 0;
     struct epoll_event triggered_events_[max_triggered_events_];
 
-    Signal::callback_t stop_handler_obj = {
-        .callback = [](void* ctx){ ((Worker*)ctx)->stop_handler(); },
-        .ctx = this
-    };
+    Closure<Worker, std::tuple<Worker*>, std::tuple<>, void> stop_handler_obj = make_closure(&Worker::stop_handler, this);
 };
 
 }

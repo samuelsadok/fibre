@@ -21,17 +21,14 @@ public:
     bool is_started() const { return is_started_; }
 
 private:
-    void timer_handler();
+    void timer_handler(uint32_t);
 
     Worker* worker_ = nullptr;
     int tim_fd_ = -1;
     bool is_started_ = false;
     callback_t* callback_ = nullptr;
 
-    Worker::callback_t timer_handler_obj = {
-        .callback = [](void* ctx, uint32_t events){ ((Timer*)ctx)->timer_handler(); },
-        .ctx = this
-    };
+    Closure<Timer, std::tuple<Timer*>, std::tuple<uint32_t>, void> timer_handler_obj{&Timer::timer_handler, this};
 };
 
 }

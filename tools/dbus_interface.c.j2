@@ -71,7 +71,7 @@ public:
         template<typename TImpl>
         int register_implementation(TImpl& obj) {
 {%- for method in interface.methods %}
-            (*this)["{{method.name}}"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::GenericFunction<std::tuple<TImpl*>, std::tuple<{{arg_list_t(method.inputs)}}>, std::tuple<{{arg_list_t(method.outputs)}}>>::template from_member_fn<TImpl, &TImpl::{{method.name}}>((TImpl*)obj)); {{'}})'}};
+            (*this)["{{method.name}}"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::{{method.name}}, (TImpl*)obj, (std::tuple<{{arg_list_t(method.outputs)}}>*)nullptr)); {{'}})'}};
 {%- endfor %}
             return 0;
         }

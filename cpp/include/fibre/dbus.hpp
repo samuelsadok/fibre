@@ -172,8 +172,8 @@ void handle_reply_message(DBusMessage* msg, Callback<TOutputs...>* callback) {
         return;
     }
 
-    if (callback && callback->callback) {
-        apply(callback->callback, std::tuple_cat(std::make_tuple(callback->ctx), values));
+    if (callback) {
+        apply(*callback, values);
     }
 }
 
@@ -186,8 +186,8 @@ void handle_signal_message(DBusMessage* msg, const std::vector<Callback<TArgs...
     }
 
     for (auto& callback : callbacks) {
-        if (callback && callback->callback) {
-            apply(callback->callback, std::tuple_cat(std::make_tuple(callback->ctx), values));
+        if (callback) {
+            apply(*callback, values);
         }
     }
 }
@@ -215,8 +215,8 @@ public:
 
     // TODO: implement unpublish
 
-    template<typename TCapture, typename ... TOutputs, typename ... TInputs>
-    static int handle_method_call_typed(DBusMessage* rx_msg, DBusMessage* tx_msg, GenericFunction<TCapture, std::tuple<TInputs...>, std::tuple<TOutputs...>> method) {
+    template<typename ... TOutputs, typename ... TInputs>
+    static int handle_method_call_typed(DBusMessage* rx_msg, DBusMessage* tx_msg, const GenericFunction<std::tuple<TOutputs...>, TInputs...>& method) {
         std::tuple<TInputs...> inputs;
         if (unpack_message(rx_msg, inputs) != 0) {
             FIBRE_LOG(E) << "Failed to unpack method call. Will not invoke handler.";
@@ -237,10 +237,14 @@ private:
     int handle_add_watch(DBusWatch *watch);
     void handle_remove_watch(DBusWatch *watch);
     int handle_toggle_watch(DBusWatch *watch, bool enable);
+    void handle_watch(DBusWatch *watch, uint32_t events);
 
     int handle_add_timeout(DBusTimeout* timeout);
     void handle_remove_timeout(DBusTimeout* timeout);
     int handle_toggle_timeout(DBusTimeout *timeout, bool enable);
+    void handle_timeout(DBusTimeout *timeout);
+
+    void handle_dispatch();
 
     DBusHandlerResult handle_method_call(DBusMessage* rx_msg);
 
@@ -270,14 +274,7 @@ private:
     Worker* worker_;
 
     Signal dispatch_signal_ = Signal("dbus dispatch");
-    Signal::callback_t dispatch_callback_obj_ = {
-        .callback = [](void* ctx){
-            do {
-                FIBRE_LOG(D) << "dispatch";
-            } while (dbus_connection_dispatch(((DBusConnectionWrapper*)ctx)->conn_) == DBUS_DISPATCH_DATA_REMAINS);
-        },
-        .ctx = this
-    };
+    Closure<DBusConnectionWrapper, std::tuple<DBusConnectionWrapper*>, std::tuple<>, void> dispatch_callback_obj_{&DBusConnectionWrapper::handle_dispatch, this};
 
     // Lookup tables to route incoming method calls to the correct receiver
     std::unordered_map<std::string, std::tuple<dbus_type_id_t, void*>> object_table{};
