@@ -43,8 +43,8 @@ private:
     Timer timer_;
 
     // TODO make templated callback type so we can just write Timer::callback_t<USBHostSideDiscoverer>
-    Closure<USBHostSideDiscoverer, std::tuple<USBHostSideDiscoverer*>, std::tuple<uint32_t>, void> udev_handler_obj{&USBHostSideDiscoverer::udev_handler, this};
-    Closure<USBHostSideDiscoverer, std::tuple<USBHostSideDiscoverer*>, std::tuple<uint32_t>, void> usb_handler_obj{&USBHostSideDiscoverer::usb_handler, this};
+    member_closure_t<decltype(&USBHostSideDiscoverer::udev_handler)> udev_handler_obj{&USBHostSideDiscoverer::udev_handler, this};
+    member_closure_t<decltype(&USBHostSideDiscoverer::usb_handler)> usb_handler_obj{&USBHostSideDiscoverer::usb_handler, this};
 };
 
 

@@ -2,7 +2,7 @@
 #define __INTERFACES__IO_FIBRE_TESTINTERFACE_HPP
 
 #include <fibre/dbus.hpp>
-#include <fibre/callback.hpp>
+#include <fibre/closure.hpp>
 #include <vector>
 
 class io_fibre_TestInterface : public fibre::DBusObject {

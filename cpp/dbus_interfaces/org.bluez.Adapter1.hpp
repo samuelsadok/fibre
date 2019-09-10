@@ -2,7 +2,7 @@
 #define __INTERFACES__ORG_BLUEZ_ADAPTER1_HPP
 
 #include <fibre/dbus.hpp>
-#include <fibre/callback.hpp>
+#include <fibre/closure.hpp>
 #include <vector>
 
 class org_bluez_Adapter1 : public fibre::DBusObject {

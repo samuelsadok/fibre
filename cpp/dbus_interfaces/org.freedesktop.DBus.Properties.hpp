@@ -2,7 +2,7 @@
 #define __INTERFACES__ORG_FREEDESKTOP_DBUS_PROPERTIES_HPP
 
 #include <fibre/dbus.hpp>
-#include <fibre/callback.hpp>
+#include <fibre/closure.hpp>
 #include <vector>
 
 class org_freedesktop_DBus_Properties : public fibre::DBusObject {

@@ -2,7 +2,7 @@
 #define __INTERFACES__ORG_BLUEZ_NETWORKSERVER1_HPP
 
 #include <fibre/dbus.hpp>
-#include <fibre/callback.hpp>
+#include <fibre/closure.hpp>
 #include <vector>
 
 class org_bluez_NetworkServer1 : public fibre::DBusObject {

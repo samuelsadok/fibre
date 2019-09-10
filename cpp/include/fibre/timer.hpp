@@ -28,7 +28,7 @@ private:
     bool is_started_ = false;
     callback_t* callback_ = nullptr;
 
-    Closure<Timer, std::tuple<Timer*>, std::tuple<uint32_t>, void> timer_handler_obj{&Timer::timer_handler, this};
+    member_closure_t<decltype(&Timer::timer_handler)> timer_handler_obj{&Timer::timer_handler, this};
 };
 
 }

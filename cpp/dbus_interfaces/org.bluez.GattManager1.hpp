@@ -2,7 +2,7 @@
 #define __INTERFACES__ORG_BLUEZ_GATTMANAGER1_HPP
 
 #include <fibre/dbus.hpp>
-#include <fibre/callback.hpp>
+#include <fibre/closure.hpp>
 #include <vector>
 
 class org_bluez_GattManager1 : public fibre::DBusObject {

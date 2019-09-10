@@ -2,7 +2,7 @@
 #define __INTERFACES__{{output_name | replace('.', '_') | upper}}
 
 #include <fibre/dbus.hpp>
-#include <fibre/callback.hpp>
+#include <fibre/closure.hpp>
 #include <vector>
 
 {%- macro args_to_types(args) %}

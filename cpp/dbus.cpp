@@ -8,13 +8,6 @@ using namespace fibre;
 
 USE_LOG_TOPIC(DBUS);
 
-using watch_ctx_t =
-    Closure<DBusConnectionWrapper, std::tuple<DBusConnectionWrapper*, DBusWatch*>, std::tuple<uint32_t>, void>;
-
-struct timeout_ctx_t {
-    Timer timer;
-    Closure<DBusConnectionWrapper, std::tuple<DBusConnectionWrapper*, DBusTimeout*>, std::tuple<>, void> callback;
-};
 
 int DBusConnectionWrapper::init(Worker* worker, bool system_bus) {
     if (!worker)
@@ -87,7 +80,7 @@ int DBusConnectionWrapper::init(Worker* worker, bool system_bus) {
         goto fail2;
     }
 
-    if (dispatch_signal_.init(worker_, &dispatch_callback_obj_) != 0) {
+    if (dispatch_signal_.init(worker_, &handle_dispatch_obj_) != 0) {
         FIBRE_LOG(E) << "dispatch signal init failed";
         goto fail2;
     }

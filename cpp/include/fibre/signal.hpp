@@ -1,7 +1,7 @@
 #ifndef __FIBRE_SIGNAL_HPP
 #define __FIBRE_SIGNAL_HPP
 
-#include <fibre/callback.hpp>
+#include <fibre/closure.hpp>
 #include <sys/eventfd.h>
 
 namespace fibre {
@@ -28,7 +28,7 @@ private:
     int event_fd_ = -1;
     callback_t* callback_ = nullptr;
 
-    Closure<Signal, std::tuple<Signal*>, std::tuple<uint32_t>, void> signal_handler_obj{&Signal::signal_handler, this};
+    member_closure_t<decltype(&Signal::signal_handler)> signal_handler_obj{&Signal::signal_handler, this};
 };
 
 }

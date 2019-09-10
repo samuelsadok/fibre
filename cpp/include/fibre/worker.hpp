@@ -2,7 +2,7 @@
 #define __FIBRE_WORKER_HPP
 
 #include <fibre/signal.hpp>
-#include <fibre/callback.hpp>
+#include <fibre/closure.hpp>
 #include <thread>
 #include <sys/epoll.h>
 #include <unordered_map>
@@ -46,7 +46,7 @@ private:
     int n_triggered_events_ = 0;
     struct epoll_event triggered_events_[max_triggered_events_];
 
-    Closure<Worker, std::tuple<Worker*>, std::tuple<>, void> stop_handler_obj = make_closure(&Worker::stop_handler, this);
+    member_closure_t<decltype(&Worker::stop_handler)> stop_handler_obj{&Worker::stop_handler, this};
 };
 
 }

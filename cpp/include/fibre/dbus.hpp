@@ -10,6 +10,7 @@
 #include <limits.h>
 #include <string.h>
 #include <fibre/worker.hpp>
+#include <fibre/timer.hpp>
 #include <fibre/cpp_utils.hpp>
 #include <fibre/print_utils.hpp>
 #include <fibre/logging.hpp>
@@ -216,7 +217,7 @@ public:
     // TODO: implement unpublish
 
     template<typename ... TOutputs, typename ... TInputs>
-    static int handle_method_call_typed(DBusMessage* rx_msg, DBusMessage* tx_msg, const GenericFunction<std::tuple<TOutputs...>, TInputs...>& method) {
+    static int handle_method_call_typed(DBusMessage* rx_msg, DBusMessage* tx_msg, const Callable<std::tuple<TOutputs...>, TInputs...>& method) {
         std::tuple<TInputs...> inputs;
         if (unpack_message(rx_msg, inputs) != 0) {
             FIBRE_LOG(E) << "Failed to unpack method call. Will not invoke handler.";
@@ -234,6 +235,7 @@ public:
     }
 
 private:
+
     int handle_add_watch(DBusWatch *watch);
     void handle_remove_watch(DBusWatch *watch);
     int handle_toggle_watch(DBusWatch *watch, bool enable);
@@ -269,12 +271,19 @@ private:
         return intf->register_implementation(obj);
     }
 
+    using watch_ctx_t = bind_result_t<member_closure_t<decltype(&DBusConnectionWrapper::handle_watch)>, DBusWatch*>;
+
+    struct timeout_ctx_t {
+        Timer timer;
+        bind_result_t<member_closure_t<decltype(&DBusConnectionWrapper::handle_timeout)>, DBusTimeout*> callback;
+    };
+
     DBusError err_;
     DBusConnection* conn_;
     Worker* worker_;
 
     Signal dispatch_signal_ = Signal("dbus dispatch");
-    Closure<DBusConnectionWrapper, std::tuple<DBusConnectionWrapper*>, std::tuple<>, void> dispatch_callback_obj_{&DBusConnectionWrapper::handle_dispatch, this};
+    member_closure_t<decltype(&DBusConnectionWrapper::handle_dispatch)> handle_dispatch_obj_{&DBusConnectionWrapper::handle_dispatch, this};
 
     // Lookup tables to route incoming method calls to the correct receiver
     std::unordered_map<std::string, std::tuple<dbus_type_id_t, void*>> object_table{};
