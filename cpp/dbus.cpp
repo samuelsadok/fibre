@@ -281,6 +281,7 @@ DBusHandlerResult DBusConnectionWrapper::handle_method_call(DBusMessage* rx_msg)
     const char* interface_name = dbus_message_get_interface(rx_msg);
     const char* method_name = dbus_message_get_member(rx_msg);
     const char* object_path = dbus_message_get_path(rx_msg);
+    const char* signature = dbus_message_get_signature(rx_msg);
 
     if (!interface_name || !method_name || !object_path) {
         FIBRE_LOG(W) << "malformed method call: "
@@ -289,6 +290,8 @@ DBusHandlerResult DBusConnectionWrapper::handle_method_call(DBusMessage* rx_msg)
             << " object: " << (object_path ? "not null" : "null");
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
+
+    FIBRE_LOG(D) << "method: " << interface_name << "." << method_name << " on " << object_path << " with signature " << (signature ? signature : "(null)");
 
     ExportTableBase* interface = interface_table[interface_name];
     if (!interface) {

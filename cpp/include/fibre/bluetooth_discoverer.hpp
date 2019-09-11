@@ -26,15 +26,18 @@ private:
 
     void handle_adapter_found(adapter_t* adapter);
     void handle_adapter_lost(adapter_t* adapter);
+    void handle_ad_registered(org_bluez_LEAdvertisingManager1* mgr);
 
     Worker* worker_ = nullptr;
     DBusConnectionWrapper* dbus_ = nullptr;
     DBusRemoteObject<org_freedesktop_DBus_ObjectManager> bluez_root_obj_{{nullptr, "", ""}};
     DBusDiscoverer<org_bluez_LEAdvertisingManager1, org_bluez_GattManager1> dbus_discoverer_{};
+    DBusObjectPath ad_obj_path{};
     int n_discovery_requests = 0;
 
     member_closure_t<decltype(&BluetoothCentralSideDiscoverer::handle_adapter_found)> handle_adapter_found_obj_{&BluetoothCentralSideDiscoverer::handle_adapter_found, this};
     member_closure_t<decltype(&BluetoothCentralSideDiscoverer::handle_adapter_lost)> handle_adapter_lost_obj_{&BluetoothCentralSideDiscoverer::handle_adapter_lost, this};
+    member_closure_t<decltype(&BluetoothCentralSideDiscoverer::handle_ad_registered)> handle_ad_registered_obj_{&BluetoothCentralSideDiscoverer::handle_ad_registered, this};
 };
 
 

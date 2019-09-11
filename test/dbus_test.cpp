@@ -199,7 +199,7 @@ int main(int argc, const char** argv) {
 
     // Construct and pubslish an object with the TestInterface
     TestInterfaceImplementation local_test_object{};
-    dbus_connection.publish<io_fibre_TestInterface>("/io/fibre/TestObject1", local_test_object);
+    dbus_connection.publish<io_fibre_TestInterface>(local_test_object, "/io/fibre/TestObject1");
 
     // Instantiate a DBus proxy object for the object we just published
     const char* own_dbus_name = dbus_bus_get_unique_name(dbus_connection.get_libdbus_ptr());
