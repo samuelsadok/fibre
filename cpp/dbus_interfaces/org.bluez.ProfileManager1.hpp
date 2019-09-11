@@ -5,24 +5,24 @@
 #include <fibre/closure.hpp>
 #include <vector>
 
-class org_bluez_ProfileManager1 : public fibre::DBusObject {
+class org_bluez_ProfileManager1 {
 public:
     static const char* get_interface_name() { return "org.bluez.ProfileManager1"; }
 
-    org_bluez_ProfileManager1(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
-        : DBusObject(conn, service_name, object_name) {}
+    org_bluez_ProfileManager1(fibre::DBusRemoteObjectBase* base)
+        : base_(base) {}
     
     // For now we delete the copy constructor as we would need to change the references within the signal objects for copying an object properly
     org_bluez_ProfileManager1(const org_bluez_ProfileManager1 &) = delete;
     org_bluez_ProfileManager1& operator=(const org_bluez_ProfileManager1 &) = delete;
 
 
-    int RegisterProfile_async(DBusObject profile, std::string UUID, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "RegisterProfile", callback, profile, UUID, options);
+    int RegisterProfile_async(fibre::DBusObjectPath profile, std::string UUID, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_ProfileManager1*>* callback) {
+        return base_->method_call_async(this, "RegisterProfile", callback, profile, UUID, options);
     }
 
-    int UnregisterProfile_async(DBusObject profile, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "UnregisterProfile", callback, profile);
+    int UnregisterProfile_async(fibre::DBusObjectPath profile, fibre::Callback<org_bluez_ProfileManager1*>* callback) {
+        return base_->method_call_async(this, "UnregisterProfile", callback, profile);
     }
 
 
@@ -39,6 +39,8 @@ public:
             return 0;
         }
     };
+
+    fibre::DBusRemoteObjectBase* base_;
 };
 
 #endif // __INTERFACES__ORG_BLUEZ_PROFILEMANAGER1_HPP

@@ -5,28 +5,28 @@
 #include <fibre/closure.hpp>
 #include <vector>
 
-class org_freedesktop_DBus_Properties : public fibre::DBusObject {
+class org_freedesktop_DBus_Properties {
 public:
     static const char* get_interface_name() { return "org.freedesktop.DBus.Properties"; }
 
-    org_freedesktop_DBus_Properties(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
-        : DBusObject(conn, service_name, object_name) {}
+    org_freedesktop_DBus_Properties(fibre::DBusRemoteObjectBase* base)
+        : base_(base) {}
     
     // For now we delete the copy constructor as we would need to change the references within the signal objects for copying an object properly
     org_freedesktop_DBus_Properties(const org_freedesktop_DBus_Properties &) = delete;
     org_freedesktop_DBus_Properties& operator=(const org_freedesktop_DBus_Properties &) = delete;
 
 
-    int Get_async(std::string interface, std::string name, fibre::Callback<fibre::dbus_variant>* callback) {
-        return method_call_async(get_interface_name(), "Get", callback, interface, name);
+    int Get_async(std::string interface, std::string name, fibre::Callback<org_freedesktop_DBus_Properties*, fibre::dbus_variant>* callback) {
+        return base_->method_call_async(this, "Get", callback, interface, name);
     }
 
-    int Set_async(std::string interface, std::string name, fibre::dbus_variant value, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "Set", callback, interface, name, value);
+    int Set_async(std::string interface, std::string name, fibre::dbus_variant value, fibre::Callback<org_freedesktop_DBus_Properties*>* callback) {
+        return base_->method_call_async(this, "Set", callback, interface, name, value);
     }
 
-    int GetAll_async(std::string interface, fibre::Callback<std::unordered_map<std::string, fibre::dbus_variant>>* callback) {
-        return method_call_async(get_interface_name(), "GetAll", callback, interface);
+    int GetAll_async(std::string interface, fibre::Callback<org_freedesktop_DBus_Properties*, std::unordered_map<std::string, fibre::dbus_variant>>* callback) {
+        return base_->method_call_async(this, "GetAll", callback, interface);
     }
 
     fibre::DBusRemoteSignal<org_freedesktop_DBus_Properties, std::string, std::unordered_map<std::string, fibre::dbus_variant>, std::vector<std::string>> PropertiesChanged{this, "PropertiesChanged"};
@@ -46,6 +46,8 @@ public:
             return 0;
         }
     };
+
+    fibre::DBusRemoteObjectBase* base_;
 };
 
 #endif // __INTERFACES__ORG_FREEDESKTOP_DBUS_PROPERTIES_HPP

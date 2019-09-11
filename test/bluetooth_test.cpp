@@ -20,7 +20,7 @@ int main(int argc, const char** argv) {
     }
 
     DBusConnectionWrapper dbus_connection;
-    if (dbus_connection.init(&worker) != 0) {
+    if (dbus_connection.init(&worker, true) != 0) {
         printf("DBus init failed.\n");
         return -1;
     }

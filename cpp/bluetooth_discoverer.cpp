@@ -1,6 +1,18 @@
 
+// Peripheral:
+//  1. Instantiate org.bluez.GattService1 (contains the local characteristics)
+//  2. Register service with org.bluez.GattManager1
+//  3. Instantiate org.bluez.LEAdvertisement1
+//  4. Register ad with org.bluez.LEAdvertisingManager1
+//
+// Central:
+//  1. Instantiate org.bluez.GattProfile1 (contains a auto-connect UUID list)
+//  2. Register profile with org.bluez.GattManager1
+
 #include <fibre/bluetooth_discoverer.hpp>
 #include "dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
+#include "dbus_interfaces/org.bluez.LEAdvertisingManager1.hpp"
+#include "dbus_interfaces/org.bluez.GattManager1.hpp"
 
 using namespace fibre;
 
@@ -10,8 +22,8 @@ USE_LOG_TOPIC(BLUETOOTH);
 int BluetoothCentralSideDiscoverer::init(Worker* worker, DBusConnectionWrapper* dbus) {
     worker_ = worker;
     dbus_ = dbus;
-    bluez_root_obj.~org_freedesktop_DBus_ObjectManager();
-    new (&bluez_root_obj) org_freedesktop_DBus_ObjectManager{dbus_, "org.bluez", "/"};
+    bluez_root_obj_.~DBusRemoteObject();
+    new (&bluez_root_obj_) decltype(bluez_root_obj_){{dbus_, "org.bluez", "/"}};
     return 0;
 }
 
@@ -21,50 +33,24 @@ int BluetoothCentralSideDiscoverer::deinit() {
     return 0;
 }
 
-using interface_map = std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>;
+void BluetoothCentralSideDiscoverer::handle_adapter_found(adapter_t* adapter) {
+    FIBRE_LOG(D) << "found BLE adapter " << adapter->base_;
+}
 
-static auto handle_interfaces_added = make_lambda_closure(
-    [](DBusObject object, interface_map interfaces) {
-            FIBRE_LOG(D) << "DBus Object " << object << " obtained the interfaces " << interfaces;
-    }
-);
-
-static auto handle_interfaces_removed = make_lambda_closure(
-    [](DBusObject object, std::vector<std::string> interfaces) {
-        FIBRE_LOG(D) << "DBus Object " << object << " lost the interfaces " << interfaces;
-    }
-);
-
-static auto handle_initial_search_completed = make_lambda_closure(
-    [](std::unordered_map<DBusObject, interface_map> objects) {
-        FIBRE_LOG(D) << "found " << objects.size() << " objects";
-        for (auto& it : objects) {
-            // TODO: make nicer interface to invoke callback
-            handle_interfaces_added(it.first, it.second);
-        }
-    }
-);
+void BluetoothCentralSideDiscoverer::handle_adapter_lost(adapter_t* adapter) {
+    FIBRE_LOG(D) << "lost BLE adapter " << adapter->base_;
+}
 
 int BluetoothCentralSideDiscoverer::start_ble_adapter_monitor() {
-    if (!bluez_root_obj.conn_) {
+    if (!dbus_) {
         FIBRE_LOG(E) << "discoverer object not initialized";
         return -1;
     }
-    //DBusObject bluez(&dbus_connection, "org.bluez", "/org/bluez");
-
-    bluez_root_obj.InterfacesAdded += &handle_interfaces_added;
-    bluez_root_obj.InterfacesRemoved += &handle_interfaces_removed;
-    //bluez_root_obj.GetManagedObjects_async(&handle_initial_search_completed);
-    // TODO: error handling
-
-    return 0;
+    return dbus_discoverer_.start(&bluez_root_obj_, &handle_adapter_found_obj_, &handle_adapter_lost_obj_);
 }
 
 int BluetoothCentralSideDiscoverer::stop_ble_adapter_monitor() {
-    bluez_root_obj.InterfacesAdded -= &handle_interfaces_added;
-    bluez_root_obj.InterfacesRemoved -= &handle_interfaces_removed;
-    // TODO: cancel call to GetManagedObjects_async
-    return 0;
+    return dbus_discoverer_.stop();
 }
 
 /**

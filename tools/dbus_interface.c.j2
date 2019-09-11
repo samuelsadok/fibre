@@ -36,20 +36,20 @@
 
 {%- for interface in all_interfaces %}
 {% set interface_name = interface.name | replace('.', '_') %}
-class {{interface_name}} : public fibre::DBusObject {
+class {{interface_name}} {
 public:
     static const char* get_interface_name() { return "{{interface.name}}"; }
 
-    {{interface_name}}(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
-        : DBusObject(conn, service_name, object_name) {}
+    {{interface_name}}(fibre::DBusRemoteObjectBase* base)
+        : base_(base) {}
     
     // For now we delete the copy constructor as we would need to change the references within the signal objects for copying an object properly
     {{interface_name}}(const {{interface_name}} &) = delete;
     {{interface_name}}& operator=(const {{interface_name}} &) = delete;
 
 {% for method in interface.methods %}
-    int {{method.name}}_async({{arg_list_tnc(method.inputs)}}fibre::Callback<{{arg_list_t(method.outputs)}}>* callback) {
-        return method_call_async(get_interface_name(), "{{method.name}}", callback{{arg_list_cn(method.inputs)}});
+    int {{method.name}}_async({{arg_list_tnc(method.inputs)}}fibre::Callback<{{interface_name}}*{{arg_list_ct(method.outputs)}}>* callback) {
+        return base_->method_call_async(this, "{{method.name}}", callback{{arg_list_cn(method.inputs)}});
     }
 {% endfor %}
 
@@ -76,6 +76,8 @@ public:
             return 0;
         }
     };
+
+    fibre::DBusRemoteObjectBase* base_;
 };
 
 

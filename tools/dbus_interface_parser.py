@@ -95,7 +95,7 @@ def pop_single_type(string):
         'd': 'double',
         'h': 'handle',
         's': 'std::string',
-        'o': 'DBusObject',
+        'o': 'fibre::DBusObjectPath',
         'g': 'signature'
     }
     simple_type_str = simple_types.get(string[0], None)

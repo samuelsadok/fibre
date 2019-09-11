@@ -80,17 +80,18 @@ bool test_pack_unpack() {
     TEST_ASSERT(test_pack_unpack_with_vals(std::unordered_map<std::string, int>{}));
     TEST_ASSERT(test_pack_unpack_with_vals(std::unordered_map<std::string, fibre::dbus_variant>{{"str_entry", "123"}, {"int_entry", 456}}));
 
-    TEST_EQUAL(DBusObject(nullptr, "my_service", "my_object"), DBusObject(nullptr, "my_service", "my_object"));
-    TEST_NOT_EQUAL(DBusObject(nullptr, "my_service", "my_object"), DBusObject(nullptr, "", "my_object"));
-    TEST_ASSERT(test_pack_unpack_with_vals(DBusObject(nullptr, "", "my_object")));
+    TEST_EQUAL(DBusRemoteObjectBase(nullptr, "my_service", "my_object"), DBusRemoteObjectBase(nullptr, "my_service", "my_object"));
+    TEST_NOT_EQUAL(DBusRemoteObjectBase(nullptr, "my_service", "my_object"), DBusRemoteObjectBase(nullptr, "", "my_object"));
+    TEST_ASSERT(test_pack_unpack_with_vals(DBusObjectPath("my_object")));
 
-    std::cout << "obj: " << DBusObject(nullptr, "my_service", "my_object") << "\n";
-    std::cout << "dict: " <<  std::unordered_map<DBusObject, int>{{DBusObject(nullptr, "my_service", "my_object"), 1}} << "\n";
-    TEST_EQUAL((std::unordered_map<DBusObject, int>{{DBusObject(nullptr, "my_service", "my_object"), 1}}),
-               (std::unordered_map<DBusObject, int>{{DBusObject(nullptr, "my_service", "my_object"), 1}}));
-    TEST_ASSERT(test_pack_unpack_with_vals(std::unordered_map<DBusObject, int>{{DBusObject(nullptr, "", "my_object"), 1}}));
+    // test print functions
+    std::cout << "obj: " << DBusRemoteObjectBase(nullptr, "my_service", "my_object") << "\n";
+    std::cout << "dict: " << std::unordered_map<DBusObjectPath, int>{{DBusObjectPath("my_object"), 1}} << "\n";
+    TEST_EQUAL((std::unordered_map<DBusObjectPath, int>{{DBusObjectPath("my_object"), 1}}),
+               (std::unordered_map<DBusObjectPath, int>{{DBusObjectPath("my_object"), 1}}));
+    TEST_ASSERT(test_pack_unpack_with_vals(std::unordered_map<DBusObjectPath, int>{{DBusObjectPath("my_object"), 1}}));
 
-    using fancy_type = std::unordered_map<DBusObject, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>;
+    using fancy_type = std::unordered_map<DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>;
     fancy_type fancy_obj;
     TEST_ASSERT(test_pack_unpack_with_vals(fancy_obj));
 
@@ -138,39 +139,39 @@ public:
 
 
 static auto fn1_callback = make_lambda_closure(
-    []() {
+    [](io_fibre_TestInterface*) {
         std::cout << "fn1 call complete\n";
         completed_functions ^= 0x1;
     }
 );
 static auto fn2_callback = make_lambda_closure(
-    []() {
+    [](io_fibre_TestInterface*) {
         std::cout << "fn2 call complete\n";
         completed_functions ^= 0x2;
     }
 );
 static auto fn3_callback = make_lambda_closure(
-    []() {
+    [](io_fibre_TestInterface*) {
         std::cout << "fn3 call complete\n";
         completed_functions ^= 0x4;
     }
 );
 static auto fn4_callback = make_lambda_closure(
-    [](int32_t ret_arg1) {
+    [](io_fibre_TestInterface*, int32_t ret_arg1) {
         std::cout << "fn4 call complete\n";
         if (ret_arg1 == 321)
             completed_functions ^= 0x8;
     }
 );
 static auto fn5_callback = make_lambda_closure(
-    [](int32_t ret_arg1, std::string ret_arg2) {
+    [](io_fibre_TestInterface*, int32_t ret_arg1, std::string ret_arg2) {
         std::cout << "fn5 call complete\n";
         if (ret_arg1 == 123 && ret_arg2 == "ret val")
             completed_functions ^= 0x10;
     }
 );
 static auto fn6_callback = make_lambda_closure(
-    [](std::string ret_arg1, uint32_t ret_arg2) {
+    [](io_fibre_TestInterface*, std::string ret_arg1, uint32_t ret_arg2) {
         std::cout << "fn6 call complete\n";
         if (ret_arg1 == "blueberry" && ret_arg2 == 4326)
             completed_functions ^= 0x20;
@@ -202,7 +203,7 @@ int main(int argc, const char** argv) {
 
     // Instantiate a DBus proxy object for the object we just published
     const char* own_dbus_name = dbus_bus_get_unique_name(dbus_connection.get_libdbus_ptr());
-    io_fibre_TestInterface remote_test_object(&dbus_connection, own_dbus_name, "/io/fibre/TestObject1");
+    DBusRemoteObject<io_fibre_TestInterface> remote_test_object({&dbus_connection, own_dbus_name, "/io/fibre/TestObject1"});
 
     // Send method calls over DBus
     remote_test_object.Func1_async(&fn1_callback);

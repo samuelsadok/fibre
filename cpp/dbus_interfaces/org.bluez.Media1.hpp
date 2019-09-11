@@ -5,32 +5,32 @@
 #include <fibre/closure.hpp>
 #include <vector>
 
-class org_bluez_Media1 : public fibre::DBusObject {
+class org_bluez_Media1 {
 public:
     static const char* get_interface_name() { return "org.bluez.Media1"; }
 
-    org_bluez_Media1(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
-        : DBusObject(conn, service_name, object_name) {}
+    org_bluez_Media1(fibre::DBusRemoteObjectBase* base)
+        : base_(base) {}
     
     // For now we delete the copy constructor as we would need to change the references within the signal objects for copying an object properly
     org_bluez_Media1(const org_bluez_Media1 &) = delete;
     org_bluez_Media1& operator=(const org_bluez_Media1 &) = delete;
 
 
-    int RegisterEndpoint_async(DBusObject endpoint, std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "RegisterEndpoint", callback, endpoint, properties);
+    int RegisterEndpoint_async(fibre::DBusObjectPath endpoint, std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Media1*>* callback) {
+        return base_->method_call_async(this, "RegisterEndpoint", callback, endpoint, properties);
     }
 
-    int UnregisterEndpoint_async(DBusObject endpoint, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "UnregisterEndpoint", callback, endpoint);
+    int UnregisterEndpoint_async(fibre::DBusObjectPath endpoint, fibre::Callback<org_bluez_Media1*>* callback) {
+        return base_->method_call_async(this, "UnregisterEndpoint", callback, endpoint);
     }
 
-    int RegisterPlayer_async(DBusObject player, std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "RegisterPlayer", callback, player, properties);
+    int RegisterPlayer_async(fibre::DBusObjectPath player, std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Media1*>* callback) {
+        return base_->method_call_async(this, "RegisterPlayer", callback, player, properties);
     }
 
-    int UnregisterPlayer_async(DBusObject player, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "UnregisterPlayer", callback, player);
+    int UnregisterPlayer_async(fibre::DBusObjectPath player, fibre::Callback<org_bluez_Media1*>* callback) {
+        return base_->method_call_async(this, "UnregisterPlayer", callback, player);
     }
 
 
@@ -51,6 +51,8 @@ public:
             return 0;
         }
     };
+
+    fibre::DBusRemoteObjectBase* base_;
 };
 
 #endif // __INTERFACES__ORG_BLUEZ_MEDIA1_HPP

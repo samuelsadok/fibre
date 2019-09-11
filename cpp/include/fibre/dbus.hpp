@@ -23,7 +23,6 @@ namespace fibre {
 /* Forward declarations ------------------------------------------------------*/
 
 class DBusConnectionWrapper;
-class DBusObject;
 
 /**
  * @brief Implements message push/pop functions for each supported type.
@@ -43,9 +42,15 @@ struct DBusTypeTraits;
 template<size_t I, size_t N, typename T>
 struct variant_helper;
 
+struct DBusObjectPath : std::string {
+    DBusObjectPath() = default;
+    DBusObjectPath(const DBusObjectPath &) = default;
+    DBusObjectPath(std::string str) : std::string(str) {}
+};
+
 // @brief A std::variant supporting the types most commonly used in DBus variants
 using dbus_variant = std::variant<
-    std::string, bool, DBusObject,
+    std::string, bool, DBusObjectPath,
     /* int8_t (char on most platforms) is not supported by DBus */
     short, int, long, long long,
     unsigned char, unsigned short, unsigned int, unsigned long, unsigned long long,
@@ -163,8 +168,8 @@ int unpack_message(DBusMessage* message, std::tuple<Ts...>& tuple, int expected_
     return 0;
 }
 
-template<typename ... TOutputs>
-void handle_reply_message(DBusMessage* msg, Callback<TOutputs...>* callback) {
+template<typename TInterface, typename ... TOutputs>
+void handle_reply_message(DBusMessage* msg, TInterface* obj, Callback<TInterface*, TOutputs...>* callback) {
     std::tuple<TOutputs...> values;
 
     if (unpack_message(msg, values, DBUS_MESSAGE_TYPE_METHOD_RETURN) != 0) {
@@ -174,12 +179,12 @@ void handle_reply_message(DBusMessage* msg, Callback<TOutputs...>* callback) {
     }
 
     if (callback) {
-        apply(*callback, values);
+        apply(*callback, std::tuple_cat(std::make_tuple(obj), values));
     }
 }
 
-template<typename ... TArgs>
-void handle_signal_message(DBusMessage* msg, const std::vector<Callback<TArgs...>*>& callbacks) {
+template<typename TInterface, typename ... TArgs>
+void handle_signal_message(DBusMessage* msg, TInterface* obj, const std::vector<Callback<TInterface*, TArgs...>*>& callbacks) {
     std::tuple<TArgs...> values;
     if (unpack_message(msg, values, DBUS_MESSAGE_TYPE_SIGNAL) != 0) {
         FIBRE_LOG(E) << "Failed to unpack signal. Will not invoke callback.";
@@ -188,7 +193,7 @@ void handle_signal_message(DBusMessage* msg, const std::vector<Callback<TArgs...
 
     for (auto& callback : callbacks) {
         if (callback) {
-            apply(*callback, values);
+            apply(*callback, std::tuple_cat(std::make_tuple(obj), values));
         }
     }
 }
@@ -291,35 +296,37 @@ private:
 };
 
 
-class DBusObject {
+class DBusRemoteObjectBase {
 public:
-    DBusObject()
+    DBusRemoteObjectBase()
         : conn_(nullptr), service_name_(""), object_name_("") {}
 
-    DBusObject(DBusConnectionWrapper* conn, std::string service_name, std::string object_name) 
+    DBusRemoteObjectBase(DBusConnectionWrapper* conn, std::string service_name, std::string object_name) 
         : conn_(conn), service_name_(service_name), object_name_(object_name) {}
 
-    inline bool operator==(const DBusObject & other) const {
+    inline bool operator==(const DBusRemoteObjectBase & other) const {
         return (conn_ == other.conn_) && (service_name_ == other.service_name_)
             && (object_name_ == other.object_name_);
     }
 
-    inline bool operator!=(const DBusObject & other) const {
+    inline bool operator!=(const DBusRemoteObjectBase & other) const {
         return (conn_ != other.conn_) || (service_name_ != other.service_name_)
             || (object_name_ != other.object_name_);
     }
 
-    template<typename ... TInputs, typename ... TOutputs>
-    int method_call_async(const char* interface_name, const char* method_name, Callback<TOutputs...>* callback, TInputs ... inputs) {
+    template<typename TInterface, typename ... TInputs, typename ... TOutputs>
+    int method_call_async(TInterface* obj, const char* method_name, Callback<TInterface*, TOutputs...>* callback, TInputs ... inputs) {
         DBusMessage* msg;
         DBusMessageIter args;
         DBusPendingCall* pending;
+        dbus_bool_t status;
 
-        auto pending_call_handler = [](DBusPendingCall* pending, void* ctx){
-            Callback<TOutputs...>* callback = reinterpret_cast<Callback<TOutputs...>*>(ctx);
+        using pending_call_ctx_t = struct { TInterface* obj; Callback<TInterface*, TOutputs...>* callback; };
+        auto pending_call_handler = [](DBusPendingCall* pending, void* ctx_unsafe){
+            pending_call_ctx_t* ctx = reinterpret_cast<pending_call_ctx_t*>(ctx_unsafe);
             DBusMessage* msg = dbus_pending_call_steal_reply(pending);
-            dbus_pending_call_unref(pending);
-            handle_reply_message(msg, callback);
+            handle_reply_message(msg, ctx->obj, ctx->callback);
+            dbus_pending_call_unref(pending); // this will deallocate the memory being pointed to by ctx
             dbus_message_unref(msg);
         };
 
@@ -329,7 +336,7 @@ public:
 
         msg = dbus_message_new_method_call(service_name_.c_str(), // target for the method call
                 object_name_.c_str(), // object to call on
-                interface_name, // interface to call on
+                TInterface::get_interface_name(), // interface to call on
                 method_name); // method name
         if (!msg) {
             FIBRE_LOG(E) << "Message Null";
@@ -357,7 +364,10 @@ public:
         dbus_message_unref(msg);
         FIBRE_LOG(D) << "dispatched method call message";
 
-        if (!dbus_pending_call_set_notify(pending, pending_call_handler, callback, nullptr)) {
+        status = dbus_pending_call_set_notify(pending, pending_call_handler,
+                new pending_call_ctx_t{obj, callback},
+                [](void* ctx){ delete (pending_call_ctx_t*)ctx; });
+        if (!status) {
             FIBRE_LOG(E) << "failed to set pending call callback";
             goto fail1;
         }
@@ -366,7 +376,7 @@ public:
         msg = dbus_pending_call_steal_reply(pending);
         if (msg) {
             dbus_pending_call_unref(pending);
-            handle_reply_message(msg, callback);
+            handle_reply_message(msg, obj, callback);
             dbus_message_unref(msg);
         }
 
@@ -390,7 +400,7 @@ public:
         : parent_(parent), name_(name)
     { }
 
-    DBusRemoteSignal& operator+=(Callback<TArgs...>* callback) {
+    DBusRemoteSignal& operator+=(Callback<TInterface*, TArgs...>* callback) {
         callbacks_.push_back(callback);
         if (callbacks_.size() == 1) {
             activate_filter(); // TODO: error handling
@@ -398,7 +408,7 @@ public:
         return *this;
     }
 
-    DBusRemoteSignal& operator-=(Callback<TArgs...>* callback) {
+    DBusRemoteSignal& operator-=(Callback<TInterface*, TArgs...>* callback) {
         callbacks_.erase(std::remove(callbacks_.begin(), callbacks_.end(), callback), callbacks_.end());
         if (callbacks_.size() == 0) {
             deactivate_filter();
@@ -415,10 +425,10 @@ private:
             // The sender may be reported as ":1.10" even if the match was registered as "sender='org.bluez'"
             bool matches = (strcmp(dbus_message_get_interface(message), TInterface::get_interface_name()) == 0)
                     && (strcmp(dbus_message_get_member(message), self->name_) == 0)
-                    && (strcmp(dbus_message_get_path(message), self->parent_->object_name_.c_str()) == 0);
+                    && (strcmp(dbus_message_get_path(message), self->parent_->base_->object_name_.c_str()) == 0);
 
             if (matches) {
-                handle_signal_message(message, self->callbacks_); // TODO: error handling
+                handle_signal_message(message, self->parent_, self->callbacks_); // TODO: error handling
                 return DBUS_HANDLER_RESULT_HANDLED;
             } else {
                 return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
@@ -428,35 +438,45 @@ private:
     };
 
     int activate_filter() {
-        if (!parent_ || !parent_->conn_) {
+        if (!parent_ || !parent_->base_ || !parent_->base_->conn_) {
             FIBRE_LOG(E) << "object not initialized properly";
             return -1;
         }
 
-        if (!dbus_connection_add_filter(parent_->conn_->get_libdbus_ptr(), filter_callback, this, nullptr)) {
+        if (!dbus_connection_add_filter(parent_->base_->conn_->get_libdbus_ptr(), filter_callback, this, nullptr)) {
             FIBRE_LOG(E) << "failed to add filter";
             return -1;
         }
 
         std::string rule = "type='signal',"
-            "sender='" + parent_->service_name_ + "',"
+            "sender='" + parent_->base_->service_name_ + "',"
             "interface='" + TInterface::get_interface_name() + "',"
             "member='" + std::string(name_) + "',"
-            "path='" + parent_->object_name_ + "'";
+            "path='" + parent_->base_->object_name_ + "'";
         
         FIBRE_LOG(D) << "adding rule " << rule << " to connection";
-        dbus_bus_add_match(parent_->conn_->get_libdbus_ptr(), rule.c_str(), nullptr);
-        dbus_connection_flush(parent_->conn_->get_libdbus_ptr());
+        dbus_bus_add_match(parent_->base_->conn_->get_libdbus_ptr(), rule.c_str(), nullptr);
+        dbus_connection_flush(parent_->base_->conn_->get_libdbus_ptr());
         return 0;
     }
 
     void deactivate_filter() {
-        dbus_connection_remove_filter(parent_->conn_->get_libdbus_ptr(), filter_callback, this);
+        dbus_connection_remove_filter(parent_->base_->conn_->get_libdbus_ptr(), filter_callback, this);
     }
 
     TInterface* parent_;
     const char* name_;
-    std::vector<Callback<TArgs...>*> callbacks_;
+    std::vector<Callback<TInterface*, TArgs...>*> callbacks_;
+};
+
+
+template<typename ... TInterfaces>
+class DBusRemoteObject : public TInterfaces... {
+public:
+    DBusRemoteObject(DBusRemoteObjectBase base)
+        : base_(base), TInterfaces(&base_)... {}
+
+    DBusRemoteObjectBase base_;
 };
 
 
@@ -673,22 +693,17 @@ struct DBusTypeTraits<std::unordered_map<TKey, TVal>> {
 
 
 template<>
-struct DBusTypeTraits<DBusObject> {
+struct DBusTypeTraits<DBusObjectPath> {
     using type_id = std::integral_constant<int, DBUS_TYPE_OBJECT_PATH>;
     static constexpr sstring<1> signature = DBUS_TYPE_OBJECT_PATH_AS_STRING;
 
-    static int push(DBusMessageIter* iter, DBusObject val) {
-        const char * object_path = val.object_name_.c_str();
+    static int push(DBusMessageIter* iter, DBusObjectPath val) {
+        const char * object_path = val.c_str();
         return dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH, &object_path) ? 0 : -1;
     }
 
-    static int pop(DBusMessageIter* iter, DBusObject& val) {
-        std::string object_path;
-        int result = DBusTypeTraits<std::string>::pop(iter, object_path);
-        if (result == 0) {
-            val = DBusObject(nullptr, "", object_path);
-        }
-        return result;
+    static int pop(DBusMessageIter* iter, DBusObjectPath& val) {
+        return DBusTypeTraits<std::string>::pop(iter, val);
     }
 };
 
@@ -782,18 +797,185 @@ struct DBusTypeTraits<std::variant<Ts...>> {
 
 namespace std {
 
-template<typename ... Ts>
-static std::ostream& operator<<(std::ostream& stream, const fibre::DBusObject& val) {
-    return stream << "DBusObject(" << val.service_name_ << ", " << val.object_name_ << ")";
+static std::ostream& operator<<(std::ostream& stream, const fibre::DBusRemoteObjectBase& val) {
+    return stream << val.object_name_ << " @ " << val.service_name_ << "";
 }
 
-template<>
-struct hash<fibre::DBusObject> {
-    size_t operator()(const fibre::DBusObject& obj) const {
-        return hash<uintptr_t>()(reinterpret_cast<uintptr_t>(obj.conn_)) +
-               hash<string>()(obj.service_name_) +
-               hash<string>()(obj.object_name_);
+template<typename ... TInterfaces>
+static std::ostream& operator<<(std::ostream& stream, const fibre::DBusRemoteObject<TInterfaces...>& val) {
+    return stream << val->base_ << "";
+}
+
+template<typename ... TInterfaces>
+struct hash<fibre::DBusRemoteObject<TInterfaces...>> {
+    size_t operator()(const fibre::DBusRemoteObject<TInterfaces...>& obj) const {
+        size_t hashes[] = { std::hash<TInterfaces>(obj)... };
+        size_t result = 0;
+        for (size_t i = 0; i < sizeof...(TInterfaces); ++i) {
+            result += hashes[i];
+        }
+        return result;
     }
+};
+
+template<>
+struct hash<fibre::DBusObjectPath> {
+    size_t operator()(const fibre::DBusObjectPath& obj) const {
+        return hash<string>()(obj);
+    }
+};
+
+}
+
+
+// TODO: this file is getting complex. Maybe we should move this to another file?
+namespace fibre {
+
+//class org_freedesktop_DBus_ObjectManager; // defined in autogenerated header file
+#include "../../dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
+
+
+template<typename ... TInterfaces>
+class DBusDiscoverer {
+public:
+    using proxy_t = DBusRemoteObject<TInterfaces...>;
+
+    int start(org_freedesktop_DBus_ObjectManager* obj_manager, Callback<proxy_t*>* on_object_found, Callback<proxy_t*>* on_object_lost) {
+        obj_manager_ = obj_manager; // TODO: check if already started
+        on_object_found_ = on_object_found;
+        on_object_lost_ = on_object_lost;
+        
+        scan_completed_ = false;
+        obj_manager_->InterfacesAdded += &handle_interfaces_added_obj;
+        obj_manager_->InterfacesRemoved += &handle_interfaces_removed_obj;
+        obj_manager_->GetManagedObjects_async(&handle_scan_complete_obj);
+        return 0;
+    }
+
+    int stop() {
+        // TODO: check if already stopped
+        obj_manager_->InterfacesAdded -= &handle_interfaces_added_obj; // TODO: error handling
+        obj_manager_->InterfacesRemoved -= &handle_interfaces_removed_obj;
+        // TODO: cancel potentially ongoing GetManagedObjects call
+        // TODO: there should be two levels of stop:
+        //  - "Stop notifying me about new objects because I have what I was
+        //    looking for. Don't tear down the objects that you found, but let
+        //    me know when they disappear."
+        //  - "Stop notifying me about new objects and tear down all objects
+        //    that have been discovered so far."
+
+        obj_manager_ = nullptr;
+        return 0;
+    }
+
+private:
+    struct impl_table_t {
+        std::array<bool, sizeof...(TInterfaces)> is_implemented{};
+        proxy_t* instance = nullptr;
+    };
+
+    using interface_map = std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>;
+    
+    void handle_interfaces_added(org_freedesktop_DBus_ObjectManager* obj_mgr, DBusObjectPath obj, interface_map new_interfaces) {
+        if (!scan_completed_)
+            return;
+
+        auto obj_iterator = implementation_matrix_.end();
+
+        // Register in implementation map which interfaces were added to this object
+        for (size_t i = 0; i < sizeof...(TInterfaces); ++i) { // TODO: swap this for better loop unrolling
+            if (new_interfaces.find(interface_names_[i]) != new_interfaces.end()) {
+                if (obj_iterator == implementation_matrix_.end())
+                    obj_iterator = implementation_matrix_.insert({obj, {}}).first;
+                obj_iterator->second.is_implemented[i] = true;
+            }
+        }
+
+        // If all interfaces have been added, notify the client
+        if (obj_iterator != implementation_matrix_.end()) {
+            bool is_full = true;
+            for (size_t i = 0; i < sizeof...(TInterfaces); ++i) {
+                is_full &= obj_iterator->second.is_implemented[i];
+            }
+            if (is_full) {
+                FIBRE_LOG(D) << "discovered all interfaces of object " << obj;
+                if (obj_iterator->second.instance) {
+                    FIBRE_LOG(E) << "object already exists";
+                } else {
+                    obj_iterator->second.instance = new proxy_t(DBusRemoteObjectBase(obj_mgr->base_->conn_, obj_mgr->base_->service_name_, obj));
+                    if (on_object_found_) {
+                        (*on_object_found_)(obj_iterator->second.instance);
+                    }
+                }
+            }
+        }
+    }
+
+    void handle_interfaces_removed(org_freedesktop_DBus_ObjectManager*, DBusObjectPath obj, std::vector<std::string> old_interfaces) {
+        if (!scan_completed_)
+            return;
+
+        auto obj_iterator = implementation_matrix_.end();
+
+        // Register in implementation map which interfaces were removed from this object
+        for (size_t i = 0; i < sizeof...(TInterfaces); ++i) { // TODO: swap this for better loop unrolling
+            for (size_t j = 0; j < old_interfaces.size(); ++j) {
+                if (interface_names_[i] == old_interfaces[j]) {
+                    if (obj_iterator == implementation_matrix_.end())
+                        obj_iterator = implementation_matrix_.find(obj);
+                    if (obj_iterator == implementation_matrix_.end()) {
+                        // this should never happen
+                        FIBRE_LOG(E) << "tried to remove interface before it was added";
+                    } else {
+                        obj_iterator->second.is_implemented[i] = false;
+                    }
+                }
+            }
+        }
+
+        // If all interfaces have been removed, remove the object itself
+        if (obj_iterator != implementation_matrix_.end()) {
+            FIBRE_LOG(D) << "discovered all interfaces of object " << obj;
+            if (!obj_iterator->second.instance) {
+                FIBRE_LOG(E) << "object does not exist";
+            } else {
+                if (on_object_lost_) {
+                    (*on_object_lost_)(obj_iterator->second.instance);
+                }
+                delete obj_iterator->second.instance;
+                obj_iterator->second.instance = nullptr;
+            }
+
+            bool is_empty = true;
+            for (size_t i = 0; i < sizeof...(TInterfaces); ++i) {
+                is_empty &= !obj_iterator->second.is_implemented[i];
+            }
+            if (is_empty) {
+                implementation_matrix_.erase(obj_iterator);
+                FIBRE_LOG(D) << "lost all interfaces of object " << obj;
+                // TODO: notify client
+            }
+        }
+    }
+
+    void handle_scan_complete(org_freedesktop_DBus_ObjectManager* obj_mgr, std::unordered_map<DBusObjectPath, interface_map> objects) {
+        scan_completed_ = true;
+        FIBRE_LOG(D) << "found " << objects.size() << " objects";
+        for (auto& it : objects) {
+            handle_interfaces_added(obj_mgr, it.first, it.second);
+        }
+    }
+
+    const char * interface_names_[sizeof...(TInterfaces)] = { TInterfaces::get_interface_name()... };
+    org_freedesktop_DBus_ObjectManager* obj_manager_ = nullptr;
+    Callback<proxy_t*>* on_object_found_ = nullptr;
+    Callback<proxy_t*>* on_object_lost_ = nullptr;
+    std::unordered_map<DBusObjectPath, impl_table_t> implementation_matrix_{};
+    bool scan_completed_ = false;
+
+    member_closure_t<decltype(&DBusDiscoverer::handle_interfaces_added)> handle_interfaces_added_obj{&DBusDiscoverer::handle_interfaces_added, this};
+    member_closure_t<decltype(&DBusDiscoverer::handle_interfaces_removed)> handle_interfaces_removed_obj{&DBusDiscoverer::handle_interfaces_removed, this};
+    member_closure_t<decltype(&DBusDiscoverer::handle_scan_complete)> handle_scan_complete_obj{&DBusDiscoverer::handle_scan_complete, this};
 };
 
 }

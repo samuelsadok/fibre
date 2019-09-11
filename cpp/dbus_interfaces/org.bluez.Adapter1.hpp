@@ -5,36 +5,36 @@
 #include <fibre/closure.hpp>
 #include <vector>
 
-class org_bluez_Adapter1 : public fibre::DBusObject {
+class org_bluez_Adapter1 {
 public:
     static const char* get_interface_name() { return "org.bluez.Adapter1"; }
 
-    org_bluez_Adapter1(fibre::DBusConnectionWrapper* conn, const char* service_name, const char* object_name)
-        : DBusObject(conn, service_name, object_name) {}
+    org_bluez_Adapter1(fibre::DBusRemoteObjectBase* base)
+        : base_(base) {}
     
     // For now we delete the copy constructor as we would need to change the references within the signal objects for copying an object properly
     org_bluez_Adapter1(const org_bluez_Adapter1 &) = delete;
     org_bluez_Adapter1& operator=(const org_bluez_Adapter1 &) = delete;
 
 
-    int StartDiscovery_async(fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "StartDiscovery", callback);
+    int StartDiscovery_async(fibre::Callback<org_bluez_Adapter1*>* callback) {
+        return base_->method_call_async(this, "StartDiscovery", callback);
     }
 
-    int SetDiscoveryFilter_async(std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "SetDiscoveryFilter", callback, properties);
+    int SetDiscoveryFilter_async(std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Adapter1*>* callback) {
+        return base_->method_call_async(this, "SetDiscoveryFilter", callback, properties);
     }
 
-    int StopDiscovery_async(fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "StopDiscovery", callback);
+    int StopDiscovery_async(fibre::Callback<org_bluez_Adapter1*>* callback) {
+        return base_->method_call_async(this, "StopDiscovery", callback);
     }
 
-    int RemoveDevice_async(DBusObject device, fibre::Callback<>* callback) {
-        return method_call_async(get_interface_name(), "RemoveDevice", callback, device);
+    int RemoveDevice_async(fibre::DBusObjectPath device, fibre::Callback<org_bluez_Adapter1*>* callback) {
+        return base_->method_call_async(this, "RemoveDevice", callback, device);
     }
 
-    int GetDiscoveryFilters_async(fibre::Callback<std::vector<std::string>>* callback) {
-        return method_call_async(get_interface_name(), "GetDiscoveryFilters", callback);
+    int GetDiscoveryFilters_async(fibre::Callback<org_bluez_Adapter1*, std::vector<std::string>>* callback) {
+        return base_->method_call_async(this, "GetDiscoveryFilters", callback);
     }
 
     // DBusProperty<std::string> Address;
@@ -70,6 +70,8 @@ public:
             return 0;
         }
     };
+
+    fibre::DBusRemoteObjectBase* base_;
 };
 
 #endif // __INTERFACES__ORG_BLUEZ_ADAPTER1_HPP

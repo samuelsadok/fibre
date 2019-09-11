@@ -6,6 +6,8 @@
 #include <fibre/dbus.hpp>
 #include <fibre/channel_discoverer.hpp>
 #include "../../dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
+#include "../../dbus_interfaces/org.bluez.LEAdvertisingManager1.hpp"
+#include "../../dbus_interfaces/org.bluez.GattManager1.hpp"
 
 namespace fibre {
 
@@ -17,13 +19,22 @@ public:
     int stop_channel_discovery(void* discovery_ctx);
 
 private:
+    using adapter_t = DBusRemoteObject<org_bluez_LEAdvertisingManager1, org_bluez_GattManager1>;
+
     int start_ble_adapter_monitor();
     int stop_ble_adapter_monitor();
 
+    void handle_adapter_found(adapter_t* adapter);
+    void handle_adapter_lost(adapter_t* adapter);
+
     Worker* worker_ = nullptr;
     DBusConnectionWrapper* dbus_ = nullptr;
-    org_freedesktop_DBus_ObjectManager bluez_root_obj{nullptr, "", ""};
+    DBusRemoteObject<org_freedesktop_DBus_ObjectManager> bluez_root_obj_{{nullptr, "", ""}};
+    DBusDiscoverer<org_bluez_LEAdvertisingManager1, org_bluez_GattManager1> dbus_discoverer_{};
     int n_discovery_requests = 0;
+
+    member_closure_t<decltype(&BluetoothCentralSideDiscoverer::handle_adapter_found)> handle_adapter_found_obj_{&BluetoothCentralSideDiscoverer::handle_adapter_found, this};
+    member_closure_t<decltype(&BluetoothCentralSideDiscoverer::handle_adapter_lost)> handle_adapter_lost_obj_{&BluetoothCentralSideDiscoverer::handle_adapter_lost, this};
 };
 
 
