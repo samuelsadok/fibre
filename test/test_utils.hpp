@@ -24,39 +24,65 @@ SafeContext<TFunc, TCtx...> on_leave_scope(TFunc dtor, TCtx... ctx) {
 }
 
 
-template<typename ... Ts>
-bool test_assert(bool val, const char* file, size_t line, Ts... args) {
-    if (!val) {
-        // TODO: use logging stubs
-        fprintf(stderr, "error in %s:%zu: ", file, line);
-        int dummy[sizeof...(Ts)] = { (std::cerr << args, 0)... };
-        (void) dummy;
-        fprintf(stderr, "\n");
-        return false;
+
+struct TestContext {
+    template<typename ... Ts>
+    bool test_assert(bool val, const char* file, size_t line, Ts... args) {
+        asserts++;
+        if (!val) {
+            // TODO: use logging stubs
+            fprintf(stderr, "error in %s:%zu: ", file, line);
+            int dummy[sizeof...(Ts)] = { (std::cerr << args, 0)... };
+            (void) dummy;
+            fprintf(stderr, "\n");
+            fails++;
+            return false;
+        }
+        return true;
     }
-    return true;
-}
 
-template<typename T>
-bool test_zero(T val, const char* file, size_t line) {
-    return test_assert(val == 0, __FILE__, __LINE__, "expected zero, got ", val);
-}
+    template<typename T>
+    bool test_zero(T val, const char* file, size_t line) {
+        return test_assert(val == 0, file, line, "expected zero, got ", val);
+    }
 
-template<typename T>
-bool test_equal(T val1, T val2, const char* file, size_t line) {
-    return test_assert(val1 == val2, __FILE__, __LINE__, "expected equal values, got ", val1, " and ", val2);
-}
+    template<typename T>
+    bool test_equal(T val1, T val2, const char* file, size_t line) {
+        return test_assert(val1 == val2, file, line, "expected equal values, got ", val1, " and ", val2);
+    }
 
-template<typename T>
-bool test_not_equal(T val1, T val2, const char* file, size_t line) {
-    return test_assert(val1 != val2, __FILE__, __LINE__, "expected unequal values, got ", val1, " and ", val2);
-}
+    template<typename T>
+    bool test_not_equal(T val1, T val2, const char* file, size_t line) {
+        return test_assert(val1 != val2, file, line, "expected unequal values, got ", val1, " and ", val2);
+    }
 
-#define TEST_NOT_NULL(ptr)      do { if (!test_assert(ptr, __FILE__, __LINE__, "pointer is NULL")) return false; } while (0)
-#define TEST_ZERO(val)          do { if (!test_zero(val, __FILE__, __LINE__)) return false; } while (0)
-#define TEST_ASSERT(val, ...)   do { if (!test_assert(val, __FILE__, __LINE__, "assert failed")) return false; } while (0)
-#define TEST_EQUAL(val1, val2)   do { if (!test_equal(val1, val2, __FILE__, __LINE__)) return false; } while (0)
-#define TEST_NOT_EQUAL(val1, val2)   do { if (!test_not_equal(val1, val2, __FILE__, __LINE__)) return false; } while (0)
+    bool test_add(TestContext ctx, const char* file, size_t line) {
+        asserts += ctx.asserts;
+        fails += ctx.fails;
+        return ctx.fails == 0;
+    }
+
+    int summarize() {
+        if (fails) {
+            fprintf(stderr, "%d out of %d asserts failed!\n", fails, asserts);
+            return -1;
+        } else {
+            fprintf(stderr, "All tests passed (%d asserts)!\n", asserts);
+            return 0;
+        }
+    }
+
+    size_t asserts = 0;
+    size_t fails = 0;
+};
+
+#define TEST_ADD(subctx)            context.test_add(subctx, __FILE__, __LINE__)
+#define TEST_NOT_NULL(ptr)          context.test_assert(ptr, __FILE__, __LINE__, "pointer is NULL")
+#define TEST_ZERO(val)              context.test_zero(val, __FILE__, __LINE__)
+#define TEST_ASSERT(val, ...)       context.test_assert(val, __FILE__, __LINE__, "assert failed")
+#define TEST_EQUAL(val1, val2)      context.test_equal(val1, val2, __FILE__, __LINE__)
+#define TEST_NOT_EQUAL(val1, val2)  context.test_not_equal(val1, val2, __FILE__, __LINE__)
+
 
 
 

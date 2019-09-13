@@ -21,7 +21,7 @@ int worker_test() {
     }
 
     uint32_t counter = 0;
-    auto callback = fibre::bind(make_lambda_closure([](uint32_t& cnt) { cnt++; }), counter);
+    auto callback = make_lambda_closure([](uint32_t& cnt) { cnt++; }).bind(counter);
     if (timer.start(100, true, &callback) != 0) {
         printf("timer start failed.\n");
         return -1;

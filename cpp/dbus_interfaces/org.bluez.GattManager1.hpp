@@ -31,11 +31,32 @@ public:
             { "RegisterApplication", fibre::FunctionImplTable{} },
             { "UnregisterApplication", fibre::FunctionImplTable{} },
         } {}
+        std::unordered_map<fibre::dbus_type_id_t, size_t> ref_count{}; // keeps track of how often a given type has been registered
+
+        template<typename ... TArgs>
+        using signal_closure_t = fibre::Closure<void(fibre::DBusConnectionWrapper::*)(std::string, fibre::DBusObjectPath, TArgs...), std::tuple<fibre::DBusConnectionWrapper*, std::string, fibre::DBusObjectPath>, std::tuple<TArgs...>, void>;
+
+        template<typename ... TArgs>
+        using signal_table_entry_t = std::pair<signal_closure_t<TArgs...>, void(*)(void*, signal_closure_t<TArgs...>&)>;
 
         template<typename TImpl>
-        int register_implementation(TImpl& obj) {
-            (*this)["RegisterApplication"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::RegisterApplication, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
-            (*this)["UnregisterApplication"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::UnregisterApplication, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+        void register_implementation(fibre::DBusConnectionWrapper& conn, fibre::DBusObjectPath path, TImpl& obj) {
+            if (ref_count[fibre::get_type_id<TImpl>()]++ == 0) {
+                (*this)["RegisterApplication"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::RegisterApplication, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+                (*this)["UnregisterApplication"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::UnregisterApplication, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+            }
+        }
+
+        int deregister_implementation(fibre::DBusConnectionWrapper& conn, fibre::DBusObjectPath path, void* obj, fibre::dbus_type_id_t type_id) {
+            auto it = ref_count.find(type_id);
+            if (it == ref_count.end()) {
+                return -1;
+            }
+            if (--(it->second) == 0) {
+                (*this)["RegisterApplication"].erase((*this)["RegisterApplication"].find(type_id));
+                (*this)["UnregisterApplication"].erase((*this)["UnregisterApplication"].find(type_id));
+                ref_count.erase(it);
+            }
             return 0;
         }
     };

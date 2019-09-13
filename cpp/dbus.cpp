@@ -99,7 +99,6 @@ int DBusConnectionWrapper::init(Worker* worker, bool system_bus) {
                 ((DBusConnectionWrapper*)data)->dispatch_signal_.set();
         }, this, nullptr);
 
-    // TODO: remove this filter
     status = dbus_connection_add_filter(conn_, handle_method_call_stub, this, nullptr);
     if (!status) {
         FIBRE_LOG(E) << "failed to add filter";
@@ -272,11 +271,11 @@ void DBusConnectionWrapper::handle_dispatch() {
 
 DBusHandlerResult DBusConnectionWrapper::handle_method_call(DBusMessage* rx_msg) {
     if (dbus_message_get_type(rx_msg) != DBUS_MESSAGE_TYPE_METHOD_CALL) {
-        FIBRE_LOG(D) << "rx_msg type " << dbus_message_get_type(rx_msg);
+        //FIBRE_LOG(D) << "rx_msg: " << *rx_msg;
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
 
-    FIBRE_LOG(D) << "method call received";
+    FIBRE_LOG(D) << "method call received: " << *rx_msg;
 
     const char* interface_name = dbus_message_get_interface(rx_msg);
     const char* method_name = dbus_message_get_member(rx_msg);
@@ -284,14 +283,9 @@ DBusHandlerResult DBusConnectionWrapper::handle_method_call(DBusMessage* rx_msg)
     const char* signature = dbus_message_get_signature(rx_msg);
 
     if (!interface_name || !method_name || !object_path) {
-        FIBRE_LOG(W) << "malformed method call: "
-            << " intf: " << (interface_name ? "not null" : "null")
-            << " member: " << (method_name ? "not null" : "null")
-            << " object: " << (object_path ? "not null" : "null");
+        FIBRE_LOG(W) << "malformed method call: " << *rx_msg;
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
-
-    FIBRE_LOG(D) << "method: " << interface_name << "." << method_name << " on " << object_path << " with signature " << (signature ? signature : "(null)");
 
     ExportTableBase* interface = interface_table[interface_name];
     if (!interface) {
@@ -300,19 +294,17 @@ DBusHandlerResult DBusConnectionWrapper::handle_method_call(DBusMessage* rx_msg)
     }
 
     // Fetch object pointer and type ID of object
-    dbus_type_id_t type_id;
-    void* obj_ptr;
-    std::tie(type_id, obj_ptr) = object_table[object_path];
-    if (type_id == dbus_type_id_t{} || obj_ptr == nullptr) {
-        FIBRE_LOG(W) << "object " << interface_name << " unknown";
+    obj_table_entry_t& entry = object_table[object_path];
+    if (entry.type_id == dbus_type_id_t{} || entry.ptr == nullptr) {
+        FIBRE_LOG(W) << "object " << object_path << " unknown";
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
 
     // Find the function pointer that implements the function for this object
     FunctionImplTable method_table = (*interface)[method_name]; // TODO: this generates an instance of a dictionary, which may be undesired
-    auto unpack_invoke_pack = method_table[type_id];
+    auto unpack_invoke_pack = method_table[entry.type_id];
     if (!unpack_invoke_pack) {
-        FIBRE_LOG(W) << "method " << interface_name << "." << method_name << " not implemented for object " << object_path << " (internal type " << type_id << ")";
+        FIBRE_LOG(W) << "method " << interface_name << "." << method_name << " not implemented for object " << object_path << " (internal type " << entry.type_id << ")";
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
 
@@ -323,7 +315,7 @@ DBusHandlerResult DBusConnectionWrapper::handle_method_call(DBusMessage* rx_msg)
         return DBUS_HANDLER_RESULT_NEED_MEMORY;
     }
 
-    if (unpack_invoke_pack(obj_ptr, rx_msg, tx_msg) != 0) {
+    if (unpack_invoke_pack(entry.ptr, rx_msg, tx_msg) != 0) {
         FIBRE_LOG(W) << "method call failed";
         dbus_message_unref(tx_msg);
         tx_msg = dbus_message_new_error(rx_msg, "io.fibre.DBusServerError", "the method call failed on the server");

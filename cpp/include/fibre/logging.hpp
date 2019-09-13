@@ -138,13 +138,24 @@ public:
     public:
         Entry() : base_stream_(null_stream), lock_() {}
 
-        Entry(std::ostream& base_stream, const char* topic, const char* filename, size_t line_no, const char *funcname, std::mutex& mutex)
+        Entry(std::ostream& base_stream, log_level_t level, const char* topic, const char* filename, size_t line_no, const char *funcname, std::mutex& mutex)
             : base_stream_(base_stream), lock_(mutex)
         {
+            switch (level) {
+            case LOG_LEVEL_W:
+                base_stream << "\x1b[93;1m";
+                break;
+            case LOG_LEVEL_E:
+            case LOG_LEVEL_F:
+                base_stream << "\x1b[91;1m";
+                break;
+            default:
+                break;
+            }
             base_stream << std::dec << "[" << topic << "] ";
             //base_stream << std::dec << filename << ":" << line_no << " in " << funcname << "(): ";
         }
-        ~Entry() { get_stream() << std::endl; }
+        ~Entry() { get_stream() << "\x1b[0m" << std::endl; }
         std::ostream& get_stream() { return base_stream_; };
     private:
         NullBuffer null_buffer{};
@@ -214,7 +225,7 @@ Logger::Entry make_log_entry(const char *filename, size_t line_no, const char *f
         return {};
     } else {
         Logger* logger = get_logger();
-        return { std::cerr, TOPIC::get_label(), filename, line_no, funcname, logger->mutex_ };
+        return { std::cerr, LEVEL, TOPIC::get_label(), filename, line_no, funcname, logger->mutex_ };
     }
 }
 

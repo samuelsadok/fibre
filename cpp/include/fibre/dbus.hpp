@@ -1,3 +1,26 @@
+/**
+ * @brief Provides C++ interface to DBus.
+ * 
+ * This uses the low level library libdbus.
+ * 
+ * The following features are supported:
+ *  - Remote objects:
+ *      - Discovery by specifying a list of interfaces
+ *      - Method calls
+ *      - Subscribing to signals
+ *  - Local objects:
+ *      - Exposing with a list of interfaces
+ *      - Method calls
+ *      - Emitting local signals
+ * 
+ * The following features are not supported:
+ *  - Remote Properties
+ *  - Local Properties
+ *  - Introspection interface on Remote Objects
+ *  - Introspection interface on Local Objects
+ *  - Local Object Manager
+ */
+
 #ifndef __FIBRE_DBUS_HPP
 #define __FIBRE_DBUS_HPP
 
@@ -14,9 +37,23 @@
 #include <fibre/cpp_utils.hpp>
 #include <fibre/print_utils.hpp>
 #include <fibre/logging.hpp>
+#include <unistd.h>
 
 DEFINE_LOG_TOPIC(DBUS);
 #define current_log_topic LOG_TOPIC_DBUS
+
+namespace std {
+template<typename ... Ts>
+static std::ostream& operator<<(std::ostream& stream, DBusMessage& msg) {
+    const char* interface_name = dbus_message_get_interface(&msg);
+    const char* method_name = dbus_message_get_member(&msg);
+    const char* object_path = dbus_message_get_path(&msg);
+    return stream << "DBusMessage (" << dbus_message_get_type(&msg) << "): "
+            << " intf: " << (interface_name ? interface_name : "(null)")
+            << ", member: " << (method_name ? method_name : "(null)")
+            << ", object: " << (object_path ? object_path : "(null)");
+}
+}
 
 namespace fibre {
 
@@ -46,11 +83,13 @@ struct DBusObjectPath : std::string {
     DBusObjectPath() = default;
     DBusObjectPath(const DBusObjectPath &) = default;
     DBusObjectPath(std::string str) : std::string(str) {}
-    DBusObjectPath(const char * str) : std::string(str) {}
+    using std::string::string;
 };
 
 // @brief A std::variant supporting the types most commonly used in DBus variants
-using dbus_variant = std::variant<
+struct dbus_variant;
+
+using dbus_variant_base = std::variant<
     std::string, bool, DBusObjectPath,
     /* int8_t (char on most platforms) is not supported by DBus */
     short, int, long, long long,
@@ -58,10 +97,50 @@ using dbus_variant = std::variant<
     std::vector<std::string>
 >;
 
+struct dbus_variant : dbus_variant_base {
+    using dbus_variant_base::dbus_variant_base;
+};
+
 using dbus_type_id_t = std::string; // Used as a key in internal data structures
 
 using FunctionImplTable = std::unordered_map<fibre::dbus_type_id_t, int(*)(void*, DBusMessage*, DBusMessage*)>;
 using ExportTableBase = std::unordered_map<std::string, FunctionImplTable>;
+
+
+// TODO: this is quite general and could reside outside of DBus
+template<typename ... TArgs>
+class DBusSignal {
+public:
+    DBusSignal() {}
+
+    DBusSignal& operator+=(Callback<TArgs...>* callback) {
+        callbacks_.push_back(callback);
+        return *this;
+    }
+
+    DBusSignal& operator-=(Callback<TArgs...>* callback) {
+        auto it = std::find(callbacks_.begin(), callbacks_.end(), callback);
+        if (it != callbacks_.end()) {
+            callbacks_.erase(it);
+        } else {
+            FIBRE_LOG(E) << "attempt to deregister a callback more than once";
+        }
+        return *this;
+    }
+
+    void trigger(TArgs... args) const {
+        for (auto it: callbacks_) {
+            if (it) {
+                (*it)(args...);
+            }
+        }
+    }
+
+    size_t size() const { return callbacks_.size(); }
+
+private:
+    std::vector<Callback<TArgs...>*> callbacks_;
+};
 
 
 /* Function definitions ------------------------------------------------------*/
@@ -184,19 +263,15 @@ void handle_reply_message(DBusMessage* msg, TInterface* obj, Callback<TInterface
     }
 }
 
-template<typename TInterface, typename ... TArgs>
-void handle_signal_message(DBusMessage* msg, TInterface* obj, const std::vector<Callback<TInterface*, TArgs...>*>& callbacks) {
+template<typename TInterface, typename ... TArgs, size_t ... I>
+void handle_signal_message(DBusMessage* msg, TInterface* obj, const DBusSignal<TInterface*, TArgs...>& signal, std::index_sequence<I...>) {
     std::tuple<TArgs...> values;
     if (unpack_message(msg, values, DBUS_MESSAGE_TYPE_SIGNAL) != 0) {
         FIBRE_LOG(E) << "Failed to unpack signal. Will not invoke callback.";
         return;
     }
 
-    for (auto& callback : callbacks) {
-        if (callback) {
-            apply(*callback, std::tuple_cat(std::make_tuple(obj), values));
-        }
-    }
+    signal.trigger(obj, std::get<I>(values)...);
 }
 
 
@@ -204,41 +279,100 @@ void handle_signal_message(DBusMessage* msg, TInterface* obj, const std::vector<
 
 class DBusConnectionWrapper {
 public:
+    struct obj_table_entry_t {
+        dbus_type_id_t type_id;
+        void* ptr;
+        size_t intf_count; // number of interfaces associated with the object
+    };
     int init(Worker* worker, bool system_bus = false);
     int deinit();
 
     DBusConnection* get_libdbus_ptr() { return conn_; }
+    std::string get_name() { return dbus_bus_get_unique_name(get_libdbus_ptr()); }
 
+    /**
+     * @brief Registers an object such that incoming DBus method calls can be
+     * routed to the corresponding implementation.
+     * 
+     * A object is not automatically discoverable when it is registered. See
+     * DBusLocalObjectManager to publish objects in a discoverable way.
+     * 
+     * An interface list must be specified to indicate which interfaces the
+     * object implements. There will be ugly compiler errors if the object does
+     * not implement the specified interfaces. [TODO: make them less ugly]
+     * 
+     * The same object instance can be registered multiple times with different
+     * interfaces and different paths, however the same path cannot be used for
+     * two different objects.
+     *
+     * @param obj: A reference to the object instance. Must remain valid until
+     *        all interfaces were deregistered using deregister_interfaces().
+     * @param path: The DBus object path under which the object should be
+     *        exposed. The path must start with a slash ("/").
+     */
     template<typename ... TInterfaces, typename TImpl>
-    int publish(TImpl& obj, DBusObjectPath path) {
-        object_table[path] = std::make_tuple(get_type_id<TImpl>(), &obj);
-        int dummy[] = { publish_with_interface<TInterfaces>(obj)... };
-        for (int& it : dummy)
-            if (it)
+    int register_interfaces(TImpl& obj, DBusObjectPath path) {
+        if (path.compare(0, 1, "/") != 0) {
+            FIBRE_LOG(E) << "path must start with a slash";
+            return -1;
+        }
+
+        auto it = object_table.insert({path, {get_type_id<TImpl>(), &obj, 0}});
+        if (it.second) {
+            if (it.first->second.type_id != get_type_id<TImpl>() || it.first->second.ptr != &obj) {
+                FIBRE_LOG(E) << "attempt to register new object under existing path";
                 return -1;
+            }
+        }
+
+        int dummy[] = { (register_interface<TInterfaces>(path, obj), 0)... };
+        it.first->second.intf_count += sizeof...(TInterfaces);
         return 0;
     }
 
     /**
-     * @brief Same as the other publish overload, except that a unique object path is autogenerated
+     * @brief Same as the other register_interfaces overload, except that a unique object path is autogenerated
      * The object path will have the form "/__obj_[N]__" where N is an integer.
      * 
      * @param path: Will be set to the autogenerated path. Can be null.
      */
     template<typename ... TInterfaces, typename TImpl>
-    int publish(TImpl& obj, DBusObjectPath* path = nullptr) {
+    int register_interfaces(TImpl& obj, DBusObjectPath* path = nullptr) {
         DBusObjectPath temp;
         if (!path)
             path = &temp;
         *path = "/__obj_" + std::to_string(object_table.size()) + "__";
-        return publish<TInterfaces...>(obj, *path);
+        return register_interfaces<TInterfaces...>(obj, *path);
     }
 
     template<typename ... TInterfaces>
-    int unpublish(DBusObjectPath path) {
-        // TODO: implement
-        FIBRE_LOG(E) << "unpublish not implemented";
-        return 0;
+    int deregister_interfaces(DBusObjectPath path) {
+        auto it = object_table.find(path);
+        if (it == object_table.end()) {
+            FIBRE_LOG(E) << "object " << path << " was not registered";
+            return -1;
+        }
+
+        // Deregister interface implementions for this type.
+        // If multiple objects with the same type and interface were registered,
+        // this will just reduce a ref count.
+        dbus_type_id_t type_id = it->second.type_id;
+        int results[] = { deregister_interface<TInterfaces>(path, it->second.ptr, it->second.type_id)... };
+
+        size_t success = 0;
+        for (auto it2 : results)
+            if (it2 == 0)
+                success++;
+
+        // Remove object from object table if all it's interfaces were deregistered
+        if (success > it->second.intf_count) {
+            FIBRE_LOG(E) << "deregistered more interfaces than registered";
+        }
+        it->second.intf_count -= std::max(success, it->second.intf_count);
+        if (it->second.intf_count == 0) {
+            object_table.erase(it);
+        }
+        return (success == sizeof...(TInterfaces)) ? 0 : -1;
     }
 
     template<typename ... TOutputs, typename ... TInputs>
@@ -257,6 +391,40 @@ public:
         }
 
         return 0;
+    }
+
+    /**
+     * @brief Notifies remote DBus applications that the specified signal has
+     * triggered.
+     * 
+     * The signal may not be emitted immediately, to do so you must call
+     * dbus_connection_flush().
+     * 
+     * TODO: ordering guarantees? DBus orders method calls and method replies
+     * but what about signals?
+     * see https://www.freedesktop.org/wiki/IntroductionToDBus/#messageordering
+     */
+    template<typename TInterface, typename ... TArgs>
+    void emit_signal(std::string signal_name, DBusObjectPath path, TArgs... args) {
+        DBusMessage* tx_msg = dbus_message_new_signal(path.c_str(), TInterface::get_interface_name(), signal_name.c_str());
+        if (!tx_msg) {
+            FIBRE_LOG(E) << "message is NULL";
+            return;
+        }
+
+        if (pack_message(tx_msg, std::forward_as_tuple(args...), std::make_index_sequence<sizeof...(TArgs)>()) != 0) {
+            FIBRE_LOG(E) << "failed to pack args";
+            return;
+        }
+
+        if (!dbus_connection_send(get_libdbus_ptr(), tx_msg, nullptr)) {
+            FIBRE_LOG(E) << "failed to send signal";
+            dbus_message_unref(tx_msg);
+            return;
+        }
+
+        dbus_message_unref(tx_msg);
+        return;
     }
 
 private:
@@ -286,14 +454,33 @@ private:
     }
 
     template<typename TInterface, typename TImpl>
-    int publish_with_interface(TImpl& obj) {
+    void register_interface(std::string path, TImpl& obj) {
         // Create and register exactly one instance of the export table of the
         // interface and then register this implementation type with the
         // export table.
         using exporter_t = typename TInterface::ExportTable;
         auto insert_result = interface_table.insert({TInterface::get_interface_name(), construct_export_table<exporter_t>()});
         exporter_t* intf = reinterpret_cast<exporter_t*>(insert_result.first->second);
-        return intf->register_implementation(obj);
+        intf->register_implementation(*this, path, obj);
+    }
+
+    template<typename TInterface>
+    int deregister_interface(std::string path, void* obj, dbus_type_id_t type_id) {
+        using exporter_t = typename TInterface::ExportTable;
+        auto it = interface_table.find(TInterface::get_interface_name());
+        if (it == interface_table.end()) {
+            FIBRE_LOG(E) << "attempt to deregister an interface too many times";
+            return -1;
+        }
+        exporter_t* intf = reinterpret_cast<exporter_t*>(it->second);
+        if (intf->deregister_implementation(*this, path, obj, type_id) != 0) {
+            FIBRE_LOG(E) << "attempt to deregister implementation too many times";
+            return -1;
+        }
+        if (intf->ref_count.size() == 0) {
+            interface_table.erase(it);
+        }
+        return 0;
     }
 
     using watch_ctx_t = bind_result_t<member_closure_t<decltype(&DBusConnectionWrapper::handle_watch)>, DBusWatch*>;
@@ -311,7 +498,7 @@ private:
     member_closure_t<decltype(&DBusConnectionWrapper::handle_dispatch)> handle_dispatch_obj_{&DBusConnectionWrapper::handle_dispatch, this};
 
     // Lookup tables to route incoming method calls to the correct receiver
-    std::unordered_map<std::string, std::tuple<dbus_type_id_t, void*>> object_table{};
+    std::unordered_map<std::string, obj_table_entry_t> object_table{};
     std::unordered_map<std::string, ExportTableBase*> interface_table{};
 };
 
@@ -420,18 +607,33 @@ public:
         : parent_(parent), name_(name)
     { }
 
+    ~DBusRemoteSignal() {
+        if (signal_.size() > 0) {
+            FIBRE_LOG(W) << "not all clients have unsubscribed from this event";
+            deactivate_filter();
+        }
+    }
+
     DBusRemoteSignal& operator+=(Callback<TInterface*, TArgs...>* callback) {
-        callbacks_.push_back(callback);
-        if (callbacks_.size() == 1) {
-            activate_filter(); // TODO: error handling
+        signal_ += callback;
+        if (signal_.size() > 0 && !is_active) {
+            if (activate_filter() != 0) {
+                FIBRE_LOG(E) << "failed to activate remote signal subscription";
+            } else {
+                is_active = true;
+            }
         }
         return *this;
     }
 
     DBusRemoteSignal& operator-=(Callback<TInterface*, TArgs...>* callback) {
-        callbacks_.erase(std::remove(callbacks_.begin(), callbacks_.end(), callback), callbacks_.end());
-        if (callbacks_.size() == 0) {
-            deactivate_filter();
+        signal_ -= callback;
+        if (signal_.size() == 0 && is_active) {
+            if (deactivate_filter() != 0) {
+                FIBRE_LOG(E) << "failed to deactivate remote signal subscription";
+            } else {
+                is_active = false;
+            }
         }
         return *this;
     }
@@ -448,7 +650,8 @@ private:
                     && (strcmp(dbus_message_get_path(message), self->parent_->base_->object_name_.c_str()) == 0);
 
             if (matches) {
-                handle_signal_message(message, self->parent_, self->callbacks_); // TODO: error handling
+                FIBRE_LOG(D) << "received signal " << *message;
+                handle_signal_message(message, self->parent_, self->signal_, std::make_index_sequence<sizeof...(TArgs)>()); // TODO: error handling
                 return DBUS_HANDLER_RESULT_HANDLED;
             } else {
                 return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
@@ -480,13 +683,15 @@ private:
         return 0;
     }
 
-    void deactivate_filter() {
+    int deactivate_filter() {
         dbus_connection_remove_filter(parent_->base_->conn_->get_libdbus_ptr(), filter_callback, this);
+        return 0;
     }
 
     TInterface* parent_;
     const char* name_;
-    std::vector<Callback<TInterface*, TArgs...>*> callbacks_;
+    DBusSignal<TInterface*, TArgs...> signal_;
+    bool is_active = false;
 };
 
 
@@ -809,6 +1014,8 @@ struct DBusTypeTraits<std::variant<Ts...>> {
     }
 };
 
+template<>
+struct DBusTypeTraits<dbus_variant> : DBusTypeTraits<dbus_variant_base> {};
 
 }
 
@@ -996,6 +1203,136 @@ private:
     member_closure_t<decltype(&DBusDiscoverer::handle_interfaces_added)> handle_interfaces_added_obj{&DBusDiscoverer::handle_interfaces_added, this};
     member_closure_t<decltype(&DBusDiscoverer::handle_interfaces_removed)> handle_interfaces_removed_obj{&DBusDiscoverer::handle_interfaces_removed, this};
     member_closure_t<decltype(&DBusDiscoverer::handle_scan_complete)> handle_scan_complete_obj{&DBusDiscoverer::handle_scan_complete, this};
+};
+
+class DBusLocalObjectManager {
+public:
+    int init(DBusConnectionWrapper* conn, std::string path) {
+        if (conn_) {
+            FIBRE_LOG(E) << "already initialized";
+            return -1;
+        }
+        conn_ = conn;
+        name_ = path;
+
+        // TODO: should the object manager publish itself?
+        if (conn_->register_interfaces<org_freedesktop_DBus_ObjectManager>(*this, name_) != 0) {
+            FIBRE_LOG(E) << "failed to expose object";
+            goto fail1;
+        }
+
+        return 0;
+
+fail1:
+        conn_ = nullptr;
+        name_ = "";
+        return -1;
+    }
+
+    int deinit() {
+        if (!conn_) {
+            FIBRE_LOG(E) << "not initialized";
+            return -1;
+        }
+
+        if (conn_->deregister_interfaces<org_freedesktop_DBus_ObjectManager>(name_) != 0) {
+            FIBRE_LOG(E) << "failed to deregister object";
+            return -1;
+        }
+        if (obj_table.size() != 0) {
+            FIBRE_LOG(E) << "attempt to deinit non-empty object manager";
+            return -1;
+        }
+        
+        conn_ = nullptr;
+        name_ = "";
+        return 0;
+    }
+
+    using managed_object_dict_t = std::unordered_map<fibre::DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>;
+    managed_object_dict_t GetManagedObjects() {
+        FIBRE_LOG(D) << "GetManagedObjects() got called on " << name_;
+
+        managed_object_dict_t result{};
+        for (auto obj_it : obj_table) {
+            auto prop_it = std::find(obj_it.second.begin(), obj_it.second.end(), "org.freedesktop.DBus.Properties");
+            if (prop_it != obj_it.second.end()) {
+                FIBRE_LOG(D) << "object has properties";
+                // TODO: fetch properties
+            }
+
+            auto& intf_dict = result[obj_it.first];
+            for (auto intf_it : obj_it.second) {
+                intf_dict[intf_it] = {};
+            }
+        }
+        return result;
+    }
+    
+    template<typename ... TInterfaces, typename TImpl>
+    int add_interfaces(TImpl& obj, std::string name) {
+        if (name.compare(0, 1, "/") == 0) {
+            FIBRE_LOG(E) << "path should not start with a slash";
+            return -1;
+        }
+
+        DBusObjectPath obj_path = name_ + "/" + name;
+        if (conn_->register_interfaces<TInterfaces...>(obj, obj_path) != 0) {
+            FIBRE_LOG(E) << "failed to expose object";
+            return -1;
+        }
+        int dummy[] = {(obj_table[obj_path].push_back(TInterfaces::get_interface_name()), 0)...};
+        // TODO: invoke signals
+        return 0;
+    }
+
+    template<typename ... TInterfaces>
+    int remove_interfaces(std::string name) {
+        DBusObjectPath obj_path = name_ + "/" + name;
+        // TODO: invoke signals
+        auto it = obj_table.find(obj_path);
+        if (it == obj_table.end()) {
+            FIBRE_LOG(E) << "not published";
+            return -1;
+        }
+
+        const char * interface_names[] = {TInterfaces::get_interface_name()...};
+        for (size_t i = 0; i < sizeof...(TInterfaces); ++i) {
+            auto rm = std::find(it->second.begin(), it->second.end(), interface_names[i]);
+            if (rm == it->second.end()) {
+                FIBRE_LOG(E) << "not all of these interfaces were published";
+                // TODO: return error code
+            } else {
+                it->second.erase(rm);
+            }
+        }
+
+        if (it->second.size() == 0) {
+            obj_table.erase(it);
+        }
+        if (conn_->deregister_interfaces<TInterfaces...>(obj_path) != 0) {
+            FIBRE_LOG(E) << "failed to deregister object";
+            return -1;
+        }
+        return 0;
+    }
+
+    /**
+     * @brief Returns the DBus object path under which this object manager is
+     * registered.
+     * 
+     * This is at the same time the root of the object hierarchy that is managed
+     * by this object manager.
+     */
+    std::string get_path() { return name_; }
+
+    DBusSignal<DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>> InterfacesAdded;
+    DBusSignal<DBusObjectPath, std::vector<std::string>> InterfacesRemoved;
+
+private:
+    DBusConnectionWrapper* conn_ = nullptr;
+    std::string name_ = "";
+    std::unordered_map<std::string, std::vector<std::string>> obj_table{};
 };
 
 }

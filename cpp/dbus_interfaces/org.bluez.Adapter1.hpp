@@ -59,14 +59,38 @@ public:
             { "RemoveDevice", fibre::FunctionImplTable{} },
             { "GetDiscoveryFilters", fibre::FunctionImplTable{} },
         } {}
+        std::unordered_map<fibre::dbus_type_id_t, size_t> ref_count{}; // keeps track of how often a given type has been registered
+
+        template<typename ... TArgs>
+        using signal_closure_t = fibre::Closure<void(fibre::DBusConnectionWrapper::*)(std::string, fibre::DBusObjectPath, TArgs...), std::tuple<fibre::DBusConnectionWrapper*, std::string, fibre::DBusObjectPath>, std::tuple<TArgs...>, void>;
+
+        template<typename ... TArgs>
+        using signal_table_entry_t = std::pair<signal_closure_t<TArgs...>, void(*)(void*, signal_closure_t<TArgs...>&)>;
 
         template<typename TImpl>
-        int register_implementation(TImpl& obj) {
-            (*this)["StartDiscovery"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::StartDiscovery, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
-            (*this)["SetDiscoveryFilter"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::SetDiscoveryFilter, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
-            (*this)["StopDiscovery"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::StopDiscovery, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
-            (*this)["RemoveDevice"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::RemoveDevice, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
-            (*this)["GetDiscoveryFilters"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::GetDiscoveryFilters, (TImpl*)obj, (std::tuple<std::vector<std::string>>*)nullptr)); }});
+        void register_implementation(fibre::DBusConnectionWrapper& conn, fibre::DBusObjectPath path, TImpl& obj) {
+            if (ref_count[fibre::get_type_id<TImpl>()]++ == 0) {
+                (*this)["StartDiscovery"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::StartDiscovery, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+                (*this)["SetDiscoveryFilter"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::SetDiscoveryFilter, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+                (*this)["StopDiscovery"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::StopDiscovery, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+                (*this)["RemoveDevice"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::RemoveDevice, (TImpl*)obj, (std::tuple<>*)nullptr)); }});
+                (*this)["GetDiscoveryFilters"].insert({fibre::get_type_id<TImpl>(), [](void* obj, DBusMessage* rx_msg, DBusMessage* tx_msg){ return fibre::DBusConnectionWrapper::handle_method_call_typed(rx_msg, tx_msg, fibre::make_tuple_closure(&TImpl::GetDiscoveryFilters, (TImpl*)obj, (std::tuple<std::vector<std::string>>*)nullptr)); }});
+            }
+        }
+
+        int deregister_implementation(fibre::DBusConnectionWrapper& conn, fibre::DBusObjectPath path, void* obj, fibre::dbus_type_id_t type_id) {
+            auto it = ref_count.find(type_id);
+            if (it == ref_count.end()) {
+                return -1;
+            }
+            if (--(it->second) == 0) {
+                (*this)["StartDiscovery"].erase((*this)["StartDiscovery"].find(type_id));
+                (*this)["SetDiscoveryFilter"].erase((*this)["SetDiscoveryFilter"].find(type_id));
+                (*this)["StopDiscovery"].erase((*this)["StopDiscovery"].find(type_id));
+                (*this)["RemoveDevice"].erase((*this)["RemoveDevice"].find(type_id));
+                (*this)["GetDiscoveryFilters"].erase((*this)["GetDiscoveryFilters"].find(type_id));
+                ref_count.erase(it);
+            }
             return 0;
         }
     };

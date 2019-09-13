@@ -40,28 +40,27 @@ using Callback = Callable<void, TIn...>;
 template<typename TFunctor, typename TCapture, typename TIn, typename TOut>
 struct Closure;
 
-template<typename TBind, typename TClosure>
+template<typename TClosure, size_t N>
 struct bind_result;
 
-template<typename TFunctor, typename ... TCapture, typename ... TBind, typename ... TIn, typename TOut>
-struct bind_result<std::tuple<TBind...>, Closure<TFunctor, std::tuple<TCapture...>, std::tuple<TIn...>, TOut>> {
-    static_assert(std::is_same<tuple_take_t<sizeof...(TBind), std::tuple<TIn...>>, std::tuple<TBind...>>::value,
-        "trying to bind the wrong types");
-    using type = Closure<TFunctor, std::tuple<TCapture..., TBind...>, tuple_skip_t<sizeof...(TBind), std::tuple<TIn...>>, TOut>;
+template<typename TFunctor, typename ... TCapture, typename TBind, typename ... TIn, typename TOut>
+struct bind_result<Closure<TFunctor, std::tuple<TCapture...>, std::tuple<TBind, TIn...>, TOut>, 1> {
+    using type = Closure<TFunctor, std::tuple<TCapture..., TBind>, std::tuple<TIn...>, TOut>;
+};
+
+template<typename TClosure>
+struct bind_result<TClosure, 0> {
+    using type = TClosure;
+};
+
+template<typename TFunctor, typename ... TCapture, typename TOut, size_t N>
+struct bind_result<Closure<TFunctor, std::tuple<TCapture...>, std::tuple<>, TOut>, N> {
+    // malformed type
 };
 
 template<typename TClosure, typename ... TBind>
-using bind_result_t = typename bind_result<std::tuple<TBind...>, TClosure>::type;
+using bind_result_t = typename bind_result<TClosure, sizeof...(TBind)>::type;
 
-template<typename TFunctor, typename ... TCapture, typename ... TBind, typename ... TIn, typename TOut>
-auto bind(Closure<TFunctor, std::tuple<TCapture...>, std::tuple<TBind..., TIn...>, TOut> fn, TBind&&... args) 
-    -> Closure<TFunctor, std::tuple<TCapture..., TBind...>, std::tuple<TIn...>, TOut>
-{
-    return Closure<TFunctor, std::tuple<TCapture..., TBind...>, std::tuple<TIn...>, TOut>{
-        fn.func_,
-        std::tuple_cat(fn.ctx_, std::forward_as_tuple(args...))
-    };
-}
 
 
 // Partial specialization for member functions with return type
@@ -74,9 +73,18 @@ struct Closure<TFunctor, std::tuple<TCapture...>, std::tuple<TIn...>, TOut> : pu
         return std::apply(func_, std::tuple_cat(ctx_, std::forward_as_tuple(in...)));
     }
 
-    template<typename ... TBind>
-    bind_result_t<Closure, TBind...> bind(TBind... args) {
-        return fibre::bind(*this, args...);
+    template<typename TBind, typename TIns = std::tuple<TIn...>, typename TClosure = Closure>
+    //std::enable_if_t<(std::tuple_size<TIns>::value > 0), /* Closure<TFunctor, std::tuple<TCapture..., std::tuple_element_t<0, std::tuple<TIn...>>>, tuple_skip_t<1, std::tuple<TIn...>>, TOut>*/ void>
+    typename bind_result<TClosure, 1>::type
+    bind(TBind&& arg)
+        //-> Closure<TFunctor, std::tuple<TCapture..., std::tuple_element_t<0, std::tuple<TIn...>>>, tuple_skip_t<1, std::tuple<TIn...>>, TOut>
+    {
+        using new_type = typename bind_result<TClosure, 1>::type;
+        //return Closure<TFunctor, std::tuple<TCapture..., std::tuple_element_t<0, std::tuple<TIn...>>>, tuple_skip_t<1, std::tuple<TIn...>>, TOut>{};
+        return new_type{
+            func_,
+            std::tuple_cat(ctx_, std::forward_as_tuple(arg))
+        };
     }
 
     TFunctor func_;
@@ -107,9 +115,9 @@ struct FunctorReturningTuple<TFunctor, std::tuple<TIn...>, std::tuple<TOut...>> 
 
 template<typename ... TIn, typename TOut>
 auto make_closure(TOut(*fn)(TIn...))
-    -> Closure<void, std::tuple<>, std::tuple<TIn...>, TOut>
+    -> Closure<decltype(fn), std::tuple<>, std::tuple<TIn...>, TOut>
 {
-    return Closure<void, std::tuple<>, std::tuple<TIn...>, TOut>{fn};
+    return Closure<decltype(fn), std::tuple<>, std::tuple<TIn...>, TOut>{fn, {}};
 }
 
 template<typename TImpl, typename ... TIn, typename TOut>

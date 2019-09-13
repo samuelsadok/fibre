@@ -9,14 +9,14 @@
 namespace std {
 
 template<typename ... Ts>
-static std::ostream& operator<<(std::ostream& stream, std::tuple<Ts...> val) {
+static std::ostream& operator<<(std::ostream& stream, const std::tuple<Ts...>& val) {
     int dummy[sizeof...(Ts)] = { (stream << std::get<0>(val), 0) }; // TODO: print all values
     (void) dummy;
     return stream;
 }
 
 template<typename T>
-static std::ostream& operator<<(std::ostream& stream, std::vector<T> val) {
+static std::ostream& operator<<(std::ostream& stream, const std::vector<T>& val) {
     for (size_t i = 0; i < val.size(); ++i) {
         stream << val[i];
         if (i + 1 < val.size())
@@ -26,7 +26,7 @@ static std::ostream& operator<<(std::ostream& stream, std::vector<T> val) {
 }
 
 template<typename TKey, typename TVal>
-static std::ostream& operator<<(std::ostream& stream, std::unordered_map<TKey, TVal> val) {
+static std::ostream& operator<<(std::ostream& stream, const std::unordered_map<TKey, TVal>& val) {
     stream << "{";
     for (auto it = val.begin(); it != val.end(); ++it) {
         if (it != val.begin())
@@ -53,10 +53,6 @@ static std::ostream& operator<<(std::ostream& stream, const std::variant<Ts...>&
     return stream << "]";
 }
 }
-//static std::ostream& operator<<(std::ostream& stream, std::variant<> val) {
-//    stream << "malformed variant"; // TODO: print value
-//    return stream;
-//}
 
 
 #endif // __FIBRE_PRINT_UTILS_HPP
