@@ -7,6 +7,7 @@
 
 class org_bluez_AgentManager1 {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "org.bluez.AgentManager1"; }
 
     org_bluez_AgentManager1(fibre::DBusRemoteObjectBase* base)

@@ -7,6 +7,7 @@
 
 class org_bluez_NetworkServer1 {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "org.bluez.NetworkServer1"; }
 
     org_bluez_NetworkServer1(fibre::DBusRemoteObjectBase* base)

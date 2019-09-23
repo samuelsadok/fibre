@@ -7,6 +7,7 @@
 
 class org_bluez_Media1 {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "org.bluez.Media1"; }
 
     org_bluez_Media1(fibre::DBusRemoteObjectBase* base)

@@ -7,6 +7,7 @@
 
 class org_bluez_Adapter1 {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "org.bluez.Adapter1"; }
 
     org_bluez_Adapter1(fibre::DBusRemoteObjectBase* base)

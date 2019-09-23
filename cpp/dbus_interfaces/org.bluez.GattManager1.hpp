@@ -7,6 +7,7 @@
 
 class org_bluez_GattManager1 {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "org.bluez.GattManager1"; }
 
     org_bluez_GattManager1(fibre::DBusRemoteObjectBase* base)

@@ -7,6 +7,7 @@
 
 class org_freedesktop_DBus_Properties {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "org.freedesktop.DBus.Properties"; }
 
     org_freedesktop_DBus_Properties(fibre::DBusRemoteObjectBase* base)

@@ -7,6 +7,7 @@
 
 class io_fibre_TestInterface {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "io.fibre.TestInterface"; }
 
     io_fibre_TestInterface(fibre::DBusRemoteObjectBase* base)

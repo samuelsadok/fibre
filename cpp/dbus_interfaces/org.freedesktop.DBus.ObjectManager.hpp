@@ -7,6 +7,7 @@
 
 class org_freedesktop_DBus_ObjectManager {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "org.freedesktop.DBus.ObjectManager"; }
 
     org_freedesktop_DBus_ObjectManager(fibre::DBusRemoteObjectBase* base)

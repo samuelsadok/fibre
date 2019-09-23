@@ -30,18 +30,18 @@ public:
     }
 
     dbus_variant Get(std::string interface, std::string name) {
-        FIBRE_LOG(D) << "someone wants property " << name;
+        FIBRE_LOG(D) << "[AD] someone wants property " << name;
         return "";
     }
     std::unordered_map<std::string, fibre::dbus_variant> GetAll(std::string interface) {
-        FIBRE_LOG(D) << "someone wants all properties";
+        FIBRE_LOG(D) << "[AD] someone wants all properties";
         return {
             //{"Type", "peripheral"},
             //{"LocalName", "abc"},
             //{"ServiceUUIDs", std::vector<std::string>{"57155f13-33ec-456f-b9da-d2c876e2ecdc"}}
             //{"ServiceData", std::}
 
-            {"Type", std::string{"broadcast"}},
+            {"Type", std::string{"peripheral"}},
             {"ServiceUUIDs", std::vector<std::string>{"57155f13-33ec-456f-b9da-d2c876e2ecdc"}},
             //{"ManufacturerData", std::unordered_map<uint16_t, fibre::dbus_variant>{}},
             {"SolicitUUIDs", std::vector<std::string>{}},
@@ -55,7 +55,7 @@ public:
         };
     }
     void Set(std::string interface, std::string name, dbus_variant val) {
-        FIBRE_LOG(D) << "someone wants to set property " << name;
+        FIBRE_LOG(D) << "[AD] someone wants to set property " << name;
     }
     DBusSignal<std::string, std::unordered_map<std::string, fibre::dbus_variant>, std::vector<std::string>> PropertiesChanged;
 };
@@ -75,14 +75,12 @@ public:
             //{"ServiceUUIDs", std::vector<std::string>{"57155f13-33ec-456f-b9da-d2c876e2ecdc"}}
             //{"ServiceData", std::}
 
-            {"Type", std::string{"broadcast"}},
-            {"ServiceUUIDs", std::vector<std::string>{"57155f13-33ec-456f-b9da-d2c876e2ecdc"}},
-            //{"ManufacturerData", std::unordered_map<uint16_t, fibre::dbus_variant>{}},
-            {"SolicitUUIDs", std::vector<std::string>{}},
-            {"Includes", std::vector<std::string>{"tx-power"/*, "local-name"*/}},
+            {"UUID", std::string{"57155f13-33ec-456f-b9da-d2c876e2ecdc"}},
+            {"Primary", true},
+            //{"Includes", },
             //{"ServiceData", std::unordered_map<std::string, fibre::dbus_variant>{}},
             //{"IncludeTxPower", bool{true}},
-            {"LocalName", std::string{"hello world"}},
+            //{"LocalName", std::string{"hello world"}},
             //{"Appearance", uint16_t{5}},
             //{"Duration", uint16_t{2}},
             //{"Timeout", uint16_t{10}}

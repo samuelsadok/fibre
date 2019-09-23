@@ -38,6 +38,7 @@
 {% set interface_name = interface.name | replace('.', '_') %}
 class {{interface_name}} {
 public:
+    struct tag {};
     static const char* get_interface_name() { return "{{interface.name}}"; }
 
     {{interface_name}}(fibre::DBusRemoteObjectBase* base)

@@ -238,6 +238,7 @@ DBusRemoteObject<io_fibre_TestInterface>* discovered_remote_obj = nullptr;
 
 static auto found_obj_callback = make_lambda_closure(
     [](DBusRemoteObject<io_fibre_TestInterface>* obj){
+        // TODO: test if the "InterfacesAdded" signal carries an accurate snapshot of the properties
         discovered_remote_obj = obj;
     }
 );
