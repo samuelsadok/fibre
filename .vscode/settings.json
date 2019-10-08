@@ -59,7 +59,10 @@
         "variant": "cpp",
         "complex": "cpp",
         "string": "cpp",
-        "iterator": "cpp"
+        "iterator": "cpp",
+        "bit": "cpp",
+        "map": "cpp",
+        "set": "cpp"
     },
     "C_Cpp.default.cppStandard": "c++11"
 }

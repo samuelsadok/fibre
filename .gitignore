@@ -11,3 +11,4 @@ build/
 /doc/pics/*.pdf
 
 /.vscode/ipch/
+/.vscode/c_cpp_properties.json

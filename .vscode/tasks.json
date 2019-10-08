@@ -11,7 +11,7 @@
                 "echo": true,
                 "reveal": "silent",
                 "focus": false,
-                "panel": "new"
+                "panel": "dedicated"
             },
             "group": {
                 "kind": "build",
