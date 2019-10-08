@@ -1,6 +1,6 @@
 
-#ifndef __DECODERS_HPP
-#define __DECODERS_HPP
+#ifndef __FIBRE_DECODERS_HPP
+#define __FIBRE_DECODERS_HPP
 
 #include "stream.hpp"
 #include "crc.hpp"
@@ -9,8 +9,23 @@
 #include <utility>
 
 DEFINE_LOG_TOPIC(DECODERS);
+#define current_log_topic LOG_TOPIC_DECODERS
 
 namespace fibre {
+
+/**
+ * @brief Represents a decoder that provides a value of type T once it's finished.
+ */
+template<typename TVal>
+class Decoder : public StreamSink {
+public:
+    /**
+     * @brief Shall return a pointer to the decoded value.
+     * This value must remain valid for the rest of this object's lifetime.
+     * Shall return null if the value is not yet fully available.
+     */
+    virtual const TVal* get() = 0;
+};
 
 /* Base classes --------------------------------------------------------------*/
 
@@ -175,46 +190,51 @@ public:
  * TODO: don't fail on overflow if desired
  */
 template<typename T>
-class VarintDecoder : public StreamSink {
+class VarintDecoder : public Decoder<T> {
 public:
-    USE_LOG_TOPIC(DECODERS);
     static constexpr T BIT_WIDTH = (CHAR_BIT * sizeof(T));
 
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
-        while (length) {
+    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+        while (length && !is_closed_) {
             uint8_t input_byte = *buffer;
             state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
             if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
                 FIBRE_LOG(E) << "varint overflow: tried to add " << as_hex(input_byte) << " << " << bit_pos_;
                 bit_pos_ = BIT_WIDTH;
-                return ERROR; // overflow
+                return StreamSink::ERROR; // overflow
             }
-            bit_pos_ += 7;
+
             if (processed_bytes)
                 (*processed_bytes)++;
+
+            bit_pos_ += 7;
             if (!(input_byte & 0x80))
-                return CLOSED;
-            if (bit_pos_ >= BIT_WIDTH)
-                return ERROR;
+                is_closed_ = true;
+            else if (bit_pos_ >= BIT_WIDTH)
+                return StreamSink::ERROR;
+
+            length--;
+            buffer++;
         }
-        return OK;
+        return is_closed_ ? StreamSink::CLOSED : StreamSink::OK;
     }
 
-    const T& get_value() {
-        return state_variable_;
+    const T* get() final {
+        return is_closed_ ? &state_variable_ : nullptr;
     }
 
 private:
     T state_variable_ = 0;
     // TODO: adapt size of this variable to hold BIT_WIDTH+6
     size_t bit_pos_ = 0; // bit position
+    bool is_closed_ = false;
 };
 
 
 template<typename T, bool BigEndian>
-class FixedIntDecoder : public StreamSink {
+class FixedIntDecoder : public Decoder<T> {
 public:
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
         size_t chunk = std::min(serializer::BYTE_WIDTH - pos_, length);
         memcpy(buffer_ + pos_, buffer, chunk);
         if (processed_bytes)
@@ -222,27 +242,119 @@ public:
         pos_ += chunk;
         if (pos_ >= serializer::BYTE_WIDTH) {
             value_ = serializer::read(buffer_);
-            return CLOSED;
+            return StreamSink::CLOSED;
         } else {
-            return OK;
+            return StreamSink::OK;
         }
     }
 
     size_t get_min_useful_bytes() const final {
         return serializer::BYTE_WIDTH - pos_;
-    };
+    }
 
     size_t get_min_non_blocking_bytes() const final {
         return serializer::BYTE_WIDTH - pos_;
-    };
+    }
 
-    const T& get_value() const { return value_; }
-    T& get_value() { return value_; }
+    const T* get() const { return (pos_ >= serializer::BYTE_WIDTH) ? &value_ : nullptr; }
+    const T* get() { return (pos_ >= serializer::BYTE_WIDTH) ? &value_ : nullptr; }
+
 private:
     using serializer = SimpleSerializer<T, BigEndian>;
     uint8_t buffer_[serializer::BYTE_WIDTH];
     size_t pos_ = 0;
     T value_ = 0;
+};
+
+/**
+ * @brief Decodes a UTF-8 encoded string into a local representation of the
+ * string.
+ * 
+ * The characters will be saved into a fixed size array of a given data type,
+ * along with a variable that indicates the length of the string.
+ * 
+ * Characters that are too large for type T will be substituted with either
+ * 0xFFFD if T is at least 16 bits or 0x3f ('?') otherwise. TODO: this is not fully implemented
+ * 
+ * TODO: define error handling: should we store an invalid character and proceed or should we cancel?
+ * given that the length becomes undefined then probably we should fail.
+ */
+template<typename T, size_t MAX_SIZE>
+class UTF8Decoder : public Decoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> {
+public:
+    static constexpr T replacement_char = sizeof(T) * CHAR_BIT >= 16 ? 0xfffd : 0x3f;
+
+    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+        StreamSink::status_t status;
+        std::array<T, MAX_SIZE>& received_buf = std::get<0>(value_);
+        size_t& received_length = std::get<1>(value_);
+
+        if (!length_decoder_.get()) {
+            size_t inner_processed_bytes = 0;
+            status = length_decoder_.process_bytes(buffer, length, &inner_processed_bytes);
+            if (processed_bytes)
+                (*processed_bytes) += inner_processed_bytes;
+            length -= inner_processed_bytes;
+            buffer += inner_processed_bytes;
+            if (status != StreamSink::CLOSED) {
+                return status;
+            }
+            FIBRE_LOG(D) << "UTF-8: received length " << *length_decoder_.get();
+        }
+        if (length_decoder_.get()) {
+            while (received_length < *length_decoder_.get()) {
+                if (!length) {
+                    return StreamSink::OK;
+                }
+
+                uint8_t byte = *buffer;
+                if (byte & 0xc0 == 0x80) {
+                    if (received_length == 0) {
+                        FIBRE_LOG(W) << "UTF-8 continuation byte in beginning";
+                    } else {
+                        // TODO: detect bit overflow (too large code points)
+                        received_buf[received_length - 1] <<= 6;
+                        received_buf[received_length - 1] += byte & 0x3f;
+                    }
+                } else {
+                    if ((byte & 0x80) == 0x00) {
+                        byte &= 0x7f;
+                    } else if ((byte & 0xe0) == 0xc0) {
+                        byte &= 0x1f;
+                    } else if ((byte & 0xf0) == 0xe0) {
+                        byte &= 0x0f;
+                    } else if ((byte & 0xf8) == 0xf0) {
+                        byte &= 0x07;
+                    } else {
+                        FIBRE_LOG(W) << "unexpected UTF-8 sequence " << as_hex(byte);
+                        byte = replacement_char;
+                    }
+                    if (byte > std::numeric_limits<T>::max()) { // very improbable
+                        byte = replacement_char;
+                    }
+                    received_buf[received_length++] = byte;
+                }
+
+                buffer++;
+                length--;
+                if (processed_bytes)
+                    (*processed_bytes)++;
+            }
+        }
+        return StreamSink::CLOSED;
+    }
+
+    const std::tuple<std::array<T, MAX_SIZE>, size_t>* get() final {
+        if (length_decoder_.get() && std::get<1>(value_) == *length_decoder_.get()) {
+            return &value_;
+        } else {
+            return nullptr;
+        }
+    }
+
+private:
+    VarintDecoder<size_t> length_decoder_;
+    std::tuple<std::array<T, MAX_SIZE>, size_t> value_;
 };
 
 //template<typename T>
@@ -356,4 +468,6 @@ private:
 
 }
 
-#endif // __DECODERS_HPP
+#undef current_log_topic
+
+#endif // __FIBRE_DECODERS_HPP

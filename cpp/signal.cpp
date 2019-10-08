@@ -10,31 +10,49 @@ using namespace fibre;
 DEFINE_LOG_TOPIC(SIGNAL);
 USE_LOG_TOPIC(SIGNAL);
 
-int Signal::init(Worker* worker, callback_t* callback) {
+int Signal::init(Worker* worker, callback_t* callback, int fd) {
     if (event_fd_ >= 0)
         return -1;
-    
+
+    if (fd < 0) {
+        FIBRE_LOG(E) << "invalid file descriptor" << sys_err();
+        return -1;
+    }
+
     worker_ = worker;
     callback_ = callback;
-
-    event_fd_ = eventfd(0, 0);
-    if (event_fd_ < 0) {
-        FIBRE_LOG(E) << "eventfd() failed" << sys_err();
-        goto fail1;
-    }
+    event_fd_ = fd;
 
     if (worker_->register_event(event_fd_, EPOLLIN, &signal_handler_obj) != 0) {
         FIBRE_LOG(E) << "register_event() failed" << sys_err();
+        goto fail;
+    }
+
+    return 0;
+
+fail:
+    worker_ = nullptr;
+    callback_ = nullptr;
+    event_fd_ = -1;
+    return -1;
+
+}
+
+int Signal::init(Worker* worker, callback_t* callback) {
+    int fd = eventfd(0, 0);
+    if (fd < 0) {
+        FIBRE_LOG(E) << "eventfd() failed" << sys_err();
+        goto fail1;
+    }
+    if (init(worker, callback, fd) != 0) {
         goto fail2;
     }
 
     return 0;
 
 fail2:
-    close(event_fd_);
-    event_fd_ = -1;
+    close(fd);
 fail1:
-    callback_ = nullptr;
     return -1;
 }
 

@@ -1,11 +1,14 @@
 
-#include <fibre/fibre.hpp>
+#include <fibre/input.hpp>
+#include <fibre/logging.hpp>
 
 using namespace fibre;
 
-DEFINE_LOG_TOPIC(INPUT);
 USE_LOG_TOPIC(INPUT);
 
+fragmented_calls_t fibre::fragmented_calls{};
+
+/*
 void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool packet_break) {
     if (offset > pos_) {
         FIBRE_LOG(W) << "disjoint chunk reassembly not implemented";
@@ -176,3 +179,5 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
             return ERROR;
     }
 }
+
+*/

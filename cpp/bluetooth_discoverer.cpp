@@ -8,6 +8,10 @@
 // Central:
 //  1. Instantiate org.bluez.GattProfile1 (contains a auto-connect UUID list)
 //  2. Register profile with org.bluez.GattManager1
+//
+// Note: DBus interface specification can be found here:
+// https://git.kernel.org/pub/scm/bluetooth/bluez.git/tree/doc/
+// and some XMLs: https://github.com/labapart/gattlib/tree/51c6cbeee2c7af15347d40389dd9a05ac829f674/dbus/dbus-bluez-v5.48
 
 #include <fibre/bluetooth_discoverer.hpp>
 #include "dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"

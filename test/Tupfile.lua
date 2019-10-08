@@ -5,7 +5,15 @@ tup.include('../cpp/package.lua') -- import fibre package
 packages = {
     make_exe_package({
         sources = {'cpp_utils_test.cpp'},
-        depends = {'fibre'}
+        include_dirs = {'../cpp/include'}
+    }),
+    make_exe_package({
+        sources = {'codec_test.cpp', '../cpp/logging.cpp'},
+        include_dirs = {'../cpp/include'}
+    }),
+    make_exe_package({
+        sources = {'defragmenter_test.cpp', '../cpp/logging.cpp'},
+        include_dirs = {'../cpp/include'}
     }),
     make_exe_package({
         sources = {'worker_test.cpp'},

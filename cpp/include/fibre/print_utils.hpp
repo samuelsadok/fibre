@@ -52,6 +52,14 @@ static std::ostream& operator<<(std::ostream& stream, const std::variant<Ts...>&
     //stream << "[variant " << val.index() << "]"; // TODO: print value
     return stream << "]";
 }
+
+template<size_t MAX_SIZE>
+static std::ostream& operator<<(std::ostream& stream, const std::tuple<std::array<char, MAX_SIZE>, size_t>& val) {
+    for (size_t i = 0; i < std::get<1>(val); ++i) {
+        stream << std::get<0>(val)[i];
+    }
+    return stream;
+}
 }
 
 

@@ -1,11 +1,204 @@
 #ifndef __FIBRE_INPUT_HPP
 #define __FIBRE_INPUT_HPP
 
-#ifndef __FIBRE_HPP
-#error "This file should not be included directly. Include fibre.hpp instead."
-#endif
+#include <fibre/stream.hpp>
+#include <fibre/decoders.hpp>
+#include <fibre/uuid.hpp>
+#include <fibre/logging.hpp>
+#include <limits.h>
+
+DEFINE_LOG_TOPIC(INPUT);
+#define current_log_topic LOG_TOPIC_INPUT
 
 namespace fibre {
+
+/**
+ * @brief Can be fed chunks of bytes in a random order.
+ */
+class Defragmenter {
+public:
+    /**
+     * @brief Processes a chunk of data.
+     * 
+     * @param processed_bytes: The variable pointed to by this pointer shall be
+     *        incremented by the number of bytes from the start of the input
+     *        buffer that the caller can consider as handled. If some of the
+     *        chunk was seen in a previous call, it is also considered as
+     *        handled. The only reason why not all of the chunk may be processed
+     *        is that the internal buffer is (temporarily) full.
+     */
+    virtual void process_chunk(const uint8_t* buffer, size_t offset, size_t length, size_t* processed_bytes) = 0;
+};
+
+/**
+ * @brief Can be fed chunks of bytes in a random order.
+ */
+template<size_t I>
+class FixedBufferDefragmenter : public Defragmenter, public OpenStreamSource {
+public:
+    void process_chunk(const uint8_t* buffer, size_t offset, size_t length, size_t* processed_bytes) final {
+        // prune start of chunk
+        if (offset < read_ptr_) {
+            size_t diff = read_ptr_ - offset;
+            if (diff >= length) {
+                if (processed_bytes)
+                    *processed_bytes += length;
+                return; // everything in this chunk was already received and consumed before
+            }
+            FIBRE_LOG(D) << "discarding " << diff << " bytes at beginning of chunk";
+            buffer += diff;
+            offset += diff;
+            length -= diff;
+            if (processed_bytes)
+                *processed_bytes += diff;
+        }
+
+        // prune end of chunk
+        if (offset + length > read_ptr_ + I) {
+            size_t diff = offset + length - (read_ptr_ + I);
+            if (diff >= length) {
+                return; // the chunk starts so far into the future that we can't use any of it
+            }
+            FIBRE_LOG(D) << "discarding " << diff << " bytes at end of chunk";
+            length -= diff;
+        }
+
+        size_t dst_offset = (offset % I);
+
+        // copy usable part of chunk to internal buffer
+        // may need two copy operations because buf_ is a circular buffer
+        if (length > I - dst_offset) {
+            memcpy(buf_ + dst_offset, buffer, I - dst_offset);
+            set_valid_table(dst_offset, I - dst_offset);
+            buffer += (I - dst_offset);
+            length -= (I - dst_offset);
+            if (processed_bytes)
+                *processed_bytes += (I - dst_offset);
+            dst_offset = 0;
+        }
+        memcpy(buf_ + dst_offset, buffer, length);
+        set_valid_table(dst_offset, length);
+        if (processed_bytes)
+            *processed_bytes += length;
+    }
+
+    status_t get_buffer(const uint8_t** buf, size_t* length) final {
+        if (buf)
+            *buf = buf_ + (read_ptr_ % I);
+        if (length)
+            *length = count_valid_table(read_ptr_ % I, std::min(*length, I - (read_ptr_ % I)));
+        return OK;
+    }
+
+    status_t consume(size_t length) final {
+        FIBRE_LOG(D) << "consume " << length << " bytes";
+        clear_valid_table(read_ptr_ % I, length);
+        read_ptr_ += length;
+        return OK;
+    }
+
+private:
+    static constexpr size_t bits_per_int = sizeof(unsigned int) * CHAR_BIT;
+
+    /** @brief Flips a consecutive chunk of bits in valid_table_ to 1 */
+    void set_valid_table(size_t offset, size_t length) {
+        for (size_t bit = offset; bit < offset + length; ++bit) {
+            valid_table_[bit / bits_per_int] |= ((unsigned int)1 << (bit % bits_per_int));
+        }
+    }
+
+    /** @brief Flips a consecutive chunk of bits in valid_table_ to 0 */
+    void clear_valid_table(size_t offset, size_t length) {
+        for (size_t bit = offset; bit < offset + length; ++bit) {
+            valid_table_[bit / bits_per_int] &= ~((unsigned int)1 << (bit % bits_per_int));
+        }
+    }
+
+    /** @brief Counts how many bits consecutive bits in valid_table_ are 1, starting at offset */
+    size_t count_valid_table(size_t offset, size_t length) {
+        FIBRE_LOG(D) << "counting valid table from " << offset << ", length " << length;
+        for (size_t bit = offset; bit < offset + length; ++bit) {
+            if (!(valid_table_[bit / bits_per_int] >> (bit % bits_per_int))) {
+                FIBRE_LOG(D) << "invalid at " << bit;
+                return bit - offset;
+            }
+        }
+        FIBRE_LOG(D) << "all " << length << " valid";
+        return length;
+    }
+
+    unsigned int valid_table_[(I + bits_per_int - 1) / bits_per_int] = {0};
+    uint8_t buf_[I];
+    size_t read_ptr_ = 0;
+};
+
+
+
+
+using call_id_t = Uuid;
+
+struct call_t {
+    StreamSink* decoder;
+    // TODO: what if we want a buffer size that depends on the call context?
+    FixedBufferDefragmenter<1024> fragment_sink;
+};
+
+// TODO: replace with fixed size data structure
+using fragmented_calls_t = std::unordered_map<call_id_t, call_t>;
+extern fragmented_calls_t fragmented_calls;
+
+static int start_or_get_call(call_id_t call_id, call_t** call) {
+    call_t* dummy;
+    call = call ? call : &dummy;
+    *call = &fragmented_calls[call_id];
+    return 0;
+}
+
+class CallIdDecoder : Decoder<call_id_t> {
+    
+};
+
+class CallDecoder : public StreamSink {
+private:
+    Decoder<size_t>* offset_decoder = nullptr;
+    call_t* call_ = nullptr;
+};
+
+class FragmentedCallDecoder : public StreamSink {
+    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
+        status_t status;
+        if (pos_ == 0) {
+            if ((status = call_id_decoder->process_bytes(buffer, length, processed_bytes)) != CLOSED) {
+                return status;
+            }
+            const call_id_t* call_id = call_id_decoder->get();
+            if (call_id != nullptr) {
+                start_or_get_call(*call_id, &call_);
+            }
+            pos_++;
+        }
+        if (pos_ == 1) {
+            if ((status = offset_decoder->process_bytes(buffer, length, processed_bytes)) != CLOSED) {
+                return status;
+            }
+            offset_ = *offset_decoder->get();
+            pos_++;
+        }
+        if (pos_ == 2) {
+            call_->fragment_sink.process_chunk(buffer, offset_, length, processed_bytes);
+        }
+        return OK;
+    }
+
+private:
+    size_t pos_ = 0;
+    Decoder<call_id_t>* call_id_decoder = nullptr;
+    Decoder<size_t>* offset_decoder = nullptr;
+    call_t* call_ = nullptr;
+    size_t offset_ = 0;
+};
+
+#if 0
 
 class InputPipe {
     // don't allow copy/move (we don't know if it's save to relocate the buffer)
@@ -45,15 +238,16 @@ public:
     void process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool packet_break);
 };
 
-class InputChannelDecoder : public StreamSink {
+
+class InputChannelDecoder /*: public StreamSink*/ {
 public:
     InputChannelDecoder(RemoteNode* remote_node) :
         remote_node_(remote_node),
         header_decoder_(make_header_decoder())
         {}
     
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final;
-    size_t get_min_useful_bytes() const final;
+    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes);
+    size_t get_min_useful_bytes() const;
 private:
     using HeaderDecoder = StaticStreamChain<
             FixedIntDecoder<uint16_t, false>,
@@ -125,7 +319,10 @@ private:
 //incomplete<sizeof(IncomingConnectionDecoder)> a;
 //}
 static_assert(sizeof(IncomingConnectionDecoder) == RX_BUF_SIZE, "Something is off. Please fix.");
+#endif
 
 }
+
+#undef current_log_topic
 
 #endif // __FIBRE_INPUT_HPP

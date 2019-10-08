@@ -182,7 +182,7 @@ namespace fibre {
     extern global_state_t global_state;
 
     void init();
-    void publish_function(LocalEndpoint* function);
+    //void publish_function(LocalEndpoint* function);
 /*
     // @brief Registers the specified application object list using the provided endpoint table.
     // This function should only be called once during the lifetime of the application. TODO: fix this.

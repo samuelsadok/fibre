@@ -9,7 +9,14 @@
 //#ifndef __FIBRE_HPP
 //#error "This file should not be included directly. Include fibre.hpp instead."
 //#endif
-#include <fibre/fibre.hpp>
+//#include <fibre/fibre.hpp>
+
+#include <fibre/closure.hpp>
+#include <fibre/logging.hpp>
+#include <fibre/stream.hpp>
+#include <fibre/decoders.hpp>
+#include <fibre/uuid.hpp>
+#include <fibre/context.hpp>
 
 DEFINE_LOG_TOPIC(LOCAL_FUNCTION);
 #define current_log_topic LOG_TOPIC_LOCAL_FUNCTION
@@ -17,16 +24,55 @@ DEFINE_LOG_TOPIC(LOCAL_FUNCTION);
 namespace fibre {
 
 class LocalEndpoint {
+    /**
+     * @brief Shall initialize a decoder that will process an incoming byte
+     * stream and generate an output byte stream.
+     * 
+     * To signify that no more data will be accepted (e.g. if all input
+     * arguments of a function have been received), the stream sink shall return
+     * CLOSED.
+     * 
+     * @param ctx: The context in which to execute the endpoint action. This
+     *        shall for instance contain the tx_stream field, a stream that can
+     *        be used to return data to the caller.
+     *        The object pointed to by this pointer must remain valid until
+     *        close() is called on it. Note that ctx and its tx_stream may be
+     *        required to live longer than the corresponding
+     *        LocalEndpoint::close() call.
+     * @returns Shall return NULL if the stream could not be opened, for
+     *          instance because too many streams are already open.
+     */
+    virtual StreamSink* open(Context* ctx);
+
+    /**
+     * @brief Signifies to the local endpoint that no more data will be passed
+     * to the given stream.
+     * 
+     * The local endpoint may chose to keep the stream object allocated if there
+     * is still a processes going on. For instance if all arguments to a
+     * function have been received, the input handler may call close()
+     * but the invoked function may still be executing or sending a reply.
+     * 
+     * close() must be called at most once for each open() call.
+     * 
+     * @param stream_sink: Pointer to a stream sink that was previously returned
+     *        by open().
+     */
+    virtual int close(StreamSink* stream_sink);
+};
+
+/*class LocalEndpoint {
 public:
     //virtual void invoke(StreamSource* input, StreamSink* output) = 0;
     virtual void open_connection(IncomingConnectionDecoder& input) const = 0;
     virtual void decoder_finished(const IncomingConnectionDecoder& input, OutputPipe* output) const = 0;
     virtual uint16_t get_hash() const = 0;
     virtual bool get_as_json(const char ** output, size_t* length) const = 0;
-};
+};*/
 
-template<typename... Ts>
-class Decoder;
+
+//template<typename... Ts>
+//class Decoder;
 
 template<>
 class Decoder<uint32_t> : public FixedIntDecoder<uint32_t, false> {
@@ -36,6 +82,7 @@ public:
     using value_tuple_t = std::tuple<uint32_t>;
 };
 
+/*
 template<typename TObj>
 class Decoder<TObj*> : public ObjectReferenceDecoder<TObj> {
 public:
@@ -44,6 +91,7 @@ public:
     using TName = decltype(name);
     using value_tuple_t = std::tuple<TObj*>;
 };
+*/
 
 struct get_value_functor {
     template<typename T>
@@ -550,6 +598,74 @@ struct encoder_chain_from_tuple<std::tuple<TEncoders...>> {
 };
 #endif
 
+template<typename TOut, typename TIn>
+struct CallableWithTuple {
+    using type = void;
+};
+
+template<typename TOut, typename ... TIn>
+struct CallableWithTuple<TOut, std::tuple<TIn...>> {
+    using type = Callable<TOut, TIn...>;
+};
+
+
+/**
+ * @brief Implements a local endpoint with the following characteristics:
+ * 
+ *  - Takes a list of named and typed arguments.
+ *  - Once all arguments have been received, a function is invoked with those
+ *    arguments.
+ *  - The function is executed on the same thread as the input is processed.
+ *    That means the function must not block on any RX stream and should not
+ *    take a significant amount of time to return.
+ *  - Once the function returns, the output arguments are sent via the
+ *    corresponding TX Stream.
+ * 
+ */
+template<
+    typename TFunc,
+    typename TInArgNames,
+    typename TInArgTypes,
+    typename TOutArgNames,
+    typename TOutArgTypes>
+class SimpleLocalEndpoint : public LocalEndpoint {
+private:
+    using DecoderType = Decoder<NamedTuple<TInArgNames, TInArgTypes>>;
+    //using EncoderType = Encoder<NamedTuple<TOutArgNames, TOutArgTypes>>;
+
+public:
+    SimpleLocalEndpoint(TFunc func)
+        : func_(func) {}
+
+    static_assert(std::is_base_of<typename CallableWithTuple<TOutArgTypes, TInArgTypes>::type, TFunc>::value,
+        "TFunc must implement Callable with the same input and output types as given to this class.");
+
+    StreamSink* open(Context* ctx) final {
+        return nullptr; // TODO: alloc // alloc_decoder<NamedTuple<TInArgNames, TInArgTypes>>(ctx);
+    }
+
+    int close(StreamSink* stream_sink) final {
+        DecoderType* typed_stream_sink = dynamic_cast<DecoderType*>(stream_sink);
+        if (!typed_stream_sink) {
+            FIBRE_LOG(E) << "unexpected attempt to close endpoint";
+            return -1;
+        }
+        auto val = typed_stream_sink->get();
+        if (val) {
+            NamedTuple<TOutArgNames, TOutArgTypes> ret_val = std::apply(func_, static_cast<TInArgTypes>(*val));
+        } else {
+            FIBRE_LOG(W) << "closed endpoint before it was finished";
+        }
+        delete typed_stream_sink;
+        return 0;
+    }
+
+private:
+    TFunc func_;
+};
+
+
+#if 0
 template<
     typename TFunc,
     //typename TFuncSignature,
@@ -704,6 +820,26 @@ LocalFunctionEndpoint<TFunc, TMetadata> make_local_function_endpoint(TFunc&& fun
     using ret_t = LocalFunctionEndpoint<TFunc, TMetadata>;
     return ret_t(std::forward<TFunc>(func), std::forward<TMetadata>(metadata));
 };
+#endif
+
+
+extern std::unordered_map<Uuid, LocalEndpoint*> local_endpoints; // TODO: fix dynamic allocation
+
+int register_endpoint(Uuid uuid, LocalEndpoint* local_endpoint) {
+    local_endpoints[uuid] = local_endpoint;
+    return 0;
+}
+
+int unregister_endpoint(Uuid uuid) {
+    auto it = local_endpoints.find(uuid);
+    if (it == local_endpoints.end()) {
+        FIBRE_LOG(E) << "attempt to unregister unknown endpoint";
+        return -1;
+    }
+    local_endpoints.erase(it);
+    return 0;
+}
+
 
 }
 

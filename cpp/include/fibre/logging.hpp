@@ -48,6 +48,8 @@
  * }
  * 
  * @endcode
+ * 
+ * Using logging in header files is possible but undocumented (TODO: fix)
  */
 
 #ifndef __FIBRE_LOGGING_HPP

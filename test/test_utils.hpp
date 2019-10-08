@@ -59,6 +59,9 @@ struct TestContext {
     bool test_add(TestContext ctx, const char* file, size_t line) {
         asserts += ctx.asserts;
         fails += ctx.fails;
+        if (ctx.fails) {
+            fprintf(stderr, "%d errors above were in %s:%zu\n", ctx.fails, file, line);
+        }
         return ctx.fails == 0;
     }
 

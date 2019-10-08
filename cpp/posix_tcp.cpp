@@ -90,7 +90,7 @@ public:
         return StreamSource::OK;
     }
 
-    StreamSource::status_t get_bytes(uint8_t* buffer, size_t min_length, size_t max_length, size_t* generated_bytes) final {
+    StreamSource::status_t get_bytes(uint8_t* buffer, size_t max_length, size_t* generated_bytes) final {
         if (min_length > max_length) {
             return StreamSource::ERROR;
         }

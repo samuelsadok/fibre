@@ -15,10 +15,13 @@ public:
     Signal() : name_("unnamed") {}
     explicit Signal(const char* name) : name_(name) {}
 
+    int init(Worker* worker, callback_t* callback, int fd);
     int init(Worker* worker, callback_t* callback);
     int deinit();
 
     int set();
+
+    int get_fd() { return event_fd_; }
 
 private:
     void signal_handler(uint32_t);

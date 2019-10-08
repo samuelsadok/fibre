@@ -32,11 +32,11 @@ public:
         : bytes_(bytes) {}
     Uuid(const uint8_t (&bytes)[16])
         : bytes_(detail::to_array(bytes)) {}
-    //Uuid(const char (&str)[37])
-    //    : Uuid();
+    Uuid(const char (&str)[37])
+        : bytes_(from_string(str).get_bytes()) {}
 
     static Uuid zero() {
-        return Uuid({0});
+        return Uuid();
     }
 
     static Uuid from_data(uint32_t time_low,
