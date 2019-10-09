@@ -118,17 +118,33 @@ namespace std {
     template< class T >
     using decay_t = typename decay<T>::type;
 
+    // integer_sequence implementation adapted from
+    // https://stackoverflow.com/questions/17424477/implementation-c14-make-integer-sequence
+
     /// Class template integer_sequence
     template<typename _Tp, _Tp... _Idx>
     struct integer_sequence {
+        using type = integer_sequence;
         typedef _Tp value_type;
         static constexpr size_t size() noexcept { return sizeof...(_Idx); }
     };
 
-    /// Alias template make_integer_sequence
-    // TODO: __integer_pack is a GCC built-in => use template metaprogramming
-    template<typename _Tp, _Tp _Num>
-    using make_integer_sequence = integer_sequence<_Tp, __integer_pack(_Num)...>;
+    template <class Sequence1, class Sequence2>
+    struct _merge_and_renumber;
+
+    template <typename _Tp, size_t... I1, size_t... I2>
+    struct _merge_and_renumber<integer_sequence<_Tp, I1...>, integer_sequence<_Tp, I2...>>
+      : integer_sequence<_Tp, I1..., (sizeof...(I1)+I2)...>
+    { };
+
+    template <typename _Tp, size_t N>
+    struct make_integer_sequence
+      : _merge_and_renumber<typename make_integer_sequence<_Tp, N/2>::type,
+                            typename make_integer_sequence<_Tp, N - N/2>::type>
+    { };
+
+    template<typename _Tp> struct make_integer_sequence<_Tp, 0> : integer_sequence<_Tp> { };
+    template<typename _Tp> struct make_integer_sequence<_Tp, 1> : integer_sequence<_Tp, 0> { };
 
     /// Alias template index_sequence
     template<size_t... _Idx>
@@ -136,7 +152,7 @@ namespace std {
 
     /// Alias template make_index_sequence
     template<size_t _Num>
-    using make_index_sequence = make_integer_sequence<size_t, _Num>;
+    using make_index_sequence = typename make_integer_sequence<size_t, _Num>::type;
 }
 #endif
 

@@ -16,6 +16,12 @@ std::tuple<uint16_t> identity_fn1(uint16_t a) { return std::make_tuple(a); }
 std::tuple<uint16_t, uint32_t> identity_fn2(uint16_t a, uint32_t b) { return std::make_tuple(a, b); }
 void add_one(int& a) { a++; }
 
+static_assert(std::is_base_of<std::index_sequence<>, std::make_index_sequence<0>>::value, "index sequence broken");
+static_assert(std::is_base_of<std::index_sequence<0>, std::make_index_sequence<1>>::value, "index sequence broken");
+static_assert(std::is_base_of<std::index_sequence<0, 1>, std::make_index_sequence<2>>::value, "index sequence broken");
+static_assert(std::is_base_of<std::index_sequence<0, 1, 2>, std::make_index_sequence<3>>::value, "index sequence broken");
+static_assert(std::is_base_of<std::index_sequence<0, 1, 2, 3>, std::make_index_sequence<4>>::value, "index sequence broken");
+
 static_assert(std::is_base_of<std::index_sequence<>, fibre::make_integer_sequence_from_to<size_t, 0, 0>>::value, "index range broken");
 static_assert(std::is_base_of<std::index_sequence<>, fibre::make_integer_sequence_from_to<size_t, 5, 5>>::value, "index range broken");
 static_assert(std::is_base_of<std::index_sequence<0, 1, 2, 3, 4>, fibre::make_integer_sequence_from_to<size_t, 0, 5>>::value, "index range broken");
@@ -34,10 +40,12 @@ static_assert(std::is_same<args_of_t<decltype(func3)>, std::tuple<int>>::value, 
 static_assert(std::is_same<args_of_t<decltype(func4)>, std::tuple<std::tuple<uint32_t, uint16_t>>>::value, "args_of_t broken");
 static_assert(std::is_same<args_of_t<decltype(func5)>, std::tuple<char, char>>::value, "args_of_t broken");
 
+
 static_assert(std::is_same<add_ptrs_to_tuple_t<std::tuple<>>, std::tuple<>>::value, "add_ptr_to_tuple_t broken");
 static_assert(std::is_same<add_ptrs_to_tuple_t<std::tuple<int>>, std::tuple<int*>>::value, "add_ptr_to_tuple_t broken");
 static_assert(std::is_same<add_ptrs_to_tuple_t<std::tuple<int*>>, std::tuple<int**>>::value, "add_ptr_to_tuple_t broken");
 static_assert(std::is_same<add_ptrs_to_tuple_t<std::tuple<char, uint16_t****, uint32_t*>>, std::tuple<char*, uint16_t*****, uint32_t**>>::value, "add_ptr_to_tuple_t broken");
+
 
 static_assert(!is_tuple<void>::value, "is_tuple broken");
 static_assert(!is_tuple<int>::value, "is_tuple broken");
