@@ -2,6 +2,7 @@
 #define __FIBRE_NAMED_TUPLE_HPP
 
 #include "decoders.hpp"
+#include "print_utils.hpp"
 #include <tuple>
 
 DEFINE_LOG_TOPIC(NAMED_TUPLE);
@@ -59,6 +60,10 @@ public:
                 }
                 FIBRE_LOG(D) << "received key: " << *key_decoder_->get();
                 val_decoder_ = init_matching(std::make_index_sequence<sizeof...(TTypes)>());
+                if (!val_decoder_) {
+                    FIBRE_LOG(D) << "received unknown key: " << *key_decoder_->get();
+                    return StreamSink::ERROR;
+                }
                 waiting_for_key_ = false;
             }
             if (!waiting_for_key_) {
@@ -102,6 +107,7 @@ private:
         if ((key.size() == recv_key_len) && (memcmp(key.c_str(), recv_key_buf, recv_key_len) == 0)) {
             return std::get<I>(val_decoders_) = alloc_decoder<T>(ctx_);
         }
+        FIBRE_LOG(D) << "key "  << key.c_str() << " does not match";
         return nullptr;
     }
 

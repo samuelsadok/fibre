@@ -17,6 +17,7 @@
 #include <fibre/decoders.hpp>
 #include <fibre/uuid.hpp>
 #include <fibre/context.hpp>
+#include <fibre/named_tuple.hpp>
 
 DEFINE_LOG_TOPIC(LOCAL_FUNCTION);
 #define current_log_topic LOG_TOPIC_LOCAL_FUNCTION
@@ -24,6 +25,7 @@ DEFINE_LOG_TOPIC(LOCAL_FUNCTION);
 namespace fibre {
 
 class LocalEndpoint {
+public:
     /**
      * @brief Shall initialize a decoder that will process an incoming byte
      * stream and generate an output byte stream.
@@ -42,7 +44,7 @@ class LocalEndpoint {
      * @returns Shall return NULL if the stream could not be opened, for
      *          instance because too many streams are already open.
      */
-    virtual StreamSink* open(Context* ctx);
+    virtual StreamSink* open(Context* ctx) = 0;
 
     /**
      * @brief Signifies to the local endpoint that no more data will be passed
@@ -58,7 +60,7 @@ class LocalEndpoint {
      * @param stream_sink: Pointer to a stream sink that was previously returned
      *        by open().
      */
-    virtual int close(StreamSink* stream_sink);
+    virtual int close(StreamSink* stream_sink) = 0;
 };
 
 /*class LocalEndpoint {
@@ -74,13 +76,13 @@ public:
 //template<typename... Ts>
 //class Decoder;
 
-template<>
+/*template<>
 class Decoder<uint32_t> : public FixedIntDecoder<uint32_t, false> {
 public:
     static constexpr auto name = make_sstring("uint32");
     using TName = decltype(name);
     using value_tuple_t = std::tuple<uint32_t>;
-};
+};*/
 
 /*
 template<typename TObj>
@@ -120,7 +122,7 @@ public:
         // nothing to do
     }
 };
-
+/*
 template<>
 class Encoder<uint32_t> {
 public:
@@ -159,7 +161,7 @@ public:
             FIBRE_LOG(W) << "attempt to serialize null string";
         }
     }
-};
+};*/
 
 template<typename... TEncoders>
 class EncoderChain;
@@ -630,21 +632,25 @@ template<
     typename TOutArgTypes>
 class SimpleLocalEndpoint : public LocalEndpoint {
 private:
-    using DecoderType = Decoder<NamedTuple<TInArgNames, TInArgTypes>>;
+    using DecoderType = VerboseNamedTupleDecoderV1<TInArgNames, TInArgTypes>;
     //using EncoderType = Encoder<NamedTuple<TOutArgNames, TOutArgTypes>>;
 
 public:
-    SimpleLocalEndpoint(TFunc func)
-        : func_(func) {}
+    SimpleLocalEndpoint(TFunc func, TInArgNames in_arg_names, TOutArgTypes out_arg_names)
+        : func_(func), in_arg_names_(in_arg_names), out_arg_names_(out_arg_names) {}
 
     static_assert(std::is_base_of<typename CallableWithTuple<TOutArgTypes, TInArgTypes>::type, TFunc>::value,
         "TFunc must implement Callable with the same input and output types as given to this class.");
 
     StreamSink* open(Context* ctx) final {
-        return nullptr; // TODO: alloc // alloc_decoder<NamedTuple<TInArgNames, TInArgTypes>>(ctx);
+        FIBRE_LOG(D) << "open endpoint " << this;
+        DecoderType* decoder = new DecoderType{in_arg_names_, TInArgTypes{} /* TODO: support default args */ }; // TODO: remove dynamic allocation
+        return decoder;
+        //return nullptr; // TODO: alloc // alloc_decoder<NamedTuple<TInArgNames, TInArgTypes>>(ctx);
     }
 
     int close(StreamSink* stream_sink) final {
+        FIBRE_LOG(D) << "close endpoint " << this;
         DecoderType* typed_stream_sink = dynamic_cast<DecoderType*>(stream_sink);
         if (!typed_stream_sink) {
             FIBRE_LOG(E) << "unexpected attempt to close endpoint";
@@ -652,7 +658,7 @@ public:
         }
         auto val = typed_stream_sink->get();
         if (val) {
-            NamedTuple<TOutArgNames, TOutArgTypes> ret_val = std::apply(func_, static_cast<TInArgTypes>(*val));
+            TOutArgTypes ret_val = std::apply(func_, *val);
         } else {
             FIBRE_LOG(W) << "closed endpoint before it was finished";
         }
@@ -662,6 +668,8 @@ public:
 
 private:
     TFunc func_;
+    TInArgNames in_arg_names_;
+    TOutArgNames out_arg_names_;
 };
 
 
@@ -824,22 +832,8 @@ LocalFunctionEndpoint<TFunc, TMetadata> make_local_function_endpoint(TFunc&& fun
 
 
 extern std::unordered_map<Uuid, LocalEndpoint*> local_endpoints; // TODO: fix dynamic allocation
-
-int register_endpoint(Uuid uuid, LocalEndpoint* local_endpoint) {
-    local_endpoints[uuid] = local_endpoint;
-    return 0;
-}
-
-int unregister_endpoint(Uuid uuid) {
-    auto it = local_endpoints.find(uuid);
-    if (it == local_endpoints.end()) {
-        FIBRE_LOG(E) << "attempt to unregister unknown endpoint";
-        return -1;
-    }
-    local_endpoints.erase(it);
-    return 0;
-}
-
+int register_endpoint(Uuid uuid, LocalEndpoint* local_endpoint);
+int unregister_endpoint(Uuid uuid);
 
 }
 

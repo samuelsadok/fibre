@@ -9,7 +9,6 @@
 
 // need to include all default encoders
 #include "decoders.hpp"
-#include "named_tuple.hpp"
 
 DEFINE_LOG_TOPIC(CONTEXT);
 
@@ -28,7 +27,9 @@ template<size_t MAX_SIZE>
 struct default_decoder<std::tuple<std::array<char, MAX_SIZE>, size_t>> { using type = UTF8Decoder<char, MAX_SIZE>; };
 
 
-struct Context;
+struct Context {
+
+};
 
 /**
  * @brief Decodes T based on the context it is executed on.
