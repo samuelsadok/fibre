@@ -185,12 +185,12 @@ public:
     }
 };
 
-
 /**
  * @brief Assembles a JSON snippet that describes a function
  */
 template<typename TMetadata>
 struct FunctionJSONAssembler {
+#if 0
 private:
     template<size_t I>
     using get_input_json_t = sstring<22 +
@@ -236,6 +236,7 @@ public:
                get_all_inputs_json(metadata, std::make_index_sequence<TMetadata::NInputs>()) +
                make_sstring("]}");
     }
+#endif
 };
 
 

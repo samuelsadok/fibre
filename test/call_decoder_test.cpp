@@ -13,7 +13,6 @@ std::tuple<> fn1(uint32_t arg1) {
     return {};
 }
 
-auto name1 = make_sstring("arg1");
 
 int main(int argc, const char** argv) {
     TestContext context;
@@ -22,10 +21,10 @@ int main(int argc, const char** argv) {
     Uuid uuid{"b40a8aa3-d5ab-4453-bb4e-9bfbd7a59a9c"};
     auto asd = make_closure(fn1);
     SimpleLocalEndpoint<decltype(asd),
-        std::tuple<decltype(name1)>,
+        std::tuple<MAKE_SSTRING("arg1")>,
         std::tuple<uint32_t>,
         std::tuple<>,
-        std::tuple<>> fn1_endpoint{asd, {name1}, std::tuple<>()};
+        std::tuple<>> fn1_endpoint{asd, {}, std::tuple<>()};
 
     TEST_ZERO(fibre::register_endpoint(uuid, &fn1_endpoint));
 

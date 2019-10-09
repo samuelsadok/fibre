@@ -83,5 +83,42 @@ int main(int argc, const char** argv) {
     fibre::make_closure(add_one).bind(a)();
     TEST_EQUAL(a, 6);
 
+    // Test compile-time string implementation
+
+    sstring<'a', 'b', 'c'> str1{};
+    std::cout << str1 << std::endl;
+    TEST_EQUAL(std::string(str1.c_str()), std::string("abc"));
+
+    MAKE_SSTRING("abc") str2{};
+    std::cout << str2 << std::endl;
+    TEST_EQUAL(std::string(str2.c_str()), std::string("abc"));
+
+    auto str3 = MAKE_SSTRING("abc"){};
+    std::cout << str3 << std::endl;
+    TEST_EQUAL(std::string(str3.c_str()), std::string("abc"));
+
+    static_assert(std::is_same<decltype(str1), MAKE_SSTRING("abc")>::value, "sstring broken");
+    static_assert(std::is_same<decltype(str2), MAKE_SSTRING("abc")>::value, "sstring broken");
+    static_assert(std::is_same<decltype(str3), MAKE_SSTRING("abc")>::value, "sstring broken");
+    static_assert(!std::is_same<decltype(str1), MAKE_SSTRING("abcd")>::value, "sstring broken");
+    static_assert(!std::is_same<decltype(str1), MAKE_SSTRING("ab")>::value, "sstring broken");
+    static_assert(!std::is_same<decltype(str1), MAKE_SSTRING("abd")>::value, "sstring broken");
+
+    auto str4 = MAKE_SSTRING("hello "){} + MAKE_SSTRING("world"){};
+    static_assert(std::is_same<sstring_concat_t<MAKE_SSTRING("hello "), MAKE_SSTRING("world")>, MAKE_SSTRING("hello world")>::value, "sstring broken");
+    static_assert(std::is_same<decltype(str4), MAKE_SSTRING("hello world")>::value, "sstring broken");
+
+    std::cout << (str4) << std::endl;
+
+    auto joined_str0 = join_sstring(MAKE_SSTRING("->"){});
+    auto joined_str1 = join_sstring(MAKE_SSTRING("->"){}, MAKE_SSTRING("a"){});
+    auto joined_str2 = join_sstring(MAKE_SSTRING("->"){}, MAKE_SSTRING("a"){}, MAKE_SSTRING("b"){});
+    auto joined_str3 = join_sstring(MAKE_SSTRING("->"){}, MAKE_SSTRING("a"){}, MAKE_SSTRING("b"){}, MAKE_SSTRING("c"){});
+    static_assert(std::is_same<decltype(joined_str0), MAKE_SSTRING("")>::value, "sstring join broken");
+    static_assert(std::is_same<decltype(joined_str1), MAKE_SSTRING("a")>::value, "sstring join broken");
+    static_assert(std::is_same<decltype(joined_str2), MAKE_SSTRING("a->b")>::value, "sstring join broken");
+    static_assert(std::is_same<decltype(joined_str3), MAKE_SSTRING("a->b->c")>::value, "sstring join broken");
+
+
     return context.summarize();
 }

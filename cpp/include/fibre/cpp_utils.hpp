@@ -686,124 +686,132 @@ for_each_in_tuple_result_t<Fn, Tuple> for_each_in_tuple(Fn&& f, Tuple&& t) {
 * https://akrzemi1.wordpress.com/2017/06/28/compile-time-string-concatenation/
 */
 
-template <size_t N>
-class sstring {
-    char _array[N + 1];
 
-    template<size_t... PACK>
-    constexpr sstring(const char string_literal[N+1],
-                           std::index_sequence<PACK...>)
-    : _array{string_literal[PACK]..., '\0'}
-    {
-    }
+// TODO: the functionality
+// sstring::substring, sstring::get_last_part and sstring::after_last_index_of and sstring::last_index_of
+// was removed during refactoring. Add again if needed.
 
-    template<size_t N1, size_t... PACK1, size_t... PACK2>
-    constexpr sstring(const sstring<N1>&     s1,
-                           const sstring<N - N1>& s2,
-                           std::index_sequence<PACK1...>,
-                           std::index_sequence<PACK2...>)
-    : _array{s1[PACK1]..., s2[PACK2]..., '\0'}
-    {
-    }
+/**
+ * @brief Represents a string that is known at compile time by encoding it as a
+ * type.
+ */
+template<char ... CHARS>
+struct sstring {
+    static constexpr const char chars[] = {CHARS..., 0};
+    static constexpr const char* c_str() { return chars; }
+    static constexpr size_t size() { return sizeof...(CHARS); }
+};
+template<char ... CHARS>
+constexpr const char sstring<CHARS...>::chars[/*sizeof...(CHARS) + 1*/];
 
-    template<size_t NOther, size_t... PACK>
-    constexpr sstring(const sstring<NOther>& other,
-                           std::index_sequence<PACK...>)
-    : _array{other[PACK]..., '\0'}
-    {
-    }
- 
-public:
-    static constexpr std::size_t size() {
-        return N;
-    }
-    
-    constexpr char operator[](size_t i) const {
-        return X_ASSERT(i >= 0 && i < N), _array[i];
-    }
+template<typename TStr0, typename TStr1>
+struct sstring_concat_impl;
 
-    template<size_t N1, ENABLE_IF(N1 <= N)>
-    constexpr sstring(const sstring<N1>& s1, const sstring<N - N1>& s2)
-        : sstring{ s1, s2, std::make_index_sequence<N1>{},
-                                std::make_index_sequence<N - N1>{} }
-    {
-    }
-
-    constexpr sstring(const char string_literal[N+1])
-        : sstring{ string_literal, std::make_index_sequence<N>{} }
-    {
-    }
-
-//    template<size_t NOther, size_t START_IDX, size_t END_IDX, ENABLE_IF(END_IDX - START_IDX == N)>
-//    constexpr sstring(const sstring<NOther>& other, std::index_sequence<START_IDX, END_IDX>)
-//        : sstring{other, fibre::make_integer_sequence_from_to<size_t, START_IDX, END_IDX>{}}
-//    {
-//    }
-
-    constexpr const char * c_str() const {
-        return _array;
-    }
-
-    /**
-     * @brief Returns the last index plus one of the specified char in the string
-     * Returns 0 if the char was not found.
-     */
-    constexpr size_t after_last_index_of(char c, size_t idx = N) const {
-        return idx == 0 ? 0 :
-                (_array[idx] == c) ? (idx + 1) :
-                after_last_index_of(c, idx - 1);
-    }
-
-    template<size_t IFrom, size_t ITo = N>
-    constexpr sstring<ITo - IFrom> substring() const {
-        return sstring<ITo - IFrom>(*this, fibre::make_integer_sequence_from_to<size_t, IFrom, ITo>{});
-    }
-
-    //constexpr sstring<N - last_index_of('/')> get_last_part(char c) {
-    //    return substring<file_path.last_index_of('/')>();
-    //}
+template<char ... STR0, char ... STR1>
+struct sstring_concat_impl<sstring<STR0...>, sstring<STR1...>> {
+    using type = sstring<STR0..., STR1...>;
 };
 
-// @brief Constructs a fixed length string from a string literal
-template<size_t N_PLUS_1>
-constexpr sstring<N_PLUS_1-1> make_sstring(const char (&string_literal)[N_PLUS_1]) {
-    return sstring<N_PLUS_1-1>{string_literal};
+/** @brief Represents the result type of concatenating two static strings */
+template<typename TStr0, typename TStr1>
+using sstring_concat_t = typename sstring_concat_impl<TStr0, TStr1>::type;
+
+/** @brief Concatenates two static strings */
+template<char ... STR0, char ... STR1>
+constexpr sstring<STR0..., STR1...>  operator+(sstring<STR0...>, sstring<STR1...>) {
+    return {};
 }
 
-// @brief Constructs a fixed length string by concatenating two strings
-template<size_t I1, size_t I2>
-constexpr sstring<I1+I2> operator+(const sstring<I1>& lhs, const sstring<I2>& rhs) {
-    return sstring<I1+I2>{lhs, rhs};
+
+/** @brief Helper class for the MAKE_SSTRING macro */
+template<size_t LENGTH, char ... CHARS>
+struct sstring_builder;
+
+template<char CHAR, char ... CHARS>
+struct sstring_builder<0, CHAR, CHARS...> {
+    using type = sstring<>;
+};
+
+template<size_t LENGTH, char CHAR, char ... CHARS>
+struct sstring_builder<LENGTH, CHAR, CHARS...> {
+    using type = sstring_concat_t<sstring<CHAR>, typename sstring_builder<LENGTH-1, CHARS...>::type>;
+};
+
+template<size_t LENGTH, char ... CHARS>
+using sstring_builder_t = typename sstring_builder<LENGTH, CHARS...>::type;
+
+#define MACRO_GET_1(str, i) \
+    (sizeof(str) > (i) ? str[(i)] : 0)
+
+#define MACRO_GET_4(str, i) \
+    MACRO_GET_1(str, i+0),  \
+    MACRO_GET_1(str, i+1),  \
+    MACRO_GET_1(str, i+2),  \
+    MACRO_GET_1(str, i+3)
+
+#define MACRO_GET_16(str, i) \
+    MACRO_GET_4(str, i+0),   \
+    MACRO_GET_4(str, i+4),   \
+    MACRO_GET_4(str, i+8),   \
+    MACRO_GET_4(str, i+12)
+
+#define MACRO_GET_64(str, i) \
+    MACRO_GET_16(str, i+0),  \
+    MACRO_GET_16(str, i+16), \
+    MACRO_GET_16(str, i+32), \
+    MACRO_GET_16(str, i+48)
+
+/**
+ * @brief Builds a compile-time string type from a string literal.
+ * 
+ * Passing more than 64 characters will prune the string.
+ * 
+ * Usage:
+ *  MAKE_SSTRING("hello world") my_str{};
+ * or
+ *  auto my_str = MAKE_SSTRING("hello world"){};
+ * 
+ * Both examples create a compile-time variable "my_str" of which the type
+ * itself stores the content "hello world".
+ */
+#define MAKE_SSTRING(literal)  sstring_builder_t<sizeof(literal)-1, MACRO_GET_64(literal, 0)>
+
+namespace std {
+template<char ... CHARS>
+static std::ostream& operator<<(std::ostream& stream, const sstring<CHARS...>& val) {
+    stream << val.chars;
+    return stream;
+}
 }
 
-// @brief Constructs a fixed length string by concatenating two strings
-template<size_t IDelim>
-constexpr sstring<0> join_sstring(const sstring<IDelim>& delimiter) {
-    return sstring<0>("");
-}
+template<typename TDelimiter, typename ... TStr>
+struct join_sstring_impl;
 
-template<size_t IDelim, size_t I1>
-constexpr sstring<I1> join_sstring(const sstring<IDelim>& delimiter, const sstring<I1>& s1) {
-    return s1;
-}
+template<char ... DELIMITER>
+struct join_sstring_impl<sstring<DELIMITER...>> {
+    using type = sstring<>;
+};
 
-// @brief Constructs a fixed length string by concatenating two strings
-template<size_t IDelim, size_t I1, size_t I2, size_t... ILengths>
-constexpr sstring<I1 + I2 + sum<ILengths...>::value + sizeof...(ILengths) + 1>
-join_sstring(
-    const sstring<IDelim>& delimiter,
-    const sstring<I1>& s1, const sstring<I2>& s2, const sstring<ILengths>& ... strings) {
-    return s1 + delimiter + join_sstring(delimiter, s2, strings...);
-}
+template<char ... DELIMITER, char ... STR0>
+struct join_sstring_impl<sstring<DELIMITER...>, sstring<STR0...>> {
+    using type = sstring<STR0...>;
+};
 
-template<size_t IDelim, size_t... ILengths>
-using join_sstring_t = decltype(join_sstring(std::declval<sstring<IDelim>>(), std::declval<sstring<ILengths>>()...));
+template<char ... DELIMITER, char ... STR0, typename ... TStr>
+struct join_sstring_impl<sstring<DELIMITER...>, sstring<STR0...>, TStr...> {
+    using type = sstring_concat_t<sstring<STR0..., DELIMITER...>, typename join_sstring_impl<sstring<DELIMITER...>, TStr...>::type>;
+};
+
+template<typename TDelimiter, typename ... TStr>
+using join_sstring_t = typename join_sstring_impl<TDelimiter, TStr...>::type;
+
+template<typename TDelimiter, typename ... TStr>
+constexpr join_sstring_t<TDelimiter, TStr...> join_sstring(const TDelimiter& delimiter, const TStr& ... str) {
+    return {};
+}
 
 template<size_t... ILengths>
 using sstring_arr = std::tuple<sstring<ILengths>...>;
-
-static constexpr const sstring<0> empty_sstring("");
-static constexpr const sstring_arr<> empty_sstring_arr;
 
 
 // source: https://stackoverflow.com/questions/40159732/return-other-value-if-key-not-found-in-the-map

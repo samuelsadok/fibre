@@ -88,7 +88,7 @@ namespace fibre {
  */
 #define FIBRE_LOG(level) \
     fibre::make_log_entry<current_log_topic, fibre::LOG_LEVEL_ ## level>( \
-        fibre::get_file_name(__FILE__), __LINE__, __func__ \
+        fibre::get_file_name(MAKE_SSTRING(__FILE__){}), __LINE__, __func__ \
     ).get_stream()
 
 /**
@@ -231,9 +231,9 @@ Logger::Entry make_log_entry(const char *filename, size_t line_no, const char *f
     }
 }
 
-template<size_t I>
-constexpr const char * get_file_name(const char (&file_path)[I]) {
-    return file_path + make_sstring(file_path).after_last_index_of('/');
+template<typename TFilepath>
+constexpr const char * get_file_name(TFilepath file_path) {
+    return (file_path /*file_path.after_last_index_of('/')*/).c_str(); // TODO: extract file name (without path)
 }
 
 }

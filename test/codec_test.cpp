@@ -112,9 +112,6 @@ TestContext utf8_codec_test(const uint8_t (&encoded)[], size_t length, std::stri
     return codec_test<void, UTF8Decoder<char, max_size>>(UTF8Decoder<char, max_size>(), encoded, length, decoded2);
 }
 
-auto name1 = make_sstring("arg1");
-auto name2 = make_sstring("arg2");
-using asd = std::tuple<decltype(name1), decltype(name2)>;
 
 int main(int argc, const char** argv) {
     TestContext context;
@@ -140,10 +137,10 @@ int main(int argc, const char** argv) {
     TEST_ADD(utf8_codec_test({0x03, 0x61, 0x62, 0x63}, 4, "abc"));
     // TODO: test for more strings (especially multibyte chars)
 
-    VerboseNamedTupleDecoderV1<asd, std::tuple<uint32_t, uint32_t>> asdf{
-        {name1, name2},
-        {0, 0}
-    };
+    VerboseNamedTupleDecoderV1<
+        std::tuple<MAKE_SSTRING("arg1"), MAKE_SSTRING("arg2")>,
+        std::tuple<uint32_t, uint32_t>> asdf{{}, {0, 0}};
+        
     TEST_ADD(codec_test<void>(asdf, {0x04, 0x61, 0x72, 0x67, 0x31, 0x01, 0x04, 0x61, 0x72, 0x67, 0x32, 0x02}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
     TEST_ADD(codec_test<void>(asdf, {0x04, 0x61, 0x72, 0x67, 0x32, 0x02, 0x04, 0x61, 0x72, 0x67, 0x31, 0x01}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
     

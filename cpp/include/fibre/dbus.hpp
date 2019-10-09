@@ -717,27 +717,21 @@ template<> constexpr int get_int_type_id<16, false>() { return DBUS_TYPE_UINT16;
 template<> constexpr int get_int_type_id<32, false>() { return DBUS_TYPE_UINT32; }
 template<> constexpr int get_int_type_id<64, false>() { return DBUS_TYPE_UINT64; }
 
-template<size_t BITS, bool SIGNED> constexpr sstring<1> get_int_signature();
-template<> constexpr sstring<1> get_int_signature<16, true>() { return DBUS_TYPE_INT16_AS_STRING; }
-template<> constexpr sstring<1> get_int_signature<32, true>() { return DBUS_TYPE_INT32_AS_STRING; }
-template<> constexpr sstring<1> get_int_signature<64, true>() { return DBUS_TYPE_INT64_AS_STRING; }
-template<> constexpr sstring<1> get_int_signature<8, false>() { return DBUS_TYPE_BYTE_AS_STRING; }
-template<> constexpr sstring<1> get_int_signature<16, false>() { return DBUS_TYPE_UINT16_AS_STRING; }
-template<> constexpr sstring<1> get_int_signature<32, false>() { return DBUS_TYPE_UINT32_AS_STRING; }
-template<> constexpr sstring<1> get_int_signature<64, false>() { return DBUS_TYPE_UINT64_AS_STRING; }
+template<size_t BITS, bool SIGNED> struct get_int_signature;
+template<> struct get_int_signature<16, true> { using type = MAKE_SSTRING(DBUS_TYPE_INT16_AS_STRING); };
+template<> struct get_int_signature<32, true> { using type = MAKE_SSTRING(DBUS_TYPE_INT32_AS_STRING); };
+template<> struct get_int_signature<64, true> { using type = MAKE_SSTRING(DBUS_TYPE_INT64_AS_STRING); };
+template<> struct get_int_signature<8, false> { using type = MAKE_SSTRING(DBUS_TYPE_BYTE_AS_STRING); };
+template<> struct get_int_signature<16, false> { using type = MAKE_SSTRING(DBUS_TYPE_UINT16_AS_STRING); };
+template<> struct get_int_signature<32, false> { using type = MAKE_SSTRING(DBUS_TYPE_UINT32_AS_STRING); };
+template<> struct get_int_signature<64, false> { using type = MAKE_SSTRING(DBUS_TYPE_UINT64_AS_STRING); };
 
-
-template<typename T>
-static inline const char* get_signature() {
-    static auto sig = DBusTypeTraits<T>::signature;
-    return sig.c_str();
-}
 
 template<typename T>
 struct DBusTypeTraits<T, typename std::is_integral<T>::type> {
     static constexpr size_t BITS = sizeof(T) * CHAR_BIT;
     using type_id = std::integral_constant<int, get_int_type_id<BITS, std::is_signed<T>::value>()>;
-    static constexpr auto signature = get_int_signature<BITS, std::is_signed<T>::value>();
+    static constexpr auto signature = typename get_int_signature<BITS, std::is_signed<T>::value>::type{};
 
     static int push(DBusMessageIter* iter, T val) {
         return dbus_message_iter_append_basic(iter, type_id::value, &val) ? 0 : -1;
@@ -752,7 +746,7 @@ struct DBusTypeTraits<T, typename std::is_integral<T>::type> {
 template<>
 struct DBusTypeTraits<bool> {
     using type_id = std::integral_constant<int, DBUS_TYPE_BOOLEAN>;
-    static constexpr auto signature = make_sstring(DBUS_TYPE_BOOLEAN_AS_STRING);
+    static constexpr auto signature = MAKE_SSTRING(DBUS_TYPE_BOOLEAN_AS_STRING){};
 
     // BOOLEAN values are marshalled as 32-bit integers. Only 0 and 1 are valid.
     // Source: https://dbus.freedesktop.org/doc/dbus-specification.html#idm646
@@ -780,7 +774,7 @@ struct DBusTypeTraits<bool> {
 template<>
 struct DBusTypeTraits<std::string> {
     using type_id = std::integral_constant<int, DBUS_TYPE_STRING>;
-    static constexpr sstring<1> signature = DBUS_TYPE_STRING_AS_STRING;
+    static constexpr auto signature = MAKE_SSTRING(DBUS_TYPE_STRING_AS_STRING){};
 
     static int push(DBusMessageIter* iter, std::string val) {
         const char* str = val.c_str();
@@ -817,12 +811,12 @@ struct DBusTypeTraits<std::tuple<TElement...>> {
 template<typename TElement>
 struct DBusTypeTraits<std::vector<TElement>> {
     using type_id = std::integral_constant<int, DBUS_TYPE_ARRAY>;
-    static constexpr auto signature = make_sstring(DBUS_TYPE_ARRAY_AS_STRING) +
+    static constexpr auto signature = MAKE_SSTRING(DBUS_TYPE_ARRAY_AS_STRING){} +
                                       DBusTypeTraits<TElement>::signature;
 
     static int push(DBusMessageIter* iter, std::vector<TElement> val) {
         DBusMessageIter subiter;
-        if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, get_signature<TElement>(), &subiter)) {
+        if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, DBusTypeTraits<TElement>::signature.c_str(), &subiter)) {
             FIBRE_LOG(E) << "failed to open container";
             return -1;
         }
@@ -858,10 +852,10 @@ template<typename TKey, typename TVal>
 struct DBusTypeTraits<std::unordered_map<TKey, TVal>> {
     using type_id = std::integral_constant<int, DBUS_TYPE_ARRAY>;
     static constexpr auto element_signature = 
-            make_sstring(DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING) +
+            MAKE_SSTRING(DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING){} +
             DBusTypeTraits<TKey>::signature + DBusTypeTraits<TVal>::signature +
-            make_sstring(DBUS_DICT_ENTRY_END_CHAR_AS_STRING);
-    static constexpr auto signature = make_sstring(DBUS_TYPE_ARRAY_AS_STRING) +
+            MAKE_SSTRING(DBUS_DICT_ENTRY_END_CHAR_AS_STRING){};
+    static constexpr auto signature = MAKE_SSTRING(DBUS_TYPE_ARRAY_AS_STRING){} +
                                       element_signature;
 
     static int push(DBusMessageIter* iter, std::unordered_map<TKey, TVal> val) {
@@ -921,7 +915,7 @@ struct DBusTypeTraits<std::unordered_map<TKey, TVal>> {
 template<>
 struct DBusTypeTraits<DBusObjectPath> {
     using type_id = std::integral_constant<int, DBUS_TYPE_OBJECT_PATH>;
-    static constexpr sstring<1> signature = DBUS_TYPE_OBJECT_PATH_AS_STRING;
+    static constexpr auto signature = MAKE_SSTRING(DBUS_TYPE_OBJECT_PATH_AS_STRING){};
 
     static int push(DBusMessageIter* iter, DBusObjectPath val) {
         const char * object_path = val.c_str();
@@ -941,7 +935,7 @@ struct variant_helper<I, N, std::variant<Ts...>> {
 
     static const char* get_element_signature(std::variant<Ts...>& val) {
         if (val.index() == I) {
-            return get_signature<subtype>();
+            return DBusTypeTraits<subtype>::signature.c_str();
         }
         return next_helper::get_element_signature(val);
     }
@@ -954,7 +948,7 @@ struct variant_helper<I, N, std::variant<Ts...>> {
     }
 
     static int pop(DBusMessageIter* iter, std::variant<Ts...>& val, const char* signature) {
-        if (strcmp(get_signature<subtype>(), signature) == 0) {
+        if (strcmp(DBusTypeTraits<subtype>::signature.c_str(), signature) == 0) {
             subtype inner_val{};
             int result = DBusTypeTraits<subtype>::pop(iter, inner_val);
             val = std::variant<Ts...>(inner_val);
@@ -987,7 +981,7 @@ struct variant_helper<I, I, std::variant<Ts...>> {
 template<typename ... Ts>
 struct DBusTypeTraits<std::variant<Ts...>> {
     using type_id = std::integral_constant<int, DBUS_TYPE_VARIANT>;
-    static constexpr sstring<1> signature = DBUS_TYPE_VARIANT_AS_STRING;
+    static constexpr auto signature = MAKE_SSTRING(DBUS_TYPE_VARIANT_AS_STRING){};
 
     using helper = variant_helper<0, sizeof...(Ts), std::variant<Ts...>>;
 
