@@ -4,8 +4,12 @@
 #include "decoders.hpp"
 #include <tuple>
 
+DEFINE_LOG_TOPIC(NAMED_TUPLE);
+#define current_log_topic LOG_TOPIC_NAMED_TUPLE
+
 namespace fibre {
 
+#if 0
 /**
  * @brief A named tuple is something in between a tuple and a dict.
  * 
@@ -23,56 +27,117 @@ public:
     NamedTuple(const std::tuple<TTypes...>& tuple)
         : std::tuple<TTypes...>(tuple) {}
 };
+#endif
 
-#if 0
 
-template<typename TInArgNames, typename TInArgTypes>
+template<typename TNames, typename TTypes>
 struct VerboseNamedTupleDecoderV1;
 
+}
+#include "context.hpp"
+namespace fibre {
+
+/*
+WARNING: this is very ugly code. But hey, it passes the unit tests.
+TODO: make less ugly
+*/
 template<
-    typename TInArgNames,
-    typename ... TInArgTypes>
-struct VerboseNamedTupleDecoderV1<TInArgNames, std::tuple<TInArgTypes...>> : Decoder<NamedTuple<TInArgNames, std::tuple<TInArgTypes...>>> {
+    typename TNames,
+    typename ... TTypes>
+struct VerboseNamedTupleDecoderV1<TNames, std::tuple<TTypes...>> : Decoder<std::tuple<TTypes...>> {
 public:
-    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
+    VerboseNamedTupleDecoderV1(TNames names, std::tuple<TTypes...> default_values) // TODO: add optional bool array
+        : names_(names), values_(default_values), key_decoder_(alloc_decoder<TDecodedKey>(ctx_)) {}
+
+    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
         StreamSink::status_t status;
-        if (waiting_for_key) {
-            if ((status = key_decoder->process_bytes(buffer, length, processed_bytes)) != StreamSink::CLOSED) {
-                return status;
+        while (buffer.length && (received_vals_ < sizeof...(TTypes))) {
+            if (waiting_for_key_) {
+                FIBRE_LOG(D) << "process key byte " << (buffer.length ? as_hex(*buffer) : as_hex((uint8_t)0));
+                if ((status = key_decoder_->process_bytes(buffer)) != StreamSink::CLOSED) {
+                    return status;
+                }
+                FIBRE_LOG(D) << "received key: " << *key_decoder_->get();
+                val_decoder_ = init_matching(std::make_index_sequence<sizeof...(TTypes)>());
+                waiting_for_key_ = false;
             }
-            call_id_t* call_id = call_id_decoder->get();
-            if (call_id != nullptr) {
-                start_or_get_call(*call_id, &call_);
+            if (!waiting_for_key_) {
+                FIBRE_LOG(D) << "process val byte " << (buffer.length ? as_hex(*buffer) : as_hex((uint8_t)0));
+                if ((status = val_decoder_->process_bytes(buffer)) != StreamSink::CLOSED) {
+                    return status;
+                }
+                deinit_matching(std::make_index_sequence<sizeof...(TTypes)>());
+                dealloc_decoder<TDecodedKey>(key_decoder_);
+                key_decoder_ = alloc_decoder<TDecodedKey>(ctx_); // TODO: dealloc
+                waiting_for_key_ = true;
+                FIBRE_LOG(D) << "received val number " << received_vals_;
             }
-            pos_++;
         }
-        if (!waiting_for_key) {
-            if ((status = val_decoder->process_bytes(buffer, length, processed_bytes)) != StreamSink::CLOSED) {
-                return status;
-            }
-            offset_ = *offset_decoder->get();
-            pos_++;
-        }
-        return StreamSink::OK;
+        return (received_vals_ >= sizeof...(TTypes)) ? StreamSink::CLOSED : StreamSink::OK;
+    }
+
+    std::tuple<TTypes...>* get() final {
+        return (received_vals_ >= sizeof...(TTypes)) ? &values_ : nullptr;
     }
 
 private:
-/*
 
-The next problem:
-Currently we assume that the type is known given the name. What if the type changes in the next version?
-Either need type annotations or need reference arguments by Uuid or so, which implies the type.
+    template<size_t ... Is>
+    StreamSink* init_matching(std::index_sequence<Is...>) {
+        StreamSink* decoders[] = {init_if_match<Is>()...};
+        for (size_t i = 0; i < sizeof...(Is); ++i) {
+            if (decoders[i]) {
+                return decoders[i];
+            }
+        }
+        return nullptr;
+    }
 
-*/
-    std::tuple<Decoder<TInArgTypes>*...> val_decoders;
-    Decoder<const char[123]>* key_decoder; // TODO: find max key length
-    StreamSink* val_decoder;
-    bool waiting_for_key = true;
-    size_t current_val = 0;
+    template<size_t I>
+    StreamSink* init_if_match() {
+        auto recv_key_buf = std::get<0>(*key_decoder_->get()).data();
+        auto recv_key_len = std::get<1>(*key_decoder_->get());
+        auto key = std::get<I>(names_);
+        using T = std::tuple_element_t<I, std::tuple<TTypes...>>;
+        if ((key.size() == recv_key_len) && (memcmp(key.c_str(), recv_key_buf, recv_key_len) == 0)) {
+            return std::get<I>(val_decoders_) = alloc_decoder<T>(ctx_);
+        }
+        return nullptr;
+    }
+
+    template<size_t ... Is>
+    void deinit_matching(std::index_sequence<Is...>) {
+        int decoders[] = {(deinit_if_match<Is>(), 0)...};
+    }
+
+    template<size_t I>
+    void deinit_if_match() {
+        auto recv_key_buf = std::get<0>(*key_decoder_->get()).data();
+        auto recv_key_len = std::get<1>(*key_decoder_->get());
+        auto key = std::get<I>(names_);
+        using T = std::tuple_element_t<I, std::tuple<TTypes...>>;
+        if ((key.size() == recv_key_len) && (memcmp(key.c_str(), recv_key_buf, recv_key_len) == 0)) {
+            std::get<I>(values_) = *std::get<I>(val_decoders_)->get();
+            dealloc_decoder<T>(std::get<I>(val_decoders_));
+            std::get<I>(val_decoders_) = nullptr;
+            received_vals_++;
+        }
+    }
+
+
+    using TDecodedKey = std::tuple<std::array<char, 128>, size_t>;
+    Context* ctx_;
+    TNames names_;
+    std::tuple<TTypes...> values_;
+    std::tuple<Decoder<TTypes>*...> val_decoders_;
+    Decoder<TDecodedKey>* key_decoder_; // TODO: find max key length
+    StreamSink* val_decoder_ = nullptr;
+    bool waiting_for_key_ = true;
+    size_t received_vals_ = 0;
 };
 
-#endif
-
 }
+
+#undef current_log_topic
 
 #endif // __FIBRE_NAMED_TUPLE_HPP

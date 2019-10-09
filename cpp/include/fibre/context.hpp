@@ -21,8 +21,11 @@ struct default_decoder;
 template<typename T>
 using default_decoder_t = typename default_decoder<T>::type;
 
-template<typename TInArgNames, typename TInArgTypes>
-struct default_decoder<NamedTuple<TInArgNames, TInArgTypes>> { /*using type = VerboseNamedTupleDecoderV1<TInArgNames, TInArgTypes>;*/ };
+template<>
+struct default_decoder<unsigned int> { using type = VarintDecoder<unsigned int>; };
+
+template<size_t MAX_SIZE>
+struct default_decoder<std::tuple<std::array<char, MAX_SIZE>, size_t>> { using type = UTF8Decoder<char, MAX_SIZE>; };
 
 
 struct Context;

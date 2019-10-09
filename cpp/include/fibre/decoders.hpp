@@ -194,8 +194,8 @@ class VarintDecoder : public Decoder<T> {
 public:
     static constexpr T BIT_WIDTH = (CHAR_BIT * sizeof(T));
 
-    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
-        while (length && !is_closed_) {
+    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
+        while (buffer.length && !is_closed_) {
             uint8_t input_byte = *buffer;
             state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
             if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
@@ -204,17 +204,13 @@ public:
                 return StreamSink::ERROR; // overflow
             }
 
-            if (processed_bytes)
-                (*processed_bytes)++;
+            buffer++;
 
             bit_pos_ += 7;
             if (!(input_byte & 0x80))
                 is_closed_ = true;
             else if (bit_pos_ >= BIT_WIDTH)
                 return StreamSink::ERROR;
-
-            length--;
-            buffer++;
         }
         return is_closed_ ? StreamSink::CLOSED : StreamSink::OK;
     }
@@ -234,11 +230,10 @@ private:
 template<typename T, bool BigEndian>
 class FixedIntDecoder : public Decoder<T> {
 public:
-    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
-        size_t chunk = std::min(serializer::BYTE_WIDTH - pos_, length);
-        memcpy(buffer_ + pos_, buffer, chunk);
-        if (processed_bytes)
-            *processed_bytes += chunk;
+    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
+        size_t chunk = std::min(serializer::BYTE_WIDTH - pos_, buffer.length);
+        memcpy(buffer_ + pos_, buffer.ptr, chunk);
+        buffer += chunk;
         pos_ += chunk;
         if (pos_ >= serializer::BYTE_WIDTH) {
             value_ = serializer::read(buffer_);
@@ -284,30 +279,24 @@ class UTF8Decoder : public Decoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> 
 public:
     static constexpr T replacement_char = sizeof(T) * CHAR_BIT >= 16 ? 0xfffd : 0x3f;
 
-    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
         StreamSink::status_t status;
         std::array<T, MAX_SIZE>& received_buf = std::get<0>(value_);
         size_t& received_length = std::get<1>(value_);
 
         if (!length_decoder_.get()) {
-            size_t inner_processed_bytes = 0;
-            status = length_decoder_.process_bytes(buffer, length, &inner_processed_bytes);
-            if (processed_bytes)
-                (*processed_bytes) += inner_processed_bytes;
-            length -= inner_processed_bytes;
-            buffer += inner_processed_bytes;
-            if (status != StreamSink::CLOSED) {
+            if ((status = length_decoder_.process_bytes(buffer)) != StreamSink::CLOSED) {
                 return status;
             }
             FIBRE_LOG(D) << "UTF-8: received length " << *length_decoder_.get();
         }
         if (length_decoder_.get()) {
             while (received_length < *length_decoder_.get()) {
-                if (!length) {
+                if (!buffer.length) {
                     return StreamSink::OK;
                 }
 
-                uint8_t byte = *buffer;
+                uint8_t byte = *(buffer++);
                 if (byte & 0xc0 == 0x80) {
                     if (received_length == 0) {
                         FIBRE_LOG(W) << "UTF-8 continuation byte in beginning";
@@ -334,11 +323,6 @@ public:
                     }
                     received_buf[received_length++] = byte;
                 }
-
-                buffer++;
-                length--;
-                if (processed_bytes)
-                    (*processed_bytes)++;
             }
         }
         return StreamSink::CLOSED;

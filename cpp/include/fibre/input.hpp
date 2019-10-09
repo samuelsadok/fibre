@@ -20,14 +20,17 @@ public:
     /**
      * @brief Processes a chunk of data.
      * 
-     * @param processed_bytes: The variable pointed to by this pointer shall be
-     *        incremented by the number of bytes from the start of the input
-     *        buffer that the caller can consider as handled. If some of the
-     *        chunk was seen in a previous call, it is also considered as
-     *        handled. The only reason why not all of the chunk may be processed
+     * @param buffer: The chunk of data to process.
+     *        The buffer will be advanced to reflect which bytes the caller can
+     *        consider as handled (or cached). This includes data that was
+     *        already known from a previous call to this function.
+     *        If the defragmenter decides to handle/cache bytes in the middle of
+     *        the chunk (as opposed to the beginning), this will not be reflected
+     *        to the caller.
+     *        The only reason why not all of the chunk would be processed
      *        is that the internal buffer is (temporarily) full.
      */
-    virtual void process_chunk(const uint8_t* buffer, size_t offset, size_t length, size_t* processed_bytes) = 0;
+    virtual void process_chunk(cbufptr_t& buffer, size_t offset) = 0;
 };
 
 /**
@@ -36,50 +39,42 @@ public:
 template<size_t I>
 class FixedBufferDefragmenter : public Defragmenter, public OpenStreamSource {
 public:
-    void process_chunk(const uint8_t* buffer, size_t offset, size_t length, size_t* processed_bytes) final {
+    void process_chunk(cbufptr_t& buffer, size_t offset) final {
         // prune start of chunk
         if (offset < read_ptr_) {
             size_t diff = read_ptr_ - offset;
-            if (diff >= length) {
-                if (processed_bytes)
-                    *processed_bytes += length;
+            if (diff >= buffer.length) {
+                buffer += buffer.length;
                 return; // everything in this chunk was already received and consumed before
             }
             FIBRE_LOG(D) << "discarding " << diff << " bytes at beginning of chunk";
             buffer += diff;
             offset += diff;
-            length -= diff;
-            if (processed_bytes)
-                *processed_bytes += diff;
         }
 
         // prune end of chunk
-        if (offset + length > read_ptr_ + I) {
-            size_t diff = offset + length - (read_ptr_ + I);
-            if (diff >= length) {
+        if (offset + buffer.length > read_ptr_ + I) {
+            size_t diff = offset + buffer.length - (read_ptr_ + I);
+            if (diff >= buffer.length) {
                 return; // the chunk starts so far into the future that we can't use any of it
             }
             FIBRE_LOG(D) << "discarding " << diff << " bytes at end of chunk";
-            length -= diff;
+            buffer.length -= diff;
         }
 
         size_t dst_offset = (offset % I);
 
         // copy usable part of chunk to internal buffer
         // may need two copy operations because buf_ is a circular buffer
-        if (length > I - dst_offset) {
-            memcpy(buf_ + dst_offset, buffer, I - dst_offset);
+        if (buffer.length > I - dst_offset) {
+            memcpy(buf_ + dst_offset, buffer.ptr, I - dst_offset);
             set_valid_table(dst_offset, I - dst_offset);
             buffer += (I - dst_offset);
-            length -= (I - dst_offset);
-            if (processed_bytes)
-                *processed_bytes += (I - dst_offset);
             dst_offset = 0;
         }
-        memcpy(buf_ + dst_offset, buffer, length);
-        set_valid_table(dst_offset, length);
-        if (processed_bytes)
-            *processed_bytes += length;
+        memcpy(buf_ + dst_offset, buffer.ptr, buffer.length);
+        set_valid_table(dst_offset, buffer.length);
+        buffer += buffer.length;
     }
 
     status_t get_buffer(const uint8_t** buf, size_t* length) final {
@@ -165,10 +160,10 @@ private:
 };
 
 class FragmentedCallDecoder : public StreamSink {
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
+    status_t process_bytes(cbufptr_t& buffer) final {
         status_t status;
         if (pos_ == 0) {
-            if ((status = call_id_decoder->process_bytes(buffer, length, processed_bytes)) != CLOSED) {
+            if ((status = call_id_decoder->process_bytes(buffer)) != CLOSED) {
                 return status;
             }
             const call_id_t* call_id = call_id_decoder->get();
@@ -178,14 +173,14 @@ class FragmentedCallDecoder : public StreamSink {
             pos_++;
         }
         if (pos_ == 1) {
-            if ((status = offset_decoder->process_bytes(buffer, length, processed_bytes)) != CLOSED) {
+            if ((status = offset_decoder->process_bytes(buffer)) != CLOSED) {
                 return status;
             }
             offset_ = *offset_decoder->get();
             pos_++;
         }
         if (pos_ == 2) {
-            call_->fragment_sink.process_chunk(buffer, offset_, length, processed_bytes);
+            call_->fragment_sink.process_chunk(buffer, offset_);
         }
         return OK;
     }

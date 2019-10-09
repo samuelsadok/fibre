@@ -13,15 +13,48 @@ DEFINE_LOG_TOPIC(STREAM);
 
 namespace fibre {
 
-/*
-TODO: do we want something like this buffer struct?
-Would simplify things like skipping data in the buffer with custom operator
-overloads.
 
 struct cbufptr_t {
-    const uint8_t* buffer = nullptr;
-    size_t length = 0;
-}*/
+    const uint8_t* ptr /*= nullptr*/; // TODO: uint8_t is not guaranteed to exist everywhere
+    size_t length /*= 0*/;
+
+    cbufptr_t& operator+=(size_t num) {
+        if (num > length) {
+            FIBRE_LOG(E) << "buffer underflow";
+            num = length;
+        }
+        ptr += num;
+        length -= num;
+        return *this;
+    }
+
+    cbufptr_t operator++(int) {
+        cbufptr_t result = *this;
+        *this += 1;
+        return result;
+    }
+
+    const uint8_t& operator*() {
+        return *ptr;
+    }
+
+    cbufptr_t take(size_t num) {
+        if (num > length) {
+            FIBRE_LOG(E) << "buffer underflow";
+            num = length;
+        }
+        cbufptr_t result = {ptr, num};
+        return result;
+    }
+
+    cbufptr_t skip(size_t num) {
+        if (num > length) {
+            FIBRE_LOG(E) << "buffer underflow";
+            num = length;
+        }
+        return {ptr + num, length - num};
+    }
+};
 
 /**
  * @brief Represents a class that can process a continuous stream of bytes.
@@ -45,14 +78,11 @@ public:
      * 
      * TODO: "The blocking behavior shall depend on the thread-local deadline_ms variable." - rethink this when we have more implementations that do this.
      * 
-     * @param buffer Pointer to the buffer that should be processed.
-     *               Must not be null if length is non-zero.
-     * @param length Length of the buffer. May be 0.
-     * @param processed_bytes If not NULL, incremented by the number of bytes that were processed
-     *        during the function call.
-     *        For all status return values (including ERROR), the increment is at least zero and
-     *        at most equal to length. For status OK the increment is always equal to length.
-     *        For status ERROR the increment may not properly reflect the true number of processed bytes.
+     * @param buffer The buffer that should be processed. The buffer will be
+     *        advanced by the number of bytes that were processed during the
+     *        function call.
+     *        For status ERROR the increment may not properly reflect the true
+     *        number of processed bytes.
      * 
      * @retval OK       Some of the given data was processed successfully and
      *                  the stream might potentially immediately accept more
@@ -79,10 +109,17 @@ public:
      * 
      * TODO: the definition of this function was changed - check if implementations still comply.
      */
-    virtual status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) = 0;
+    virtual status_t process_bytes(cbufptr_t& buffer) = 0;
 
     /**
      * @brief Processes as much of the given data as possible.
+     * 
+     * @param buffer The buffer that should be processed. The buffer will be
+     *        advanced by the number of bytes that were processed during the
+     *        function call.
+     *        For status OK the buffer will be empty after the call.
+     *        For status ERROR the increment may not properly reflect the true
+     *        number of processed bytes.
      * 
      * @retval OK       All of the given data was processed successfully and
      *                  the stream might potentially immediately accept more
@@ -105,28 +142,31 @@ public:
      *                  In any case, subsequent calls to this function must be
      *                  handled gracefully.
      */
-    status_t process_all_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) {
+    status_t process_all_bytes(cbufptr_t& buffer) {
         size_t pos = 0;
         status_t status;
         // Note that we call the process_bytes function even if `length` is zero.
         // This is necessary to return the correct status.
         do {
-            size_t new_pos = pos;
-            status = process_bytes(buffer + pos, length + pos, &new_pos);
-            if (status != OK) {
-                break;
+            size_t old_length = buffer.length;
+            if ((status = process_bytes(buffer)) != OK) {
+                return status;
             }
-            if (new_pos <= pos) {
+            if (old_length <= buffer.length) {
                 // This is a violation of the specs of `process_bytes`.
                 FIBRE_LOG(E) << "no progress in loop";
-                break;
+                return ERROR;
             }
-            pos = new_pos;
-        } while (length > pos);
+        } while (buffer.length);
 
+        return OK;
+    }
+
+    status_t process_bytes_(cbufptr_t buffer, size_t* processed_bytes) {
+        size_t old_length = buffer.length;
+        status_t status = process_bytes(buffer);
         if (processed_bytes)
-            (*processed_bytes) += pos;
-
+            (*processed_bytes) += old_length - buffer.length;
         return status;
     }
 
@@ -387,14 +427,12 @@ public:
         buffer_(buffer),
         buffer_length_(length) {}
 
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
-        size_t chunk = std::min(length, buffer_length_);
+    status_t process_bytes(cbufptr_t& buffer) final {
+        size_t chunk = std::min(buffer.length, buffer_length_);
         //LOG_FIBRE("copy %08zx bytes from %08zx to %08zx\n", length, buffer, buffer_);
-        memcpy(buffer_, buffer, chunk);
+        memcpy(buffer_, buffer.ptr, chunk);
         buffer_length_ -= chunk;
         buffer_ += chunk;
-        if (processed_bytes)
-            *processed_bytes += chunk;
         return buffer_length_ ? OK : CLOSED;
     }
 
@@ -447,11 +485,10 @@ class NullStreamSink : public StreamSink {
 public:
     NullStreamSink(size_t skip) : skip_(skip) {}
 
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) override {
-        size_t chunk = std::min(length, skip_);
+    status_t process_bytes(cbufptr_t& buffer) override {
+        size_t chunk = std::min(buffer.length, skip_);
         skip_ -= chunk;
-        if (processed_bytes)
-            *processed_bytes += chunk;
+        buffer += chunk;
         return skip_ ? OK : CLOSED;
     }
 
@@ -481,19 +518,15 @@ public:
         //EXPECT_TYPE(TDecoder, StreamSink);
     }
 
-    status_t process_bytes(const uint8_t *buffer, size_t length, size_t* processed_bytes) final {
-        FIBRE_LOG(D) << "static stream chain: process " << length << " bytes";
-        while (length) {
+    status_t process_bytes(cbufptr_t& buffer) final {
+        FIBRE_LOG(D) << "static stream chain: process " << buffer.length << " bytes";
+        while (buffer.length) {
             StreamSink *stream = get_stream(current_stream_idx_);
             if (!stream)
                 return CLOSED;
             size_t chunk = 0;
-            status_t result = stream->process_bytes(buffer, length, &chunk);
+            status_t result = stream->process_bytes(buffer);
             //LOG_FIBRE("StaticStreamChain: processed %zu bytes", chunk);
-            buffer += chunk;
-            length -= chunk;
-            if (processed_bytes)
-                *processed_bytes += chunk;
             if (result != CLOSED)
                 return result;
             current_stream_idx_++;
@@ -573,15 +606,10 @@ public:
             current_stream_->~StreamSink();
     }
 
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
-        FIBRE_LOG(D) << "dynamic stream chain: process " << length << " bytes";
+    status_t process_bytes(cbufptr_t& buffer) final {
+        FIBRE_LOG(D) << "dynamic stream chain: process " << buffer.length << " bytes";
         while (current_stream_) {
-            size_t chunk = 0;
-            status_t result = current_stream_->process_bytes(buffer, length, &chunk);
-            buffer += chunk;
-            length -= chunk;
-            if (processed_bytes)
-                *processed_bytes += chunk;
+            status_t result = current_stream_->process_bytes(buffer);
             if (result != CLOSED)
                 return result;
             advance_state();

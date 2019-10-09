@@ -8,9 +8,9 @@ using namespace fibre;
 TestContext try_append(Defragmenter* defragmenter, const char * buf, size_t offset, size_t expected_processed_bytes) {
     TestContext context;
 
-    size_t processed_bytes = 0;
-    defragmenter->process_chunk((const uint8_t*)buf, offset, strlen(buf), &processed_bytes);
-    TEST_EQUAL(processed_bytes, expected_processed_bytes);
+    cbufptr_t buffer = {(const uint8_t*)buf, strlen(buf)};
+    defragmenter->process_chunk(buffer, offset);
+    TEST_EQUAL((size_t)(buffer.ptr - (const uint8_t*)buf), expected_processed_bytes);
 
     return context;
 }
