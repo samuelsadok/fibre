@@ -241,7 +241,7 @@ function make_gcc_compiler(command, builddir, default_flags, gen_su_file)
     end
 end
 
-function make_gcc_linker(ld_command, size_command, objcopy_command, builddir)
+function make_gcc_linker(ld_command, size_command, objcopy_command, builddir, main_extension)
     if not run_now(ld_command..' --version') then
         return nil -- compiler not found
     end
@@ -255,13 +255,13 @@ function make_gcc_linker(ld_command, size_command, objcopy_command, builddir)
                     tostring(linker_flags)..' '..
                     '-Wl,-Map=%O.map'..
                     ' -o %o',
-            outputs={output_file..'.elf', extra_outputs={output_file..'.map'}}
+            outputs={output_file..main_extension, extra_outputs={output_file..'.map'}}
         }
         -- display the size
-        tup.frule{inputs={output_file..'.elf'}, command=size_command..' %f'}
+        tup.frule{inputs={output_file..main_extension}, command=size_command..' %f'}
         -- create *.hex and *.bin output formats
-        tup.frule{inputs={output_file..'.elf'}, command=objcopy_command..' -O ihex %f %o', outputs={output_file..'.hex'}}
-        tup.frule{inputs={output_file..'.elf'}, command=objcopy_command..' -O binary -S %f %o', outputs={output_file..'.bin'}}
+        tup.frule{inputs={output_file..main_extension}, command=objcopy_command..' -O ihex %f %o', outputs={output_file..'.hex'}}
+        tup.frule{inputs={output_file..main_extension}, command=objcopy_command..' -O binary -S %f %o', outputs={output_file..'.bin'}}
     end
 end
 
@@ -277,11 +277,18 @@ function make_platform(input)
         error("invalid platform specifier")
     end
 
+    if (platform.prefix == 'i686-w64-mingw32-' or platform.prefix == 'x86_64-w64-mingw32-') then
+        platform_linker_flags = ' -static-libgcc -static-libstdc++ -static'
+        platform.main_extension = '.exe'
+    else
+        platform_linker_flags = ''
+        platform.main_extension = '.elf'
+    end
 
     platform.c_compiler = make_gcc_compiler(platform.prefix..'gcc -std=c99 -g -O3', builddir, {}, true)
     platform.cpp_compiler = make_gcc_compiler(platform.prefix..'g++ -std=c++11 -g -O3', builddir, {}, true)
     platform.asm_compiler = make_gcc_compiler(platform.prefix..'gcc -x assembler-with-cpp', builddir, {}, false)
-    platform.linker = make_gcc_linker(platform.prefix..'g++ -g -O3', platform.prefix..'size', platform.prefix..'objcopy', builddir)
+    platform.linker = make_gcc_linker(platform.prefix..'g++ -g -O3'..platform_linker_flags, platform.prefix..'size', platform.prefix..'objcopy', builddir, platform.main_extension)
 
     if run_now(platform.prefix..'pkg-config --version') then
         platform.pkg_config_path = platform.prefix..'pkg-config'

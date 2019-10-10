@@ -57,7 +57,7 @@ potential_platforms = {
     '',
     --'arm-none-eabi', std::mutex not supported
     --'arm-linux-gnueabi', -- compiler not installed
-    --'arm-linux-gnueabihf', -- Raspberry Pi (armv7l) (static assert fails)
+    --'arm-linux-gnueabihf', -- Raspberry Pi (armv7l)
     --'mipsel-linux-gnu', -- MIPS (missing the STL on my installation, std::tuple not supported)
     --'avr', -- Atmel/Microchip AVR (std::vector not supported)
     --'i686-w64-mingw32', -- Windows 32bit (eventfd not found)
