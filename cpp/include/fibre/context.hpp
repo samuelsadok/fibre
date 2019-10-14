@@ -15,16 +15,31 @@ DEFINE_LOG_TOPIC(CONTEXT);
 namespace fibre {
 
 template<typename T>
-struct default_decoder;
+struct default_codec;
 
 template<typename T>
-using default_decoder_t = typename default_decoder<T>::type;
+using default_decoder_t = typename default_codec<T>::dec_type;
+
+template<typename T>
+using default_encoder_t = typename default_codec<T>::enc_type;
 
 template<>
-struct default_decoder<unsigned int> { using type = VarintDecoder<unsigned int>; };
+struct default_codec<unsigned int> {
+    using dec_type = VarintDecoder<unsigned int>;
+    using enc_type = VarintEncoder<unsigned int>;
+};
 
 template<size_t MAX_SIZE>
-struct default_decoder<std::tuple<std::array<char, MAX_SIZE>, size_t>> { using type = UTF8Decoder<char, MAX_SIZE>; };
+struct default_codec<std::tuple<std::array<char, MAX_SIZE>, size_t>> {
+    using dec_type = UTF8Decoder<std::tuple<std::array<char, MAX_SIZE>, size_t>>;
+    using enc_type = UTF8Encoder<std::tuple<std::array<char, MAX_SIZE>, size_t>>;
+};
+
+template<char... CHARS>
+struct default_codec<sstring<CHARS...>> {
+    //using dec_type = UTF8Decoder<sstring<CHARS...>>;
+    using enc_type = UTF8Encoder<sstring<CHARS...>>;
+};
 
 
 struct Context {
@@ -44,6 +59,23 @@ Decoder<T>* alloc_decoder(Context* ctx) {
 
 template<typename T>
 void dealloc_decoder(Decoder<T>* decoder) {
+    delete decoder;
+}
+
+
+/**
+ * @brief Encodes T based on the context it is executed on.
+ * 
+ * Each supported type has a default encoder but there are ways to change the
+ * encoder of a type for a particular context.
+ */
+template<typename T>
+Encoder<T>* alloc_encoder(Context* ctx) {
+    return new default_encoder_t<T>; // TODO: remove dynamic allocation
+}
+
+template<typename T>
+void dealloc_encoder(Decoder<T>* decoder) {
     delete decoder;
 }
 

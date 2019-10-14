@@ -651,7 +651,7 @@ template<
     typename TFunc,
     typename TInArgNames,
     typename TInArgTypes>
-class InputOnlyLocalEndpoint : public LocalEndpoint {
+class SimplexLocalFuncEndpoint : public LocalEndpoint {
 private:
     using TTrueInArgTypes = tuple_cat_t<std::tuple<Context*>, TInArgTypes>;
     using DecoderType = CallFunctionWhenClosed<
@@ -660,7 +660,7 @@ private:
     >;
 
 public:
-    InputOnlyLocalEndpoint(TFunc func, TInArgNames in_arg_names)
+    SimplexLocalFuncEndpoint(TFunc func, TInArgNames in_arg_names)
         : func_(func), in_arg_names_(in_arg_names) {}
 
     static_assert(std::is_base_of<typename CallableWithTuple<void, TTrueInArgTypes>::type, TFunc>::value,
@@ -669,7 +669,7 @@ public:
     StreamSink* open(Context* ctx) final {
         FIBRE_LOG(D) << "open endpoint " << this;
         DecoderType* decoder = new DecoderType{
-            {in_arg_names_, TInArgTypes{} /* TODO: support default args */ },
+            {ctx, in_arg_names_, TInArgTypes{} /* TODO: support default args */ },
             func_.bind(ctx)
         }; // TODO: remove dynamic allocation
         return decoder;
@@ -710,13 +710,13 @@ template<
     typename TInArgTypes,
     typename TOutArgNames,
     typename TOutArgTypes>
-class SimpleFunctionLocalEndpoint : public LocalEndpoint {
+class DuplexLocalFuncEndpoint : public LocalEndpoint {
 private:
     using DecoderType = VerboseNamedTupleDecoderV1<TInArgNames, TInArgTypes>;
     //using EncoderType = Encoder<NamedTuple<TOutArgNames, TOutArgTypes>>;
 
 public:
-    SimpleFunctionLocalEndpoint(TFunc func, TInArgNames in_arg_names, TOutArgTypes out_arg_names)
+    DuplexLocalFuncEndpoint(TFunc func, TInArgNames in_arg_names, TOutArgTypes out_arg_names)
         : func_(func), in_arg_names_(in_arg_names), out_arg_names_(out_arg_names) {}
 
     static_assert(std::is_base_of<typename CallableWithTuple<TOutArgTypes, TInArgTypes>::type, TFunc>::value,
@@ -749,6 +749,28 @@ private:
     TFunc func_;
     TInArgNames in_arg_names_;
     TOutArgNames out_arg_names_;
+};
+
+template<
+    typename TFunc,
+    typename TInArgNames,
+    typename TInArgTypes>
+class SimplexRemoteFuncEndpoint {
+private:
+    using EncoderType = VerboseNamedTupleEncoderV1<TInArgNames, TInArgTypes>;
+
+public:
+    SimplexRemoteFuncEndpoint(TInArgNames in_arg_names)
+        : in_arg_names_(in_arg_names) {}
+    
+    StreamSource* invoke(Context* ctx, TInArgTypes* args) {
+        EncoderType* encoder = new EncoderType{ctx, in_arg_names_}; // TODO: fix dynamic allocation
+        encoder->set(args);
+        return encoder;
+    }
+
+private:
+    TInArgNames in_arg_names_;
 };
 
 

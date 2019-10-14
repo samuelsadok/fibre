@@ -308,8 +308,8 @@ public:
 };
 
 /**
- * @brief Behaves like a stream source, but additionally grants access to the
- * internal buffer of the stream source.
+ * @brief Behaves like a StreamSource, but additionally grants access to the
+ * internal buffer of the StreamSource.
  * 
  * If feasible, an implementer should prefer this interface over the StreamSource
  * interface as it can reduce copy operations.
@@ -317,18 +317,13 @@ public:
 class OpenStreamSource : public StreamSource {
 public:
     /**
-     * @brief Shall return a pointer into the internal buffer.
+     * @brief Shall return a readable range of the internal buffer.
      * 
-     * @param buf: The pointer being pointed to by this pointer shall be set to
-     *        to the address where the unconsumed data starts.
-     *        If the function returns anything other than success the value
-     *        shall not be modified.
-     *        If this output is not needed, the pointer can be NULL.
-     * @param length: The variable pointed to by this pointer shall be set to
-     *        the length of consecutive unconsumed data available at *buf. This
-     *        may be less than the number of available bytes, for instance if
-     *        the internal buffer is segmented. However the returned length
-     *        shall not be 0 unless there is currently no data available.
+     * @param buf: The variable being pointed to by this pointer shall be set to
+     *        to the address and length of the next consecutive chunk of
+     *        unconsumed data.
+     *        The caller can read from the memory area indicated by this output
+     *        variable and then consume the data by calling consume().
      *        If the function returns anything other than success the value
      *        shall not be modified.
      *        If this output is not needed, the pointer can be NULL.
@@ -336,8 +331,9 @@ public:
      * @returns:
      *  OK: The request could be handled or partially handled.
      *  ERROR: The request could not be handled.
+     * TODO: update retvals based on StreamSource spec
      */
-    virtual status_t get_buffer(const uint8_t** buf, size_t* length) = 0;
+    virtual status_t get_buffer(cbufptr_t* buf) = 0;
 
     /**
      * @brief Shall advance the stream by the specified number of bytes.
@@ -352,18 +348,73 @@ public:
     virtual status_t consume(size_t length) = 0;
 
     status_t get_bytes(bufptr_t& buffer) final {
-        const uint8_t* buf = nullptr;
-        size_t internal_length = buffer.length;
-        if (get_buffer(&buf, &internal_length) != OK) {
+        cbufptr_t internal_range = {nullptr, buffer.length};
+        if (get_buffer(&internal_range) != OK) {
             return ERROR;
         }
-        if (internal_length > buffer.length) {
+        if (internal_range.length > buffer.length) {
+            // TODO: this is not a bug according to the StreamSource spec
             FIBRE_LOG(E) << "got larger buffer than requested";
-            internal_length = buffer.length;
+            internal_range.length = buffer.length;
         }
-        memcpy(buffer.ptr, buf, internal_length);
-        consume(internal_length);
-        buffer += internal_length;
+        memcpy(buffer.ptr, internal_range.ptr, internal_range.length);
+        consume(internal_range.length);
+        buffer += internal_range.length;
+        return OK;
+    }
+};
+
+/**
+ * @brief Behaves like a StreamSink, but additionally grants access to the
+ * internal buffer of the StreamSink.
+ * 
+ * If feasible, an implementer should prefer this interface over the StreamSink
+ * interface as it can reduce copy operations.
+ */
+class OpenStreamSink : public StreamSink {
+    /**
+     * @brief Shall return a writable range of the internal buffer.
+     * 
+     * @param buf: The variable being pointed to by this pointer shall be set to
+     *        to the address and length of the next consecutive chunk of
+     *        uninitialized buffer space.
+     *        The caller can write to the memory area indicated by this output
+     *        variable and then commit the data by calling commit().
+     *        If the function returns anything other than success the value
+     *        shall not be modified.
+     *        If this output is not needed, the pointer can be NULL.
+     * 
+     * @returns:
+     *  OK: The request could be handled or partially handled.
+     *  ERROR: The request could not be handled.
+     * TODO: update retvals based on StreamSink spec
+     */
+    virtual status_t get_buffer(bufptr_t* buf) = 0;
+
+    /**
+     * @brief Shall advance the stream by the specified number of bytes.
+     * @param length: The number of bytes by which to advance the stream.
+     * TODO: specify what happens if this is more than available or more than a chunk.
+     * 
+     * @returns:
+     *  OK: The stream was advanced successfully.
+     *  CLOSED: The request succeeded and the stream is now permanently closed.
+     *  ERROR: The request could not be handled.
+     */
+    virtual status_t commit(size_t length) = 0;
+
+    status_t process_bytes(cbufptr_t& buffer) final {
+        bufptr_t internal_range = {nullptr, buffer.length};
+        if (get_buffer(&internal_range) != OK) {
+            return ERROR;
+        }
+        if (internal_range.length > buffer.length) {
+            FIBRE_LOG(E) << "got larger buffer than requested";
+            internal_range.length = buffer.length;
+        }
+        memcpy(internal_range.ptr, buffer.ptr, internal_range.length);
+        commit(internal_range.length);
+        buffer += internal_range.length;
         return OK;
     }
 };
@@ -485,11 +536,11 @@ public:
         buffer_(buffer),
         length_(length) {}
 
-    status_t get_buffer(const uint8_t** buf, size_t* length) override {
-        if (buf)
-            *buf = buffer_;
-        if (length)
-            *length = length_;
+    status_t get_buffer(cbufptr_t* buf) override {
+        if (buf) {
+            buf->ptr = buffer_;
+            buf->length = length_;
+        }
         return OK;
     }
 

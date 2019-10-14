@@ -33,8 +33,21 @@ public:
     virtual void process_chunk(cbufptr_t& buffer, size_t offset) = 0;
 };
 
+class Fragmenter {
+public:
+    virtual void get_chunk(cbufptr_t& buffer, size_t* offset) = 0;
+
+    /**
+     * @brief Marks the given range as acknowledged, meaning that the data will
+     * be discarded.
+     * 
+     * If the stream sink was previously full, this might clear up new space.
+     */
+    virtual void acknowledge_chunk(size_t offset, size_t length) = 0;
+};
+
 /**
- * @brief Can be fed chunks of bytes in a random order.
+ * @brief Implements a very simple defragmenter with a fixed size internal buffer.
  */
 template<size_t I>
 class FixedBufferDefragmenter : public Defragmenter, public OpenStreamSource {
@@ -77,11 +90,11 @@ public:
         buffer += buffer.length;
     }
 
-    status_t get_buffer(const uint8_t** buf, size_t* length) final {
-        if (buf)
-            *buf = buf_ + (read_ptr_ % I);
-        if (length)
-            *length = count_valid_table(read_ptr_ % I, std::min(*length, I - (read_ptr_ % I)));
+    status_t get_buffer(cbufptr_t* buf) final {
+        if (buf) {
+            buf->ptr = buf_ + (read_ptr_ % I);
+            buf->length = count_valid_table(1, read_ptr_ % I, std::min(buf->length, I - (read_ptr_ % I)));
+        }
         return OK;
     }
 
@@ -110,10 +123,10 @@ private:
     }
 
     /** @brief Counts how many bits consecutive bits in valid_table_ are 1, starting at offset */
-    size_t count_valid_table(size_t offset, size_t length) {
+    size_t count_valid_table(unsigned int expected_val, size_t offset, size_t length) {
         FIBRE_LOG(D) << "counting valid table from " << offset << ", length " << length;
         for (size_t bit = offset; bit < offset + length; ++bit) {
-            if (!(valid_table_[bit / bits_per_int] >> (bit % bits_per_int))) {
+            if (((valid_table_[bit / bits_per_int] >> (bit % bits_per_int)) & 1) != expected_val) {
                 FIBRE_LOG(D) << "invalid at " << bit;
                 return bit - offset;
             }
@@ -127,6 +140,112 @@ private:
     size_t read_ptr_ = 0;
 };
 
+/**
+ * @brief Implements a very simple fragmenter with a fixed size internal buffer.
+ * 
+ * This fragmenter always emits the chunk which represents the oldest data that
+ * wasn't acknowledged yet.
+ */
+template<size_t I>
+class FixedBufferFragmenter : public Fragmenter, public OpenStreamSink {
+public:
+    void get_chunk(cbufptr_t& buffer, size_t* offset) final {
+        size_t read_ptr = write_ptr_ - I + count_fresh_table(0, write_ptr_ % I, I - (write_ptr_ % I));
+        if ((read_ptr % I) == 0) {
+            read_ptr += count_fresh_table(0, 0, write_ptr_ - read_ptr);
+        }
+        
+        buffer = {
+            .ptr = &buf_[read_ptr % I],
+            .length = count_fresh_table(1, read_ptr % I, std::min(buffer.length, I - (read_ptr % I))) % I
+        };
+        if (offset)
+            *offset = read_ptr;
+    }
+
+    void acknowledge_chunk(size_t offset, size_t length) final {
+        // prune end of chunk
+        if (offset + length > write_ptr_) {
+            size_t diff = offset + length - write_ptr_;
+            FIBRE_LOG(E) << "received ack for future bytes";
+            if (diff >= length) {
+                return; // the ack starts so far into the future that we can't use any of it
+            }
+            length -= diff;
+        }
+
+        // prune start of chunk
+        if (offset + I < write_ptr_) {
+            size_t diff = write_ptr_ - (offset + I);
+            if (diff >= length) {
+                return; // everything in this chunk was already acknowledged before
+            }
+            FIBRE_LOG(D) << "received redundant ack for " << diff << " bytes";
+            offset += diff;
+            length -= diff;
+        }
+
+        FIBRE_LOG(D) << "received ack for " << length << " bytes";
+
+        size_t dst_offset = (offset % I);
+        
+        if (length > I - dst_offset) {
+            clear_fresh_table(dst_offset, I - dst_offset);
+            length -= (I - dst_offset);
+            dst_offset = 0;
+        }
+        clear_fresh_table(dst_offset, length);
+    }
+
+    status_t get_buffer(bufptr_t* buf) final {
+        if (buf) {
+            buf->ptr = buf_ + (write_ptr_ % I);
+            buf->length = count_fresh_table(0, write_ptr_ % I, std::min(buf->length, I - (write_ptr_ % I)));
+        }
+        return OK;
+    }
+
+    status_t commit(size_t length) final {
+        FIBRE_LOG(D) << "commit " << length << " bytes";
+        set_fresh_table(write_ptr_ % I, length);
+        write_ptr_ += length;
+        return OK;
+    }
+
+private:
+    static constexpr size_t bits_per_int = sizeof(unsigned int) * CHAR_BIT;
+
+    /** @brief Flips a consecutive chunk of bits in fresh_table_ to 1 */
+    void set_fresh_table(size_t offset, size_t length) {
+        for (size_t bit = offset; bit < offset + length; ++bit) {
+            fresh_table_[bit / bits_per_int] |= ((unsigned int)1 << (bit % bits_per_int));
+        }
+    }
+
+    /** @brief Flips a consecutive chunk of bits in fresh_table_ to 0 */
+    void clear_fresh_table(size_t offset, size_t length) {
+        for (size_t bit = offset; bit < offset + length; ++bit) {
+            fresh_table_[bit / bits_per_int] &= ~((unsigned int)1 << (bit % bits_per_int));
+        }
+    }
+
+    /** @brief Counts how many bits consecutive bits in fresh_table_ are 1, starting at offset */
+    size_t count_fresh_table(unsigned int expected_val, size_t offset, size_t length) {
+        FIBRE_LOG(D) << "counting fresh table from " << offset << ", length " << length;
+        for (size_t bit = offset; bit < offset + length; ++bit) {
+            if (((fresh_table_[bit / bits_per_int] >> (bit % bits_per_int)) & 1) != expected_val) {
+                FIBRE_LOG(D) << "non-match at " << bit;
+                return bit - offset;
+            }
+        }
+        FIBRE_LOG(D) << "all " << length << " fresh";
+        return length;
+    }
+
+    unsigned int fresh_table_[(I + bits_per_int - 1) / bits_per_int] = {0}; // marks which bytes are fresh (valid and not yet acknowledged)
+    uint8_t buf_[I];
+    size_t write_ptr_ = 0;
+};
 
 
 

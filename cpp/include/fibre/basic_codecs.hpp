@@ -11,6 +11,8 @@ DEFINE_LOG_TOPIC(BASIC_CODECS);
 
 namespace fibre {
 
+/* Integers ------------------------------------------------------------------*/
+
 /**
  * @brief Decodes a varint.
  * TODO: don't fail on overflow if desired
@@ -150,12 +152,13 @@ private:
     size_t pos_ = SIZE_MAX;
 };
 
+/* Strings -------------------------------------------------------------------*/
+
 /**
  * @brief Decodes a UTF-8 encoded string into a local representation of the
  * string.
  * 
- * The characters will be saved into a fixed size array of a given data type,
- * along with a variable that indicates the length of the string.
+ * Implementations for various local string types exist.
  * 
  * Characters that are too large for type T will be substituted with either
  * 0xFFFD if T is at least 16 bits or 0x3f ('?') otherwise. TODO: this is not fully implemented
@@ -163,8 +166,18 @@ private:
  * TODO: define error handling: should we store an invalid character and proceed or should we cancel?
  * given that the length becomes undefined then probably we should fail.
  */
+template<typename TStr>
+class UTF8Decoder;
+
+/**
+ * @brief Decodes a UTF-8 encoded string into a local representation of the
+ * string.
+ * 
+ * The characters will be saved into a fixed size array of a given data type,
+ * along with a variable that indicates the length of the string.
+ */
 template<typename T, size_t MAX_SIZE>
-class UTF8Decoder : public Decoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> {
+class UTF8Decoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> : public Decoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> {
 public:
     static constexpr T replacement_char = sizeof(T) * CHAR_BIT >= 16 ? 0xfffd : 0x3f;
 
@@ -230,21 +243,55 @@ private:
     std::tuple<std::array<T, MAX_SIZE>, size_t> value_;
 };
 
+template<char... CHARS>
+class UTF8Decoder<sstring<CHARS...>> : public Decoder<sstring<CHARS...>> {
+public:
+    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
+        StreamSink::status_t status;
+        if ((status = impl_.process_bytes(buffer)) != StreamSink::CLOSED) {
+            return status;
+        }
+        return get() ? StreamSink::CLOSED : StreamSink::ERROR;
+    }
+
+    sstring<CHARS...>* get() final {
+        auto received_value = impl_.get();
+        if (received_value) {
+            bool matches = (std::get<1>(*received_value) == sizeof...(CHARS))
+                    && (std::get<0>(*received_value) == value_.as_array());
+            return matches ? &value_ : nullptr;
+        } else {
+            return nullptr;
+        }
+    }
+
+private:
+    sstring<CHARS...> value_{};
+    UTF8Decoder<std::tuple<std::array<char, sizeof...(CHARS)>, size_t>> impl_;
+};
+
 /**
  * @brief Encodes a local representation of a string using the UTF-8 scheme.
  * 
- * The characters are taken from a fixed size array of a given data type,
- * along with a variable that indicates the length of the string.
+ * Implementations for various local string types exist.
  * 
  * Characters that generate a sequence longer than 4 bytes will be substituted
  * with the 
  * 0xFFFD if T is at least 16 bits or 0x3f ('?') otherwise. TODO: this is not fully implemented
  * 
- * TODO: define error handling: should we store an invalid character and proceed or should we cancel?
- * given that the length becomes undefined then probably we should fail.
+ * TODO: define error handling: should we emit an invalid character and proceed or should we cancel?
+ */
+template<typename TStr>
+class UTF8Encoder;
+
+/**
+ * @brief Encodes a local representation of a string using the UTF-8 scheme.
+ * 
+ * The characters are taken from a fixed size array of a given data type,
+ * along with a variable that indicates the length of the string.
  */
 template<typename T, size_t MAX_SIZE>
-class UTF8Encoder : public Encoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> {
+class UTF8Encoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> : public Encoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> {
 public:
     static constexpr T replacement_char = sizeof(T) * CHAR_BIT >= 16 ? 0xfffd : 0x3f;
 
@@ -309,6 +356,22 @@ private:
     uint8_t tmp_buf_[4]; // max 4 bytes per sequence
     size_t tmp_buf_len_ = 0;
     size_t sent_length_ = 0;
+};
+
+template<char... CHARS>
+class UTF8Encoder<sstring<CHARS...>> : public Encoder<sstring<CHARS...>> {
+public:
+    void set(sstring<CHARS...>* val) final {
+        impl_.set(val ? &value_ : nullptr);
+    }
+
+    StreamSource::status_t get_bytes(bufptr_t& buffer) final {
+        return impl_.get_bytes(buffer);
+    }
+
+private:
+    std::tuple<std::array<char, sizeof...(CHARS)>, size_t> value_ = {{CHARS...}, sizeof...(CHARS)};
+    UTF8Encoder<std::tuple<std::array<char, sizeof...(CHARS)>, size_t>> impl_;
 };
 
 }

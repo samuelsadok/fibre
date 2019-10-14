@@ -109,16 +109,6 @@ TestContext encoder_test_bytewise(TEncoder encoder_prototype, const uint8_t (&en
     return context;
 }
 
-template<typename TDecoder, typename TVal>
-TestContext codec_test(TDecoder decoder_prototype, const uint8_t (&encoded)[], size_t length, TVal decoded) {
-    TestContext context;
-
-    TEST_ADD(decoder_test_bytewise<TDecoder>(decoder_prototype, encoded, length, decoded));
-    TEST_ADD(decoder_test_chunkwise<TDecoder>(decoder_prototype, encoded, length, decoded));
-    
-    return context;
-}
-
 TestContext varint_codec_test(const uint8_t (&encoded)[], size_t length, uint32_t decoded) {
     TestContext context;
     TEST_ADD(decoder_test_bytewise(VarintDecoder<uint32_t>(), encoded, length, decoded));
@@ -143,18 +133,12 @@ TestContext fixedint_be_codec_test(const uint8_t (&encoded)[], size_t length, ui
     return context;
 }
 
-TestContext utf8_codec_test(const uint8_t (&encoded)[], size_t length, std::string decoded) {
+template<typename TStr>
+TestContext utf8_codec_test(const uint8_t (&encoded)[], size_t length, TStr decoded) {
     TestContext context;
-
-    constexpr size_t max_size = 128;
-    std::tuple<std::array<char, max_size>, size_t> decoded2;
-    memcpy(std::get<0>(decoded2).data(), decoded.c_str(), std::min(max_size, decoded.size()));
-    std::get<1>(decoded2) = decoded.size();
-    codec_test<UTF8Decoder<char, max_size>>(UTF8Decoder<char, max_size>(), encoded, length, decoded2);
-
-    TEST_ADD(decoder_test_bytewise(UTF8Decoder<char, max_size>(), encoded, length, decoded2));
-    TEST_ADD(decoder_test_chunkwise(UTF8Decoder<char, max_size>(), encoded, length, decoded2));
-    TEST_ADD(encoder_test_bytewise(UTF8Encoder<char, max_size>(), encoded, length, decoded2));
+    TEST_ADD(decoder_test_bytewise(UTF8Decoder<TStr>(), encoded, length, decoded));
+    TEST_ADD(decoder_test_chunkwise(UTF8Decoder<TStr>(), encoded, length, decoded));
+    TEST_ADD(encoder_test_bytewise(UTF8Encoder<TStr>(), encoded, length, decoded));
     return context;
 }
 
@@ -180,15 +164,24 @@ int main(int argc, const char** argv) {
     TEST_ADD(fixedint_be_codec_test({0xFF, 0xFF, 0xFF, 0xFF}, 4, 0xFFFFFFFF));
     TEST_ADD(fixedint_be_codec_test({0xFF, 0xFF, 0xFF, 0xFF}, 4, 0xFFFFFFFF));
 
-    TEST_ADD(utf8_codec_test({0x03, 0x61, 0x62, 0x63}, 4, "abc"));
+    TEST_ADD(utf8_codec_test({0x03, 0x61, 0x62, 0x63}, 4,
+        std::tuple<std::array<char, 5>, size_t>{{'a', 'b', 'c'}, 3}));
+    TEST_ADD(utf8_codec_test({0x03, 0x61, 0x62, 0x63}, 4, MAKE_SSTRING("abc"){}));
     // TODO: test for more strings (especially multibyte chars)
 
     VerboseNamedTupleDecoderV1<
         std::tuple<MAKE_SSTRING("arg1"), MAKE_SSTRING("arg2")>,
-        std::tuple<uint32_t, uint32_t>> asdf{{}, {0, 0}};
+        std::tuple<uint32_t, uint32_t>> asdf{nullptr, {}, {0, 0}};
+    VerboseNamedTupleEncoderV1<
+        std::tuple<MAKE_SSTRING("arg1"), MAKE_SSTRING("arg2")>,
+        std::tuple<uint32_t, uint32_t>> asdf2{nullptr, {}};
         
-    TEST_ADD(codec_test<>(asdf, {0x04, 0x61, 0x72, 0x67, 0x31, 0x01, 0x04, 0x61, 0x72, 0x67, 0x32, 0x02}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
-    TEST_ADD(codec_test<>(asdf, {0x04, 0x61, 0x72, 0x67, 0x32, 0x02, 0x04, 0x61, 0x72, 0x67, 0x31, 0x01}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
+    TEST_ADD(decoder_test_bytewise(asdf, {0x04, 0x61, 0x72, 0x67, 0x31, 0x01, 0x04, 0x61, 0x72, 0x67, 0x32, 0x02}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
+    TEST_ADD(decoder_test_chunkwise(asdf, {0x04, 0x61, 0x72, 0x67, 0x31, 0x01, 0x04, 0x61, 0x72, 0x67, 0x32, 0x02}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
+    TEST_ADD(decoder_test_bytewise(asdf, {0x04, 0x61, 0x72, 0x67, 0x32, 0x02, 0x04, 0x61, 0x72, 0x67, 0x31, 0x01}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
+    TEST_ADD(decoder_test_chunkwise(asdf, {0x04, 0x61, 0x72, 0x67, 0x32, 0x02, 0x04, 0x61, 0x72, 0x67, 0x31, 0x01}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
+
+    TEST_ADD(encoder_test_bytewise(asdf2, {0x04, 0x61, 0x72, 0x67, 0x31, 0x01, 0x04, 0x61, 0x72, 0x67, 0x32, 0x02}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
     
     return context.summarize();
 }

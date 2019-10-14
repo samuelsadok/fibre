@@ -700,6 +700,12 @@ struct sstring {
     static constexpr const char chars[] = {CHARS..., 0};
     static constexpr const char* c_str() { return chars; }
     static constexpr size_t size() { return sizeof...(CHARS); }
+    static constexpr std::array<char, sizeof...(CHARS)> as_array() { return {CHARS...}; }
+
+    template<char ... OTHER_CHARS>
+    constexpr bool operator==(const sstring<OTHER_CHARS...> & other) {
+        return as_array() == other.as_array();
+    }
 };
 template<char ... CHARS>
 constexpr const char sstring<CHARS...>::chars[/*sizeof...(CHARS) + 1*/];
