@@ -13,12 +13,12 @@ DEFINE_LOG_TOPIC(STREAM);
 
 namespace fibre {
 
-
-struct cbufptr_t {
-    const uint8_t* ptr /*= nullptr*/; // TODO: uint8_t is not guaranteed to exist everywhere
+template<typename T>
+struct generic_bufptr_t {
+    T* ptr /*= nullptr*/;
     size_t length /*= 0*/;
 
-    cbufptr_t& operator+=(size_t num) {
+    generic_bufptr_t& operator+=(size_t num) {
         if (num > length) {
             FIBRE_LOG(E) << "buffer underflow";
             num = length;
@@ -28,26 +28,26 @@ struct cbufptr_t {
         return *this;
     }
 
-    cbufptr_t operator++(int) {
-        cbufptr_t result = *this;
+    generic_bufptr_t operator++(int) {
+        generic_bufptr_t result = *this;
         *this += 1;
         return result;
     }
 
-    const uint8_t& operator*() {
+    T& operator*() {
         return *ptr;
     }
 
-    cbufptr_t take(size_t num) {
+    generic_bufptr_t take(size_t num) {
         if (num > length) {
             FIBRE_LOG(E) << "buffer underflow";
             num = length;
         }
-        cbufptr_t result = {ptr, num};
+        generic_bufptr_t result = {ptr, num};
         return result;
     }
 
-    cbufptr_t skip(size_t num) {
+    generic_bufptr_t skip(size_t num) {
         if (num > length) {
             FIBRE_LOG(E) << "buffer underflow";
             num = length;
@@ -55,6 +55,9 @@ struct cbufptr_t {
         return {ptr + num, length - num};
     }
 };
+
+using cbufptr_t = generic_bufptr_t<const uint8_t>;
+using bufptr_t = generic_bufptr_t<uint8_t>;
 
 /**
  * @brief Represents a class that can process a continuous stream of bytes.
@@ -135,7 +138,7 @@ public:
      *                  function shall also return CLOSED, unless the stream is
      *                  reset in some way.
      * @retval ERROR    Something went wrong.
-     *                  *processed_bytes will still be incremented gracefully,
+     *                  `buffer` will still be advanced gracefully,
      *                  i.e. by at least zero and at most `length`.
      *                  Whether this error is permanent or temporary is
      *                  implementation defined.
@@ -265,13 +268,43 @@ public:
      *  ERROR: The request failed and the buffer and *generated_bytes were not
      *         modified. Whether the stream is subsequently closed or still open
      *         is undefined.
+     * 
+     * @retval OK       Some of the output buffer was filled successfully and
+     *                  the stream might potentially immediately generate more
+     *                  data after this.
+     *                  If `length` is non-zero, the stream MUST return a non-
+     *                  zero number of bytes. This is so that the caller can
+     *                  ensure progress.
+     * @retval BUSY     Zero or more of bytes were returned and the stream is
+     *                  now temporarily busy or empty, but not yet closed.
+     *                  How to "unclog" the stream or how to detect that the
+     *                  stream is readable again is implementation defined.
+     * @retval CLOSED   Zero or more bytes were generated successfully and the
+     *                  stream is now closed. Subsequent calls to this function
+     *                  shall also return CLOSED, unless the stream is reset in
+     *                  some way.
+     * @retval ERROR    Something went wrong.
+     *                  buffer will still be advanced gracefully,
+     *                  i.e. by at least zero and at most `length`.
+     *                  Whether this error is permanent or temporary is
+     *                  implementation defined.
+     *                  In any case, subsequent calls to this function must be
+     *                  handled gracefully.
      */
-    virtual status_t get_bytes(uint8_t* buffer, size_t length, size_t* generated_bytes) = 0;
+    virtual status_t get_bytes(bufptr_t& buffer) = 0;
 
     // @brief Returns the number of bytes that can still be written to the stream.
     // Shall return SIZE_MAX if the stream has unlimited lenght.
     // TODO: deprecate
     //virtual size_t get_free_space() = 0;
+
+    status_t get_bytes_(bufptr_t buffer, size_t* generated_bytes) {
+        size_t old_length = buffer.length;
+        status_t status = get_bytes(buffer);
+        if (generated_bytes)
+            (*generated_bytes) += old_length - buffer.length;
+        return status;
+    }
 };
 
 /**
@@ -318,20 +351,19 @@ public:
      */
     virtual status_t consume(size_t length) = 0;
 
-    status_t get_bytes(uint8_t* buffer, size_t length, size_t* generated_bytes) final {
+    status_t get_bytes(bufptr_t& buffer) final {
         const uint8_t* buf = nullptr;
-        size_t internal_length = length;
+        size_t internal_length = buffer.length;
         if (get_buffer(&buf, &internal_length) != OK) {
             return ERROR;
         }
-        if (internal_length > length) {
+        if (internal_length > buffer.length) {
             FIBRE_LOG(E) << "got larger buffer than requested";
-            internal_length = length;
+            internal_length = buffer.length;
         }
-        memcpy(buffer, buf, internal_length);
+        memcpy(buffer.ptr, buf, internal_length);
         consume(internal_length);
-        if (generated_bytes)
-            *generated_bytes += internal_length;
+        buffer += internal_length;
         return OK;
     }
 };

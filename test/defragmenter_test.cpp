@@ -21,7 +21,7 @@ TestContext try_get(StreamSource* defragmenter, const char * expected) {
     uint8_t buf[strlen(expected)];
     size_t size = 0;
 
-    TEST_EQUAL(defragmenter->get_bytes(buf, sizeof(buf), &size), StreamSource::OK);
+    TEST_EQUAL(defragmenter->get_bytes_({buf, sizeof(buf)}, &size), StreamSource::OK);
     TEST_EQUAL(size, sizeof(buf));
     
     std::string received_str{(char*)buf, sizeof(buf)};

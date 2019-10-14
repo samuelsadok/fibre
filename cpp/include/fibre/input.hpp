@@ -2,7 +2,7 @@
 #define __FIBRE_INPUT_HPP
 
 #include <fibre/stream.hpp>
-#include <fibre/decoders.hpp>
+#include <fibre/decoder.hpp>
 #include <fibre/uuid.hpp>
 #include <fibre/logging.hpp>
 #include <limits.h>

@@ -14,7 +14,7 @@
 #include <fibre/closure.hpp>
 #include <fibre/logging.hpp>
 #include <fibre/stream.hpp>
-#include <fibre/decoders.hpp>
+#include <fibre/decoder.hpp>
 #include <fibre/uuid.hpp>
 #include <fibre/context.hpp>
 #include <fibre/named_tuple.hpp>
@@ -112,8 +112,8 @@ public:
     }
 };
 
-template<typename... Ts>
-class Encoder;
+//template<typename... Ts>
+//class Encoder;
 
 template<typename... Ts>
 class VoidEncoder {
@@ -264,7 +264,7 @@ struct OutputMetadataPrototype {
 template<size_t INameLength, typename TArgs, bool BDiscard>
 struct OutputMetadata;
 
-template<size_t INameLength, typename... TArgs, bool BDiscard>
+/*template<size_t INameLength, typename... TArgs, bool BDiscard>
 struct OutputMetadata<INameLength, std::tuple<TArgs...>, BDiscard> {
     using TName =  sstring<INameLength>;
     TName name;
@@ -274,7 +274,7 @@ struct OutputMetadata<INameLength, std::tuple<TArgs...>, BDiscard> {
             Encoder<typename remove_ref_or_ptr<TArgs>::type...>
         >;
     using tuple_type = std::tuple<TArgs...>;
-};
+};*/
 
 template<size_t IInParams, size_t INameLengthPlus1>
 constexpr InputMetadataPrototype<(INameLengthPlus1-1), IInParams> make_input_metadata_prototype(const char (&name)[INameLengthPlus1]) {
@@ -612,6 +612,85 @@ struct CallableWithTuple<TOut, std::tuple<TIn...>> {
 };
 
 
+template<typename TDecoder, typename TFunc>
+class CallFunctionWhenClosed : public StreamSink {
+public:
+    CallFunctionWhenClosed(TDecoder decoder, TFunc func) 
+        : decoder_(decoder), func_(func) {}
+
+    status_t process_bytes(cbufptr_t& buffer) final {
+        status_t status = decoder_.process_bytes(buffer);
+        auto val = decoder_.get();
+        if (val) {
+            std::apply(func_, *val);
+        } else {
+            FIBRE_LOG(W) << "closed endpoint before it was finished";
+        }
+        return status;
+    }
+
+private:
+    TDecoder decoder_;
+    TFunc func_;
+};
+
+/**
+ * @brief Implements a local endpoint with the following characteristics:
+ * 
+ *  - Takes a list of named and typed arguments.
+ *  - Once all arguments have been received, a function is invoked with those
+ *    arguments.
+ *  - The function is executed on the same thread as the input is processed.
+ *    That means the function must not block on any RX stream and should not
+ *    take a significant amount of time to return.
+ *  - The function does not return any arguments. This allows the function to do
+ *    custom handling on how to respond, or if to respond at all.
+ * 
+ */
+template<
+    typename TFunc,
+    typename TInArgNames,
+    typename TInArgTypes>
+class InputOnlyLocalEndpoint : public LocalEndpoint {
+private:
+    using TTrueInArgTypes = tuple_cat_t<std::tuple<Context*>, TInArgTypes>;
+    using DecoderType = CallFunctionWhenClosed<
+        VerboseNamedTupleDecoderV1<TInArgNames, TInArgTypes>,
+        bind_result_t<TFunc, Context*>
+    >;
+
+public:
+    InputOnlyLocalEndpoint(TFunc func, TInArgNames in_arg_names)
+        : func_(func), in_arg_names_(in_arg_names) {}
+
+    static_assert(std::is_base_of<typename CallableWithTuple<void, TTrueInArgTypes>::type, TFunc>::value,
+        "TFunc must implement Callable with the same input types as given to this class and return void.");
+
+    StreamSink* open(Context* ctx) final {
+        FIBRE_LOG(D) << "open endpoint " << this;
+        DecoderType* decoder = new DecoderType{
+            {in_arg_names_, TInArgTypes{} /* TODO: support default args */ },
+            func_.bind(ctx)
+        }; // TODO: remove dynamic allocation
+        return decoder;
+    }
+
+    int close(StreamSink* stream_sink) final {
+        FIBRE_LOG(D) << "close endpoint " << this;
+        DecoderType* typed_stream_sink = dynamic_cast<DecoderType*>(stream_sink);
+        if (!typed_stream_sink) {
+            FIBRE_LOG(E) << "unexpected attempt to close endpoint";
+            return -1;
+        }
+        delete typed_stream_sink;
+        return 0;
+    }
+
+private:
+    TFunc func_;
+    TInArgNames in_arg_names_;
+};
+
 /**
  * @brief Implements a local endpoint with the following characteristics:
  * 
@@ -631,13 +710,13 @@ template<
     typename TInArgTypes,
     typename TOutArgNames,
     typename TOutArgTypes>
-class SimpleLocalEndpoint : public LocalEndpoint {
+class SimpleFunctionLocalEndpoint : public LocalEndpoint {
 private:
     using DecoderType = VerboseNamedTupleDecoderV1<TInArgNames, TInArgTypes>;
     //using EncoderType = Encoder<NamedTuple<TOutArgNames, TOutArgTypes>>;
 
 public:
-    SimpleLocalEndpoint(TFunc func, TInArgNames in_arg_names, TOutArgTypes out_arg_names)
+    SimpleFunctionLocalEndpoint(TFunc func, TInArgNames in_arg_names, TOutArgTypes out_arg_names)
         : func_(func), in_arg_names_(in_arg_names), out_arg_names_(out_arg_names) {}
 
     static_assert(std::is_base_of<typename CallableWithTuple<TOutArgTypes, TInArgTypes>::type, TFunc>::value,
@@ -647,7 +726,6 @@ public:
         FIBRE_LOG(D) << "open endpoint " << this;
         DecoderType* decoder = new DecoderType{in_arg_names_, TInArgTypes{} /* TODO: support default args */ }; // TODO: remove dynamic allocation
         return decoder;
-        //return nullptr; // TODO: alloc // alloc_decoder<NamedTuple<TInArgNames, TInArgTypes>>(ctx);
     }
 
     int close(StreamSink* stream_sink) final {
