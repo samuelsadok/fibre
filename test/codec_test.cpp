@@ -2,6 +2,7 @@
 
 #include <fibre/basic_codecs.hpp>
 #include <fibre/named_tuple.hpp>
+#include <fibre/endpoint_id_codec.hpp>
 #include <fibre/print_utils.hpp>
 #include "test_utils.hpp"
 
@@ -142,6 +143,14 @@ TestContext utf8_codec_test(const uint8_t (&encoded)[], size_t length, TStr deco
     return context;
 }
 
+TestContext uuid_codec_test(const uint8_t (&encoded)[], size_t length, Uuid decoded) {
+    TestContext context;
+    TEST_ADD(decoder_test_bytewise(BigEndianUuidDecoder(), encoded, length, decoded));
+    TEST_ADD(decoder_test_chunkwise(BigEndianUuidDecoder(), encoded, length, decoded));
+    TEST_ADD(encoder_test_bytewise(BigEndianUuidEncoder(), encoded, length, decoded));
+    return context;
+}
+
 
 int main(int argc, const char** argv) {
     TestContext context;
@@ -183,5 +192,16 @@ int main(int argc, const char** argv) {
 
     TEST_ADD(encoder_test_bytewise(asdf2, {0x04, 0x61, 0x72, 0x67, 0x31, 0x01, 0x04, 0x61, 0x72, 0x67, 0x32, 0x02}, 12, std::tuple<uint32_t, uint32_t>(1, 2)));
     
+
+    TEST_ADD(uuid_codec_test({
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a, 0x69, 0x78}, 16, "01234567-89ab-cdef-0f1e-2d3c4b5a6978"));
+    TEST_ADD(uuid_codec_test({
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 16, "00000000-0000-0000-0000-000000000000"));
+    TEST_ADD(uuid_codec_test({
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, 16, "ffffffff-ffff-ffff-ffff-ffffffffffff"));
+
     return context.summarize();
 }
