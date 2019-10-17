@@ -1,5 +1,5 @@
-#ifndef __FIBRE_DECODERS_HPP
-#define __FIBRE_DECODERS_HPP
+#ifndef __FIBRE_BASIC_CODECS_HPP
+#define __FIBRE_BASIC_CODECS_HPP
 
 #include "decoder.hpp"
 #include "encoder.hpp"
@@ -378,4 +378,4 @@ private:
 
 #undef current_log_topic
 
-#endif // __FIBRE_BASIC_CODECS
+#endif // __FIBRE_BASIC_CODECS_HPP

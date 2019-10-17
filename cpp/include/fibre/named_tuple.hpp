@@ -5,31 +5,7 @@
 #include "print_utils.hpp"
 #include <tuple>
 
-DEFINE_LOG_TOPIC(NAMED_TUPLE);
-#define current_log_topic LOG_TOPIC_NAMED_TUPLE
-
 namespace fibre {
-
-#if 0
-/**
- * @brief A named tuple is something in between a tuple and a dict.
- * 
- * Each element in the tuple has a unique name.
- */
-template<typename TNames, typename TTypes>
-class NamedTuple;
-
-template<typename ... TNames, typename ... TTypes>
-class NamedTuple<std::tuple<TNames...>, std::tuple<TTypes...>> : public std::tuple<TTypes...> {
-    static_assert(sizeof...(TNames) == sizeof...(TTypes), "number of names and types must be equal");
-
-public:
-    //using std::tuple<TTypes...>::tuple;
-    NamedTuple(const std::tuple<TTypes...>& tuple)
-        : std::tuple<TTypes...>(tuple) {}
-};
-#endif
-
 
 template<typename TNames, typename TTypes>
 struct VerboseNamedTupleDecoderV1;
@@ -37,7 +13,13 @@ template<typename TNames, typename TTypes>
 struct VerboseNamedTupleEncoderV1;
 
 }
+
 #include "context.hpp"
+
+
+DEFINE_LOG_TOPIC(NAMED_TUPLE);
+#define current_log_topic LOG_TOPIC_NAMED_TUPLE
+
 namespace fibre {
 
 /*

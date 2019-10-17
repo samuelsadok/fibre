@@ -14,6 +14,11 @@ int register_endpoint(Uuid uuid, LocalEndpoint* local_endpoint) {
     return 0;
 }
 
+LocalEndpoint* get_endpoint(Uuid uuid) {
+    auto it = local_endpoints.find(uuid);
+    return (it != local_endpoints.end()) ? it->second : nullptr;
+}
+
 int unregister_endpoint(Uuid uuid) {
     auto it = local_endpoints.find(uuid);
     if (it == local_endpoints.end()) {

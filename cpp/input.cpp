@@ -2,11 +2,126 @@
 #include <fibre/input.hpp>
 #include <fibre/logging.hpp>
 
-using namespace fibre;
-
 USE_LOG_TOPIC(INPUT);
 
-fragmented_calls_t fibre::fragmented_calls{};
+namespace fibre {
+
+// TODO: replace with fixed size data structure
+using fragmented_calls_t = std::unordered_map<call_id_t, incoming_call_t>;
+fragmented_calls_t fragmented_calls{};
+
+int start_or_get_call(Context* ctx, call_id_t call_id, incoming_call_t** call) {
+    incoming_call_t* dummy;
+    call = call ? call : &dummy;
+    incoming_call_t new_call = {.decoder = CallDecoder{ctx}};
+    auto it = fragmented_calls.emplace(call_id, new_call).first;
+    *call = &it->second;
+    return 0;
+}
+
+// TODO: error handling:
+// Should mark this call finished but not deallocate yet. If we deallocate
+// and get another fragment, the new fragment is indistinguishable from
+// a new call.
+int end_call(call_id_t call_id) {
+    FIBRE_LOG(D) << "end call " << call_id;
+    auto it = fragmented_calls.find(call_id);
+    if (it != fragmented_calls.end())
+        fragmented_calls.erase(it);
+    return 0;
+}
+
+int decode_fragment(Context* ctx, StreamSource* source) {
+    FIBRE_LOG(D) << "incoming fragment";
+    Decoder<call_id_t>* call_id_decoder = alloc_decoder<call_id_t>(ctx);
+    stream_copy_result_t status = stream_copy_all(call_id_decoder, source);
+    const call_id_t* call_id_ptr = call_id_decoder->get();
+    if ((status.dst_status != StreamSink::CLOSED) || !call_id_ptr) {
+        dealloc_decoder(call_id_decoder);
+        return -1;
+    }
+    call_id_t call_id = *call_id_ptr;
+    dealloc_decoder(call_id_decoder);
+    if (status.src_status != StreamSource::OK) {
+        return -1;
+    }
+
+    Decoder<size_t>* offset_decoder = alloc_decoder<size_t>(ctx);
+    status = stream_copy_all(offset_decoder, source);
+    const size_t* offset_ptr = offset_decoder->get();
+    if ((status.dst_status != StreamSink::CLOSED) || !offset_ptr) {
+        dealloc_decoder(offset_decoder);
+        return -1;
+    }
+    size_t offset = *offset_ptr;
+    dealloc_decoder(offset_decoder);
+    if (status.src_status != StreamSource::OK) {
+        return -1;
+    }
+
+    incoming_call_t* call;
+    start_or_get_call(ctx, call_id, &call);
+
+    FIBRE_LOG(D) << "incoming fragment on stream " << call_id << ", offset " << offset;
+
+    // TODO: should use bufferless copy here
+    uint8_t buf[1024];
+    bufptr_t bufptr = {.ptr = buf, .length = sizeof(buf)};
+    if (source->get_all_bytes(bufptr) != StreamSource::CLOSED) {
+        return -1;
+    }
+    FIBRE_LOG(D) << "got " << (sizeof(buf) - bufptr.length) << " bytes from the source";
+    cbufptr_t cbufptr = {.ptr = buf, .length = (sizeof(buf) - bufptr.length)};
+    call->fragment_sink.process_chunk(cbufptr, offset);
+    FIBRE_LOG(D) << "processed chunk";
+
+    stream_copy_result_t copy_result = stream_copy_all(&call->decoder, &call->fragment_sink);
+    if (copy_result.src_status == StreamSource::ERROR) {
+        FIBRE_LOG(E) << "defragmenter failed";
+        return -1;
+    }
+    if ((copy_result.dst_status == StreamSink::ERROR) || (copy_result.dst_status == StreamSink::CLOSED)) {
+        end_call(call_id);
+    }
+
+    return 0;
+}
+
+int encode_fragment(outgoing_call_t call, StreamSink* sink) {
+    Encoder<call_id_t>* call_id_encoder = alloc_encoder<call_id_t>(call.ctx);
+    call_id_encoder->set(&call.uuid);
+    stream_copy_result_t status = stream_copy_all(sink, call_id_encoder);
+    dealloc_encoder(call_id_encoder);
+    call_id_encoder = nullptr;
+    if ((status.src_status != StreamSource::CLOSED) || (status.dst_status != StreamSink::OK)) {
+        return -1;
+    }
+
+    stream_copy_all(&call.fragment_source, &call.encoder);
+
+    // TODO: should we send along the length of the chunk?
+    size_t offset;
+    cbufptr_t chunk = {.ptr = nullptr, .length = 1024}; // TODO: pass in max length based on output MTU
+    call.fragment_source.get_chunk(chunk, &offset);
+
+    FIBRE_LOG(D) << "encode fragment: stream " << call.uuid << ", chunk " << offset << " length " << chunk.length;
+
+    Encoder<size_t>* offset_encoder = alloc_encoder<size_t>(call.ctx);
+    offset_encoder->set(&offset);
+    status = stream_copy_all(sink, offset_encoder);
+    dealloc_encoder(offset_encoder);
+    offset_encoder = nullptr;
+    if ((status.src_status != StreamSource::CLOSED) || (status.dst_status != StreamSink::OK)) {
+        return -1;
+    }
+
+    FIBRE_LOG(D) << "add fragment content: " << chunk.length << " bytes";
+    sink->process_all_bytes(chunk); // TODO: error handling
+    FIBRE_LOG(D) << "added fragment content";
+    return 0;
+}
+
+}
 
 /*
 void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool packet_break) {

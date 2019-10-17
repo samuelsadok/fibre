@@ -8,6 +8,7 @@ function fibre_package(platform)
             --'fibre.cpp',
             'input.cpp',
             'local_endpoint.cpp',
+            'stream.cpp',
             --'output.cpp',
             --'remote_node.cpp',
             --'posix_tcp.cpp',

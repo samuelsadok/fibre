@@ -934,6 +934,7 @@ LocalFunctionEndpoint<TFunc, TMetadata> make_local_function_endpoint(TFunc&& fun
 
 extern std::unordered_map<Uuid, LocalEndpoint*> local_endpoints; // TODO: fix dynamic allocation
 int register_endpoint(Uuid uuid, LocalEndpoint* local_endpoint);
+LocalEndpoint* get_endpoint(Uuid uuid);
 int unregister_endpoint(Uuid uuid);
 
 }

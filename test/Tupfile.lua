@@ -12,7 +12,7 @@ packages = {
         include_dirs = {'../cpp/include'}
     }),
     make_exe_package({
-        sources = {'defragmenter_test.cpp', '../cpp/logging.cpp'},
+        sources = {'defragmenter_test.cpp', '../cpp/logging.cpp', '../cpp/stream.cpp'},
         include_dirs = {'../cpp/include'}
     }),
     make_exe_package({

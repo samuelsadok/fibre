@@ -155,9 +155,9 @@ public:
             if ((status = process_bytes(buffer)) != OK) {
                 return status;
             }
-            if (old_length <= buffer.length) {
+            if (buffer.length && (old_length <= buffer.length)) {
                 // This is a violation of the specs of `process_bytes`.
-                FIBRE_LOG(E) << "no progress in loop";
+                FIBRE_LOG(E) << "no progress in loop: old length " << old_length << ", new length " << buffer.length;
                 return ERROR;
             }
         } while (buffer.length);
@@ -293,6 +293,26 @@ public:
      */
     virtual status_t get_bytes(bufptr_t& buffer) = 0;
 
+    status_t get_all_bytes(bufptr_t& buffer) {
+        size_t pos = 0;
+        status_t status;
+        // Note that we call the get_bytes function even if `length` is zero.
+        // This is necessary to return the correct status.
+        do {
+            size_t old_length = buffer.length;
+            if ((status = get_bytes(buffer)) != OK) {
+                return status;
+            }
+            if (old_length <= buffer.length) {
+                // This is a violation of the specs of `get_bytes`.
+                FIBRE_LOG(E) << "no progress in loop: old length " << old_length << ", new length " << buffer.length;
+                return ERROR;
+            }
+        } while (buffer.length);
+
+        return OK;
+    }
+
     // @brief Returns the number of bytes that can still be written to the stream.
     // Shall return SIZE_MAX if the stream has unlimited lenght.
     // TODO: deprecate
@@ -358,9 +378,8 @@ public:
             internal_range.length = buffer.length;
         }
         memcpy(buffer.ptr, internal_range.ptr, internal_range.length);
-        consume(internal_range.length);
         buffer += internal_range.length;
-        return OK;
+        return consume(internal_range.length);
     }
 };
 
@@ -413,11 +432,31 @@ class OpenStreamSink : public StreamSink {
             internal_range.length = buffer.length;
         }
         memcpy(internal_range.ptr, buffer.ptr, internal_range.length);
-        commit(internal_range.length);
         buffer += internal_range.length;
-        return OK;
+        return commit(internal_range.length);
     }
 };
+
+struct stream_copy_result_t {
+    StreamSink::status_t dst_status;
+    StreamSource::status_t src_status;
+    //size_t copied_bytes = 0;
+};
+
+stream_copy_result_t stream_copy(StreamSink* dst, StreamSource* src);
+stream_copy_result_t stream_copy(StreamSink* dst, OpenStreamSource* src);
+
+template<typename TDst, typename TSrc>
+stream_copy_result_t stream_copy_all(TDst* dst, TSrc* src) {
+    static_assert(std::is_base_of<StreamSink, TDst>::value, "TDst must inherit from StreamSink");
+    static_assert(std::is_base_of<StreamSource, TSrc>::value, "TSrc must inherit from StreamSink");
+
+    stream_copy_result_t status;
+    do {
+        status = stream_copy(dst, src);
+    } while (status.src_status == StreamSource::OK && status.dst_status == StreamSink::OK);
+    return status;
+}
 
 
 ///** @brief Returns true if the given status indicates that the stream is
@@ -504,26 +543,36 @@ private:
  * fixed size memory buffer.
  * When the end of buffer is reached the stream closes.
  */
-class MemoryStreamSink : public StreamSink {
+class MemoryStreamSink : public OpenStreamSink {
 public:
     MemoryStreamSink(uint8_t *buffer, size_t length) :
         buffer_(buffer),
-        buffer_length_(length) {}
+        length_(length) {}
 
-    status_t process_bytes(cbufptr_t& buffer) final {
-        size_t chunk = std::min(buffer.length, buffer_length_);
-        //LOG_FIBRE("copy %08zx bytes from %08zx to %08zx\n", length, buffer, buffer_);
-        memcpy(buffer_, buffer.ptr, chunk);
-        buffer_length_ -= chunk;
-        buffer_ += chunk;
-        return buffer_length_ ? OK : CLOSED;
+    status_t get_buffer(bufptr_t* buf) final {
+        if (buf) {
+            buf->ptr = buffer_;
+            buf->length = std::min(buf->length, length_);
+        }
+        return OK;
     }
 
-    size_t get_min_non_blocking_bytes() const final { return buffer_length_; }
+    status_t commit(size_t length) final {
+        if (length > length_) {
+            return ERROR;
+        }
+        buffer_ += length;
+        length_ -= length;
+        return length_ ? OK : CLOSED;
+    }
+
+    size_t get_length() { return length_; }
+
+    size_t get_min_non_blocking_bytes() const final { return length_; }
 
 private:
     uint8_t * buffer_;
-    size_t buffer_length_;
+    size_t length_;
 };
 
 /**
@@ -536,20 +585,24 @@ public:
         buffer_(buffer),
         length_(length) {}
 
-    status_t get_buffer(cbufptr_t* buf) override {
+    status_t get_buffer(cbufptr_t* buf) final {
         if (buf) {
             buf->ptr = buffer_;
-            buf->length = length_;
+            buf->length = std::min(buf->length, length_);
         }
         return OK;
     }
 
-    status_t consume(size_t length) override {
-        length = std::min(length, length_);
+    status_t consume(size_t length) final {
+        if (length > length_) {
+            return ERROR;
+        }
         buffer_ += length;
         length_ -= length;
         return length_ ? OK : CLOSED;
     }
+
+    size_t get_length() { return length_; }
 
 private:
     const uint8_t * buffer_;

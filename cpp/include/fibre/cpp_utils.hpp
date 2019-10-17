@@ -1173,7 +1173,7 @@ public:
 template<typename T>
 std::ostream& operator<<(std::ostream& stream, const HexPrinter<T>& printer) {
     // TODO: specialize for char
-    return stream << (printer.prefix_ ? "0x" : "") << std::hex << std::setw(hex_digits<T>()) << std::setfill('0') << static_cast<uint64_t>(printer.val_);
+    return stream << (printer.prefix_ ? "0x" : "") << std::hex << std::setw(hex_digits<T>()) << std::setfill('0') << static_cast<uint64_t>(printer.val_) << std::dec;
 }
 
 template<typename T>

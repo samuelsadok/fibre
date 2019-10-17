@@ -9,6 +9,7 @@
 
 // need to include all default encoders
 #include "basic_codecs.hpp"
+#include "uuid_codecs.hpp"
 
 DEFINE_LOG_TOPIC(CONTEXT);
 
@@ -29,10 +30,22 @@ struct default_codec<unsigned int> {
     using enc_type = VarintEncoder<unsigned int>;
 };
 
+template<>
+struct default_codec<long unsigned int> {
+    using dec_type = VarintDecoder<long unsigned int>;
+    using enc_type = VarintEncoder<long unsigned int>;
+};
+
 template<size_t MAX_SIZE>
 struct default_codec<std::tuple<std::array<char, MAX_SIZE>, size_t>> {
     using dec_type = UTF8Decoder<std::tuple<std::array<char, MAX_SIZE>, size_t>>;
     using enc_type = UTF8Encoder<std::tuple<std::array<char, MAX_SIZE>, size_t>>;
+};
+
+template<>
+struct default_codec<Uuid> {
+    using dec_type = BigEndianUuidDecoder;
+    using enc_type = BigEndianUuidEncoder;
 };
 
 template<char... CHARS>
@@ -75,7 +88,7 @@ Encoder<T>* alloc_encoder(Context* ctx) {
 }
 
 template<typename T>
-void dealloc_encoder(Decoder<T>* decoder) {
+void dealloc_encoder(Encoder<T>* decoder) {
     delete decoder;
 }
 

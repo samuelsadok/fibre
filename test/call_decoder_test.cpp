@@ -1,9 +1,11 @@
 
 #include <fibre/local_function.hpp>
 #include <fibre/closure.hpp>
-//#include <fibre/input.hpp>
+#include <fibre/input.hpp>
 #include <fibre/uuid.hpp>
 #include "test_utils.hpp"
+
+#include <random>
 
 using namespace fibre;
 
@@ -24,6 +26,8 @@ void fn1(Context* ctx, uint32_t arg1) {
 int main(int argc, const char** argv) {
     TestContext context;
 
+    // Test SimplexLocalFuncEndpoint
+
     Context ctx;
     auto fn1_obj = make_closure(fn1);
     SimplexLocalFuncEndpoint<decltype(fn1_obj),
@@ -40,7 +44,9 @@ int main(int argc, const char** argv) {
 
     Uuid uuid{"b40a8aa3-d5ab-4453-bb4e-9bfbd7a59a9c"};
     TEST_ZERO(fibre::register_endpoint(uuid, &fn1_endpoint));
-    TEST_ZERO(fibre::unregister_endpoint(uuid));
+
+
+    // Test invoking a function via a memory buffer channel
 
     SimplexRemoteFuncEndpoint<void,
         std::tuple<MAKE_SSTRING("arg1")>,
@@ -49,15 +55,29 @@ int main(int argc, const char** argv) {
     std::tuple<uint32_t> args{123};
     auto* arg_encoder = fn1_remote_endpoint.invoke(&ctx, &args);
 
-    // prepare call
-    /*Encoder<Uuid>* uuid_encoder = alloc_encoder<Uuid>(&ctx);
-    StreamChain<Encoder<Uuid>, decltype(src2)> call_encoder{uuid_encoder, arg_encoder};
-    FixedLengthFragmenter<1024> frag{};*/
+    std::random_device rd;
+    std::uniform_int_distribution<uint8_t> dist;
+    uint8_t uuid_buffer[16] = { 0 };
+    for (size_t i = 0; i < sizeof(uuid_buffer); ++i)
+        uuid_buffer[i] = dist(rd);
+    
+    fibre::outgoing_call_t call = {
+        .uuid{uuid_buffer},
+        .ctx = nullptr,
+        .encoder = CallEncoder(nullptr, uuid, arg_encoder)
+    };
 
-    //fibre::dispatch(ctx.output_channels, frag);
+    uint8_t tmp_buf[128];
+    auto sink = MemoryStreamSink{tmp_buf, sizeof(tmp_buf)};
 
-    /*auto stream_source = FixedIntEncoder<uint32_t>();
-    fibre::dispatch(uuid, stream_source);*/
+    TEST_ZERO(encode_fragment(call, &sink));
+    std::cout << as_hex(tmp_buf);
+
+    auto source = MemoryStreamSource{tmp_buf, sizeof(tmp_buf) - sink.get_length()};
+    TEST_ZERO(decode_fragment(nullptr, &source));
+
+
+    TEST_ZERO(fibre::unregister_endpoint(uuid));
 
     return context.summarize();
 }

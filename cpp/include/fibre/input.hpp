@@ -3,8 +3,11 @@
 
 #include <fibre/stream.hpp>
 #include <fibre/decoder.hpp>
+#include <fibre/encoder.hpp>
+#include <fibre/context.hpp>
 #include <fibre/uuid.hpp>
 #include <fibre/logging.hpp>
+#include <fibre/local_function.hpp>
 #include <limits.h>
 
 DEFINE_LOG_TOPIC(INPUT);
@@ -102,7 +105,7 @@ public:
         FIBRE_LOG(D) << "consume " << length << " bytes";
         clear_valid_table(read_ptr_ % I, length);
         read_ptr_ += length;
-        return OK;
+        return count_valid_table(1, read_ptr_ % I, 1) ? OK : BUSY;
     }
 
 private:
@@ -248,37 +251,103 @@ private:
 };
 
 
+class CallDecoder : public StreamSink {
+public:
+    CallDecoder(Context* ctx)
+        : ctx_(ctx), endpoint_id_decoder_(alloc_decoder<Uuid>(ctx))
+    {}
+
+    ~CallDecoder() {
+        // TODO: provide close function to dealloc decoders
+        /*if (endpoint_id_decoder_) {
+            dealloc_decoder(endpoint_id_decoder_);
+            endpoint_id_decoder_ = nullptr;
+        }*/
+    }
+
+    status_t process_bytes(cbufptr_t& buffer) final {
+        if (endpoint_id_decoder_) {
+            status_t status;
+            if ((status = endpoint_id_decoder_->process_bytes(buffer)) != CLOSED) {
+                return status;
+            }
+            FIBRE_LOG(D) << "decoded endpoint ID: " << *endpoint_id_decoder_->get();
+            endpoint_ = get_endpoint(*endpoint_id_decoder_->get());
+            if (!endpoint_) {
+                FIBRE_LOG(W) << "received call for unknown endpoint ID " << *endpoint_id_decoder_->get();
+            }
+            dealloc_decoder(endpoint_id_decoder_);
+            endpoint_id_decoder_ = nullptr;
+            decoder_ = endpoint_ ? endpoint_->open(ctx_) : nullptr;
+        }
+        if (endpoint_ && decoder_) {
+            return decoder_->process_bytes(buffer);
+        } else {
+            return ERROR;
+        }
+    }
+
+private:
+    //Uuid endpoint_id_{};
+    bool have_endpoint_id_ = false;
+    Decoder<Uuid>* endpoint_id_decoder_ = nullptr;
+    LocalEndpoint* endpoint_ = nullptr;
+    StreamSink* decoder_ = nullptr;
+    Context* ctx_;
+};
+
+class CallEncoder : public StreamSource {
+public:
+    CallEncoder(Context* ctx, Uuid remote_endpoint_id, StreamSource* encoder) :
+            ctx_(ctx), remote_endpoint_id_(remote_endpoint_id), encoder_(encoder) {
+        endpoint_id_encoder_ = alloc_encoder<Uuid>(ctx);
+        endpoint_id_encoder_->set(&remote_endpoint_id_);
+    }
+
+    status_t get_bytes(bufptr_t& buffer) final {
+        StreamSource::status_t status;
+        if (endpoint_id_encoder_) {
+            if ((status = endpoint_id_encoder_->get_bytes(buffer)) != StreamSource::CLOSED) {
+                return status;
+            }
+            dealloc_encoder(endpoint_id_encoder_);
+            endpoint_id_encoder_ = nullptr;
+        }
+        return encoder_->get_bytes(buffer);
+    }
+
+private:
+    Uuid remote_endpoint_id_;
+    Context* ctx_;
+    Encoder<Uuid>* endpoint_id_encoder_ = nullptr;
+    StreamSource* encoder_ = nullptr;
+};
+
 
 using call_id_t = Uuid;
 
-struct call_t {
-    StreamSink* decoder;
+
+struct incoming_call_t {
+    CallDecoder decoder; // TODO: put actual call decoder (call id + forward content)
     // TODO: what if we want a buffer size that depends on the call context?
     FixedBufferDefragmenter<1024> fragment_sink;
 };
 
-// TODO: replace with fixed size data structure
-using fragmented_calls_t = std::unordered_map<call_id_t, call_t>;
-extern fragmented_calls_t fragmented_calls;
-
-static int start_or_get_call(call_id_t call_id, call_t** call) {
-    call_t* dummy;
-    call = call ? call : &dummy;
-    *call = &fragmented_calls[call_id];
-    return 0;
-}
-
-class CallIdDecoder : Decoder<call_id_t> {
-    
+struct outgoing_call_t {
+    Uuid uuid;
+    Context* ctx;
+    CallEncoder encoder; // TODO: put actual call encoder (call id + forward content)
+    FixedBufferFragmenter<1024> fragment_source;
 };
 
-class CallDecoder : public StreamSink {
-private:
-    Decoder<size_t>* offset_decoder = nullptr;
-    call_t* call_ = nullptr;
-};
 
+
+
+/*
 class FragmentedCallDecoder : public StreamSink {
+public:
+    FragmentedCallDecoder(Context* ctx) : ctx_(ctx) {}
+
     status_t process_bytes(cbufptr_t& buffer) final {
         status_t status;
         if (pos_ == 0) {
@@ -287,7 +356,7 @@ class FragmentedCallDecoder : public StreamSink {
             }
             const call_id_t* call_id = call_id_decoder->get();
             if (call_id != nullptr) {
-                start_or_get_call(*call_id, &call_);
+                start_or_get_call(ctx_, *call_id, &call_);
             }
             pos_++;
         }
@@ -300,17 +369,54 @@ class FragmentedCallDecoder : public StreamSink {
         }
         if (pos_ == 2) {
             call_->fragment_sink.process_chunk(buffer, offset_);
+            stream_copy(&call_->decoder, &call_->fragment_sink);
         }
         return OK;
     }
 
 private:
+    Context* ctx_ = nullptr;
     size_t pos_ = 0;
     Decoder<call_id_t>* call_id_decoder = nullptr;
     Decoder<size_t>* offset_decoder = nullptr;
-    call_t* call_ = nullptr;
+    incoming_call_t* call_ = nullptr;
     size_t offset_ = 0;
-};
+};*/
+
+int decode_fragment(Context* ctx, StreamSource* source);
+int encode_fragment(outgoing_call_t call, StreamSink* sink);
+
+/*class FragmentedCallEncoder : public StreamSource {
+public:
+    status_t get_bytes(bufptr_t& buffer) {
+        status_t status;
+        if (pos_ == 0) {
+            if ((status = call_id_decoder->get_bytes(buffer)) != CLOSED) {
+                return status;
+            }
+            const call_id_t* call_id = call_id_decoder->get();
+            if (call_id != nullptr) {
+                start_or_get_call(*call_id, &call_);
+            }
+            pos_++;
+        }
+        if (pos_ == 1) {
+            if ((status = offset_decoder->get_bytes(buffer)) != CLOSED) {
+                return status;
+            }
+            offset_ = *offset_decoder->get();
+            pos_++;
+        }
+        if (pos_ == 2) {
+            call_->fragment_sink.process_chunk(buffer, offset_);
+            stream_copy(call_->decoder, &call_->fragment_sink);
+        }
+    }
+
+private:
+    size_t pos_ = 0;
+    size_t offset_ = 0;
+};*/
 
 #if 0
 
