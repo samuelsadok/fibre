@@ -1,7 +1,7 @@
-#ifndef __FIBRE_WORKER_HPP
-#define __FIBRE_WORKER_HPP
+#ifndef __FIBRE_LINUX_WORKER_HPP
+#define __FIBRE_LINUX_WORKER_HPP
 
-#include <fibre/signal.hpp>
+#include <fibre/linux_event.hpp>
 #include <fibre/closure.hpp>
 #include <thread>
 #include <sys/epoll.h>
@@ -18,7 +18,7 @@ namespace fibre {
  * within an event callback (which executes on the event loop thread), provided
  * those calls are properly synchronized with calls from other threads.
  */
-class Worker {
+class LinuxWorker {
 public:
     using callback_t = Callback<uint32_t>;
 
@@ -34,7 +34,7 @@ private:
     void stop_handler();
 
     int epoll_fd_ = -1;
-    Signal stop_signal = Signal("stop");
+    LinuxAutoResetEvent stop_signal_ = LinuxAutoResetEvent("stop");
     bool should_run_ = false;
     volatile unsigned int iterations_ = 0;
     std::thread* thread_ = nullptr;
@@ -46,9 +46,9 @@ private:
     int n_triggered_events_ = 0;
     struct epoll_event triggered_events_[max_triggered_events_];
 
-    member_closure_t<decltype(&Worker::stop_handler)> stop_handler_obj{&Worker::stop_handler, this};
+    member_closure_t<decltype(&LinuxWorker::stop_handler)> stop_handler_obj{&LinuxWorker::stop_handler, this};
 };
 
 }
 
-#endif // __FIBRE_WORKER_HPP
+#endif // __FIBRE_LINUX_WORKER_HPP

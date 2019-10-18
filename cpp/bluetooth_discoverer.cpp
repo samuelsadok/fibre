@@ -101,7 +101,7 @@ public:
 static Ad ad;
 static Srv srv;
 
-int BluetoothCentralSideDiscoverer::init(Worker* worker, DBusConnectionWrapper* dbus) {
+int BluetoothCentralSideDiscoverer::init(LinuxWorker* worker, DBusConnectionWrapper* dbus) {
     worker_ = worker;
     dbus_ = dbus;
 

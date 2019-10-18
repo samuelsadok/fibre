@@ -75,7 +75,7 @@ int main(int argc, const char** argv) {
 
     auto source = MemoryStreamSource{tmp_buf, sizeof(tmp_buf) - sink.get_length()};
     TEST_ZERO(decode_fragment(nullptr, &source));
-
+    TEST_EQUAL(called_functions, (uint32_t)0); // ensure function was called
 
     TEST_ZERO(fibre::unregister_endpoint(uuid));
 

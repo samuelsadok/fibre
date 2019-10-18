@@ -1,6 +1,6 @@
 
 #include <fibre/dbus.hpp>
-#include <fibre/timer.hpp>
+#include <fibre/linux_timer.hpp>
 #include <fibre/logging.hpp>
 #include <sys/epoll.h>
 
@@ -9,7 +9,7 @@ using namespace fibre;
 USE_LOG_TOPIC(DBUS);
 
 
-int DBusConnectionWrapper::init(Worker* worker, bool system_bus) {
+int DBusConnectionWrapper::init(LinuxWorker* worker, bool system_bus) {
     if (!worker)
         return -1;
     worker_ = worker;
@@ -80,9 +80,14 @@ int DBusConnectionWrapper::init(Worker* worker, bool system_bus) {
         goto fail2;
     }
 
-    if (dispatch_signal_.init(worker_, &handle_dispatch_obj_) != 0) {
+    if (dispatch_signal_.init() != 0) {
         FIBRE_LOG(E) << "dispatch signal init failed";
         goto fail2;
+    }
+
+    if (dispatch_signal_.subscribe(worker_, &handle_dispatch_obj_) != 0) {
+        FIBRE_LOG(E) << "dispatch signal subscribe failed";
+        goto fail3;
     }
 
     // TODO: ask on mailing list what this is exactly supposed to do. What
@@ -110,6 +115,8 @@ int DBusConnectionWrapper::init(Worker* worker, bool system_bus) {
 
     return 0;
 
+fail3:
+    dispatch_signal_.deinit();
 fail2:
     dbus_connection_unref(conn_);
 fail1:
@@ -132,6 +139,11 @@ int DBusConnectionWrapper::deinit() {
     //dbus_connection_close(conn_);
     dbus_connection_unref(conn_);
     FIBRE_LOG(D) << "connection closed";
+
+    if (dispatch_signal_.unsubscribe() != 0) {
+        FIBRE_LOG(E) << "signal unsubscribe failed";
+        result = -1;
+    }
 
     if (dispatch_signal_.deinit() != 0) {
         FIBRE_LOG(E) << "signal deinit failed";

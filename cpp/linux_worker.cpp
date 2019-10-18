@@ -1,5 +1,5 @@
 
-#include <fibre/worker.hpp>
+#include <fibre/linux_worker.hpp>
 #include <fibre/logging.hpp>
 
 #include <sys/epoll.h>
@@ -18,7 +18,7 @@ USE_LOG_TOPIC(WORKER);
  * From this point on until deinit() the worker will start handling events that
  * are associated with this worker using register().
  */
-int Worker::init() {
+int LinuxWorker::init() {
     if (thread_)
         return 1;
 
@@ -28,15 +28,22 @@ int Worker::init() {
         goto fail0;
     }
 
-    if (stop_signal.init(this, &stop_handler_obj) != 0) {
+    if (stop_signal_.init() != 0) {
+        FIBRE_LOG(E) << "signal init failed";
+        goto fail1;
+    }
+
+    if (stop_signal_.subscribe(this, &stop_handler_obj) != 0) {
         FIBRE_LOG(E) << "signal init failed";
         goto fail1;
     }
 
     should_run_ = true;
-    thread_ = new std::thread(&Worker::event_loop, this);
+    thread_ = new std::thread(&LinuxWorker::event_loop, this);
     return 0;
 
+fail2:
+    stop_signal_.deinit();
 fail1:
     close(epoll_fd_);
 fail0:
@@ -49,14 +56,14 @@ fail0:
  * If not all events are deregistered at the time of this call, the function
  * returns an error code and the behavior us undefined.
  */
-int Worker::deinit() {
+int LinuxWorker::deinit() {
     if (!thread_)
         return -1;
 
     int result = 0;
 
     should_run_ = false;
-    if (stop_signal.set() != 0) {
+    if (stop_signal_.set() != 0) {
         FIBRE_LOG(E) << "failed to set stop signal";
         result = -1;
     }
@@ -66,7 +73,12 @@ int Worker::deinit() {
     delete thread_;
     FIBRE_LOG(D) << "worker thread finished";
 
-    if (stop_signal.deinit() != 0) {
+    if (stop_signal_.unsubscribe() != 0) {
+        FIBRE_LOG(E) << "stop signal unsibscribe failed";
+        result = -1;
+    }
+
+    if (stop_signal_.deinit() != 0) {
         FIBRE_LOG(E) << "stop signal deinit failed";
         result = -1;
     }
@@ -94,7 +106,7 @@ int Worker::deinit() {
  *        argument must remain valid until deregister_event() for the
  *        corresponding event has returned.
  */
-int Worker::register_event(int event_fd, uint32_t events, callback_t* callback) {
+int LinuxWorker::register_event(int event_fd, uint32_t events, callback_t* callback) {
     if (event_fd < 0) {
         return -1;
     }
@@ -116,7 +128,7 @@ int Worker::register_event(int event_fd, uint32_t events, callback_t* callback) 
     return 0;
 }
 
-/*int Worker::modify_event(int event_fd, uint32_t events, callback_t* callback) {
+/*int LinuxWorker::modify_event(int event_fd, uint32_t events, callback_t* callback) {
     if (event_fd < 0) {
         return -1;
     }
@@ -141,7 +153,7 @@ int Worker::register_event(int event_fd, uint32_t events, callback_t* callback) 
  * This function blocks until it is guaranteed that the last invokation of the
  * event's callback has returned.
  */
-int Worker::deregister_event(int event_fd) {
+int LinuxWorker::deregister_event(int event_fd) {
     int result = 0;
 
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, event_fd, nullptr) != 0) {
@@ -166,7 +178,7 @@ int Worker::deregister_event(int event_fd) {
 
             // Trigger one iteration of the event loop, so that will_enter_epoll_ is
             // encountered.
-            if (stop_signal.set() != 0) {
+            if (stop_signal_.set() != 0) {
                 FIBRE_LOG(E) << "stop signal set failed";
                 result = -1;
             }
@@ -185,7 +197,7 @@ int Worker::deregister_event(int event_fd) {
     return result;
 }
 
-void Worker::event_loop() {
+void LinuxWorker::event_loop() {
     while (should_run_) {
         iterations_++;
 
@@ -210,6 +222,6 @@ void Worker::event_loop() {
     iterations_++; // unblock deregister_event(stop_fd)
 }
 
-void Worker::stop_handler() {
+void LinuxWorker::stop_handler() {
     FIBRE_LOG(D) << "stop handler\n";
 }

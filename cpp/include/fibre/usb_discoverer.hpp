@@ -1,8 +1,8 @@
 #ifndef __FIBRE_USB_DISCOVERER_HPP
 #define __FIBRE_USB_DISCOVERER_HPP
 
-#include <fibre/worker.hpp>
-#include <fibre/timer.hpp>
+#include <fibre/linux_worker.hpp>
+#include <fibre/linux_timer.hpp>
 #include <fibre/channel_discoverer.hpp>
 
 #include <libusb.h>
@@ -12,7 +12,7 @@ namespace fibre {
 
 class USBHostSideDiscoverer : ChannelDiscoverer {
 public:
-    int init(Worker* worker);
+    int init(LinuxWorker* worker);
     int deinit();
     int start_channel_discovery(interface_specs* interface_specs, void** discovery_ctx);
     int stop_channel_discovery(void* discovery_ctx);
@@ -39,8 +39,8 @@ private:
     struct udev_monitor* udev_mon = nullptr;
     libusb_hotplug_callback_handle hotplug_callback_handle;
     int n_discovery_requests = 0;
-    Worker* worker_ = nullptr;
-    Timer timer_;
+    LinuxWorker* worker_ = nullptr;
+    LinuxTimer timer_;
 
     // TODO make templated callback type so we can just write Timer::callback_t<USBHostSideDiscoverer>
     member_closure_t<decltype(&USBHostSideDiscoverer::udev_handler)> udev_handler_obj{&USBHostSideDiscoverer::udev_handler, this};

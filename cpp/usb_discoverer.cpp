@@ -20,7 +20,7 @@ USE_LOG_TOPIC(USB);
  *        pointer must be non-null and initialized when this function is called.
  *        It must remain initialized until deinit() of this discoverer was called.
  */
-int USBHostSideDiscoverer::init(Worker* worker) {
+int USBHostSideDiscoverer::init(LinuxWorker* worker) {
     if (!worker)
         return -1;
     worker_ = worker;

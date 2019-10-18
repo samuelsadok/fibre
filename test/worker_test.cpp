@@ -1,6 +1,6 @@
 
-#include <fibre/worker.hpp>
-#include <fibre/timer.hpp>
+#include <fibre/linux_worker.hpp>
+#include <fibre/linux_timer.hpp>
 #include <unistd.h>
 
 using namespace fibre;
@@ -8,13 +8,13 @@ using namespace fibre;
 int worker_test() {
     printf("testing worker and timer...\n");
 
-    Worker worker;
+    LinuxWorker worker;
     if (worker.init() != 0) {
         printf("worker init failed.\n");
         return -1;
     }
 
-    Timer timer;
+    LinuxTimer timer;
     if (timer.init(&worker) != 0) {
         printf("timer init failed.\n");
         return -1;

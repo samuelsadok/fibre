@@ -2,8 +2,8 @@
 #include <fibre/dbus.hpp>
 #include <dbus/dbus.h>
 #include <sys/epoll.h>
-#include <fibre/worker.hpp>
-#include <fibre/timer.hpp>
+#include <fibre/linux_worker.hpp>
+#include <fibre/linux_timer.hpp>
 #include <fibre/../../dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp>
 #include <fibre/../../dbus_interfaces/io.fibre.TestInterface.hpp>
 #include <fibre/print_utils.hpp>
@@ -253,7 +253,7 @@ int main(int argc, const char** argv) {
 
     TEST_ADD(test_pack_unpack());
 
-    Worker worker;
+    LinuxWorker worker;
     if (TEST_ZERO(worker.init())) {
 
         DBusConnectionWrapper dbus_connection;

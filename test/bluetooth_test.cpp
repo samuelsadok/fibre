@@ -5,7 +5,7 @@
 // echo "1-8" | sudo tee /sys/bus/usb/drivers/usb/unbind
 // echo "1-8" | sudo tee /sys/bus/usb/drivers/usb/bind
 
-#include <fibre/worker.hpp>
+#include <fibre/linux_worker.hpp>
 #include <fibre/dbus.hpp>
 
 #include <fibre/bluetooth_discoverer.hpp>
@@ -13,7 +13,7 @@
 using namespace fibre;
 
 int main(int argc, const char** argv) {
-    Worker worker;
+    LinuxWorker worker;
     if (worker.init() != 0) {
         printf("worker init failed.\n");
         return -1;

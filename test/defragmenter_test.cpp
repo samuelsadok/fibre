@@ -15,13 +15,13 @@ TestContext try_append(Defragmenter* defragmenter, const char * buf, size_t offs
     return context;
 }
 
-TestContext try_get(StreamSource* defragmenter, const char * expected) {
+TestContext try_get(StreamSource* defragmenter, const char * expected, bool expect_more = false) {
     TestContext context;
 
     uint8_t buf[strlen(expected)];
     size_t size = 0;
 
-    TEST_EQUAL(defragmenter->get_bytes_({buf, sizeof(buf)}, &size), StreamSource::OK);
+    TEST_EQUAL(defragmenter->get_bytes_({buf, sizeof(buf)}, &size), expect_more ? StreamSource::OK : StreamSource::BUSY);
     TEST_EQUAL(size, sizeof(buf));
     
     std::string received_str{(char*)buf, sizeof(buf)};
@@ -84,11 +84,11 @@ int main(int argc, const char** argv) {
 
     // completely new chunk, crossing the internal buffer size
     TEST_ADD(try_append(&defragmenter, "89abc", 7, 5));
-    TEST_ADD(try_get(&defragmenter, "89a"));
+    TEST_ADD(try_get(&defragmenter, "89a", true));
     TEST_ADD(try_get(&defragmenter, "bc"));
 
     TEST_ADD(try_append(&defragmenter, "There was no ice cream in the freezer, nor did they have money to go to the store.", 0, 22));
-    TEST_ADD(try_get(&defragmenter, " ice cre"));
+    TEST_ADD(try_get(&defragmenter, " ice cre", true));
     TEST_ADD(try_get(&defragmenter, "am"));
 
 

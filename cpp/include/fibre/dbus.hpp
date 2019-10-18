@@ -33,8 +33,8 @@
 #include <algorithm>
 #include <limits.h>
 #include <string.h>
-#include <fibre/worker.hpp>
-#include <fibre/timer.hpp>
+#include <fibre/linux_worker.hpp>
+#include <fibre/linux_timer.hpp>
 #include <fibre/cpp_utils.hpp>
 #include <fibre/print_utils.hpp>
 #include <fibre/logging.hpp>
@@ -285,7 +285,7 @@ public:
         void* ptr;
         size_t intf_count; // number of interfaces associated with the object
     };
-    int init(Worker* worker, bool system_bus = false);
+    int init(LinuxWorker* worker, bool system_bus = false);
     int deinit();
 
     DBusConnection* get_libdbus_ptr() { return conn_; }
@@ -487,15 +487,15 @@ private:
     using watch_ctx_t = bind_result_t<member_closure_t<decltype(&DBusConnectionWrapper::handle_watch)>, DBusWatch*>;
 
     struct timeout_ctx_t {
-        Timer timer;
+        LinuxTimer timer;
         bind_result_t<member_closure_t<decltype(&DBusConnectionWrapper::handle_timeout)>, DBusTimeout*> callback;
     };
 
     DBusError err_;
     DBusConnection* conn_;
-    Worker* worker_;
+    LinuxWorker* worker_;
 
-    Signal dispatch_signal_ = Signal("dbus dispatch");
+    LinuxAutoResetEvent dispatch_signal_ = LinuxAutoResetEvent("dbus dispatch");
     member_closure_t<decltype(&DBusConnectionWrapper::handle_dispatch)> handle_dispatch_obj_{&DBusConnectionWrapper::handle_dispatch, this};
 
     // Lookup tables to route incoming method calls to the correct receiver

@@ -1,5 +1,12 @@
+/**
+ * @brief Provides a Linux specific class for timers.
+ * 
+ * TODO: probably better to use a POSIX interface instead.
+ * However POSIX timers are not represented as file descriptors, so we can't use
+ * it with the LinuxWorker.
+ */
 
-#include <fibre/timer.hpp>
+#include <fibre/linux_timer.hpp>
 #include <fibre/logging.hpp>
 #include <sys/epoll.h>
 #include <sys/fcntl.h>
@@ -11,7 +18,7 @@ using namespace fibre;
 DEFINE_LOG_TOPIC(TIMER);
 USE_LOG_TOPIC(TIMER);
 
-int Timer::init(Worker* worker) {
+int LinuxTimer::init(LinuxWorker* worker) {
     if (is_initialized())
         return -1;
     worker_ = worker;
@@ -47,7 +54,7 @@ fail1:
     return -1;
 }
 
-int Timer::deinit() {
+int LinuxTimer::deinit() {
     if (!is_initialized() || is_started())
         return -1;
 
@@ -87,7 +94,7 @@ int Timer::deinit() {
  *        pointed to by this argument must remain valid until the timer has been
  *        stopped using stop().
  */
-int Timer::start(uint32_t interval_ms, bool repeat, callback_t* callback) {
+int LinuxTimer::start(uint32_t interval_ms, bool repeat, callback_t* callback) {
     if (!is_initialized() || is_started())
         return -1;
     if (!interval_ms) // zero interval would disarm the timer
@@ -106,7 +113,7 @@ int Timer::start(uint32_t interval_ms, bool repeat, callback_t* callback) {
  * The callback set by start() may be invoked up to one more time shortly after
  * this function is called.
  */
-int Timer::stop() {
+int LinuxTimer::stop() {
     if (!is_initialized() || !is_started())
         return -1;
     set_time(0, false);
@@ -122,7 +129,7 @@ int Timer::stop() {
  * An non-zero interval will start the timer if it was not already started.
  * An interval of 0 will stop the timer if it was started.
  */
-int Timer::set_time(uint32_t interval_ms, bool repeat) {
+int LinuxTimer::set_time(uint32_t interval_ms, bool repeat) {
     if (!is_initialized())
         return -1;
 
@@ -142,7 +149,7 @@ int Timer::set_time(uint32_t interval_ms, bool repeat) {
     return 0;
 }
 
-void Timer::timer_handler(uint32_t) {
+void LinuxTimer::timer_handler(uint32_t) {
     FIBRE_LOG(D) << "timer handler";
     uint64_t val;
 

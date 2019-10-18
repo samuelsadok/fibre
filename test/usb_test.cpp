@@ -1,13 +1,13 @@
 
 #include <fibre/usb_discoverer.hpp>
-#include <fibre/worker.hpp>
+#include <fibre/linux_worker.hpp>
 
 #include <unistd.h>
 
 using namespace fibre;
 
 int usb_start_stop_test() {
-    Worker worker;
+    LinuxWorker worker;
     if (worker.init() != 0) {
         printf("worker init failed.\n");
         return -1;
@@ -50,7 +50,7 @@ int main(int argc, const char** argv) {
         if (usb_start_stop_test() != 0)
             return -1;
 
-    Worker worker;
+    LinuxWorker worker;
     if (worker.init() != 0) {
         printf("worker init failed.\n");
         return -1;

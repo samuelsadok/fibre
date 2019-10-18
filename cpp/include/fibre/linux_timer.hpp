@@ -1,16 +1,16 @@
-#ifndef __FIBRE_TIMER_HPP
-#define __FIBRE_TIMER_HPP
+#ifndef __FIBRE_LINUX_TIMER_HPP
+#define __FIBRE_LINUX_TIMER_HPP
 
-#include <fibre/worker.hpp>
+#include <fibre/linux_worker.hpp>
 #include <sys/timerfd.h>
 
 namespace fibre {
 
-class Timer {
+class LinuxTimer {
 public:
     using callback_t = Callback<>;
 
-    int init(Worker* worker);
+    int init(LinuxWorker* worker);
     int deinit();
 
     int start(uint32_t interval_ms, bool repeat, callback_t* callback);
@@ -23,14 +23,14 @@ public:
 private:
     void timer_handler(uint32_t);
 
-    Worker* worker_ = nullptr;
+    LinuxWorker* worker_ = nullptr;
     int tim_fd_ = -1;
     bool is_started_ = false;
     callback_t* callback_ = nullptr;
 
-    member_closure_t<decltype(&Timer::timer_handler)> timer_handler_obj{&Timer::timer_handler, this};
+    member_closure_t<decltype(&LinuxTimer::timer_handler)> timer_handler_obj{&LinuxTimer::timer_handler, this};
 };
 
 }
 
-#endif // __FIBRE_TIMER_HPP
+#endif // __FIBRE_LINUX_TIMER_HPP
