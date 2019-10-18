@@ -68,3 +68,11 @@ for _, platform_name in ipairs(potential_platforms) do
     platform = make_platform(platform_name)
     build_packages(packages, {}, platform)
 end
+
+
+winpkg = make_exe_package({
+    sources = {'worker_test.cpp', '../cpp/windows_worker.cpp', '../cpp/logging.cpp'},
+    include_dirs = {'../cpp/include'}
+})
+winplatform = make_platform('x86_64-w64-mingw32')
+build_packages({winpkg}, {}, winplatform)

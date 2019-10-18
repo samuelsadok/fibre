@@ -1,61 +1,56 @@
 
+#if defined(_WIN32) || defined(_WIN64)
+#include <fibre/windows_worker.hpp>
+//#include <fibre/windows_timer.hpp>
+#define usleep(arg)  ((void)(arg))
+#endif
+
+#if defined(__linux__)
 #include <fibre/linux_worker.hpp>
 #include <fibre/linux_timer.hpp>
 #include <unistd.h>
+#endif
+
+#include "test_utils.hpp"
 
 using namespace fibre;
 
-int worker_test() {
+template<typename TWorker, typename TTimer>
+TestContext timer_test() {
+    TestContext context;
     printf("testing worker and timer...\n");
 
-    LinuxWorker worker;
-    if (worker.init() != 0) {
-        printf("worker init failed.\n");
-        return -1;
-    }
+    TWorker worker;
+    TEST_ZERO(worker.init());
 
-    LinuxTimer timer;
-    if (timer.init(&worker) != 0) {
-        printf("timer init failed.\n");
-        return -1;
-    }
+    TTimer timer;
+    TEST_ZERO(timer.init(&worker));
 
     uint32_t counter = 0;
     auto callback = make_lambda_closure([](uint32_t& cnt) { cnt++; }).bind(counter);
-    if (timer.start(100, true, &callback) != 0) {
-        printf("timer start failed.\n");
-        return -1;
-    }
+    TEST_ZERO(timer.start(100, true, &callback));
 
     usleep(1000000);
 
-    if (timer.stop() != 0) {
-        printf("timer stop failed.\n");
-        return -1;
-    }
+    TEST_ZERO(timer.stop());
 
-    if (counter < 8 || counter > 12) {
-        printf("counter not as expected.\n");
-        return -1;
-    }
+    TEST_ASSERT(counter < 8 || counter > 12);
 
-    if (timer.deinit() != 0) {
-        printf("timer deinit failed.\n");
-        return -1;
-    }
-    printf("timer deinit() complete\n");
+    TEST_ZERO(timer.deinit());
+    TEST_ZERO(worker.deinit());
 
-    if (worker.deinit() != 0) {
-        printf("worker deinit failed.\n");
-        return -1;
-    }
-
-    printf("test succeeded!\n");
-    return 0;
+    return context;
 }
 
 int main(int argc, const char** argv) {
-    if (worker_test() != 0)
-        return -1;
-    return 0;
+    TestContext context;
+
+#if defined(__linux__)
+    TEST_ADD((timer_test<LinuxWorker, LinuxTimer>()));
+#endif
+
+#if defined(_WIN32) || defined(_WIN64)
+#endif
+
+    return context.summarize();
 }
