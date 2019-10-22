@@ -32,6 +32,10 @@ packages = {
         depends = {'fibre', 'libdbus'}
     }),
     make_exe_package({
+        sources = {'udp_test.cpp'},
+        depends = {'fibre'}
+    }),
+    make_exe_package({
         sources = {'call_decoder_test.cpp'},
         depends = {'fibre'}
     }),
@@ -70,6 +74,7 @@ for _, platform_name in ipairs(potential_platforms) do
 end
 
 
+-- try to compile a few components for windows (will be removed when everything compiles)
 winpkg = make_exe_package({
     sources = {'worker_test.cpp', '../cpp/windows_worker.cpp', '../cpp/logging.cpp'},
     include_dirs = {'../cpp/include'}
