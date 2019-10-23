@@ -22,9 +22,9 @@ public:
         
         if (pos_ >= 16) {
             uuid_ = Uuid{buf_};
-            return StreamSink::CLOSED;
+            return StreamSink::kClosed;
         } else {
-            return StreamSink::OK;
+            return StreamSink::kOk;
         }
     }
 
@@ -47,7 +47,7 @@ public:
 
     status_t get_bytes(bufptr_t& buffer) final {
         if (!value_) {
-            return StreamSource::CLOSED;
+            return StreamSource::kClosed;
         }
         
         size_t chunk = std::min(buffer.length, 16 - pos_);
@@ -56,9 +56,9 @@ public:
         pos_ += chunk;
         
         if (pos_ >= 16) {
-            return StreamSource::CLOSED;
+            return StreamSource::kClosed;
         } else {
-            return StreamSource::OK;
+            return StreamSource::kOk;
         }
     }
 

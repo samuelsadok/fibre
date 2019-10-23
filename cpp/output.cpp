@@ -14,5 +14,5 @@ OutputPipe::status_t OutputPipe::process_bytes(const uint8_t* buffer, size_t len
     if (processed_bytes)
         *processed_bytes += chunk;
     remote_node_->notify_output_pipe_ready();
-    return chunk < length ? BUSY : OK;
+    return chunk < length ? kBusy : kOk;
 }

@@ -98,14 +98,14 @@ public:
             buf->ptr = buf_ + (read_ptr_ % I);
             buf->length = count_valid_table(1, read_ptr_ % I, std::min(buf->length, I - (read_ptr_ % I)));
         }
-        return OK;
+        return kOk;
     }
 
     status_t consume(size_t length) final {
         FIBRE_LOG(D) << "consume " << length << " bytes";
         clear_valid_table(read_ptr_ % I, length);
         read_ptr_ += length;
-        return count_valid_table(1, read_ptr_ % I, 1) ? OK : BUSY;
+        return count_valid_table(1, read_ptr_ % I, 1) ? kOk : kBusy;
     }
 
 private:
@@ -205,14 +205,14 @@ public:
             buf->ptr = buf_ + (write_ptr_ % I);
             buf->length = count_fresh_table(0, write_ptr_ % I, std::min(buf->length, I - (write_ptr_ % I)));
         }
-        return OK;
+        return kOk;
     }
 
     status_t commit(size_t length) final {
         FIBRE_LOG(D) << "commit " << length << " bytes";
         set_fresh_table(write_ptr_ % I, length);
         write_ptr_ += length;
-        return OK;
+        return kOk;
     }
 
 private:
@@ -268,7 +268,7 @@ public:
     status_t process_bytes(cbufptr_t& buffer) final {
         if (endpoint_id_decoder_) {
             status_t status;
-            if ((status = endpoint_id_decoder_->process_bytes(buffer)) != CLOSED) {
+            if ((status = endpoint_id_decoder_->process_bytes(buffer)) != kClosed) {
                 return status;
             }
             FIBRE_LOG(D) << "decoded endpoint ID: " << *endpoint_id_decoder_->get();
@@ -283,7 +283,7 @@ public:
         if (endpoint_ && decoder_) {
             return decoder_->process_bytes(buffer);
         } else {
-            return ERROR;
+            return kError;
         }
     }
 
@@ -307,7 +307,7 @@ public:
     status_t get_bytes(bufptr_t& buffer) final {
         StreamSource::status_t status;
         if (endpoint_id_encoder_) {
-            if ((status = endpoint_id_encoder_->get_bytes(buffer)) != StreamSource::CLOSED) {
+            if ((status = endpoint_id_encoder_->get_bytes(buffer)) != StreamSource::kClosed) {
                 return status;
             }
             dealloc_encoder(endpoint_id_encoder_);
@@ -351,7 +351,7 @@ public:
     status_t process_bytes(cbufptr_t& buffer) final {
         status_t status;
         if (pos_ == 0) {
-            if ((status = call_id_decoder->process_bytes(buffer)) != CLOSED) {
+            if ((status = call_id_decoder->process_bytes(buffer)) != kClosed) {
                 return status;
             }
             const call_id_t* call_id = call_id_decoder->get();
@@ -361,7 +361,7 @@ public:
             pos_++;
         }
         if (pos_ == 1) {
-            if ((status = offset_decoder->process_bytes(buffer)) != CLOSED) {
+            if ((status = offset_decoder->process_bytes(buffer)) != kClosed) {
                 return status;
             }
             offset_ = *offset_decoder->get();
@@ -371,7 +371,7 @@ public:
             call_->fragment_sink.process_chunk(buffer, offset_);
             stream_copy(&call_->decoder, &call_->fragment_sink);
         }
-        return OK;
+        return kOk;
     }
 
 private:
@@ -391,7 +391,7 @@ public:
     status_t get_bytes(bufptr_t& buffer) {
         status_t status;
         if (pos_ == 0) {
-            if ((status = call_id_decoder->get_bytes(buffer)) != CLOSED) {
+            if ((status = call_id_decoder->get_bytes(buffer)) != kClosed) {
                 return status;
             }
             const call_id_t* call_id = call_id_decoder->get();
@@ -401,7 +401,7 @@ public:
             pos_++;
         }
         if (pos_ == 1) {
-            if ((status = offset_decoder->get_bytes(buffer)) != CLOSED) {
+            if ((status = offset_decoder->get_bytes(buffer)) != kClosed) {
                 return status;
             }
             offset_ = *offset_decoder->get();

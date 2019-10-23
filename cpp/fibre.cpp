@@ -67,7 +67,7 @@ bool process_bytes(RemoteNode* node, const uint8_t *buffer, size_t length) {
             packet_buffer_[packet_index_++] = *buffer;
         }
 
-        // If both header and packet are BUSYy received, hand it on to the packet processor
+        // If both header and packet are kBusyy received, hand it on to the packet processor
         if (header_index_ == 3 && packet_index_ == packet_length_) {
             if (calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(CANONICAL_CRC16_INIT, packet_buffer_, packet_length_) == 0) {
                 if (!process_packet(node, packet_buffer_, packet_length_ - 2))

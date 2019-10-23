@@ -57,7 +57,7 @@ public:
             status_t status = output->process_bytes(pipe_->buffer_, pipe_->buffer_pos_, &processed_bytes);
             if (processed_bytes != length)
                 return false;
-            return status != ERROR;
+            return status != kError;
         }
     private:
         OutputPipe *pipe_;

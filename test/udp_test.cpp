@@ -41,7 +41,7 @@ int main(int argc, const char** argv) {
         // At this point, no data should be available yet.
         uint8_t recv_buf[128] = {0};
         bufptr_t bufptr = { .ptr = recv_buf, .length = sizeof(recv_buf) };
-        TEST_EQUAL(udp_receiver.get_bytes(bufptr), StreamSource::BUSY);
+        TEST_EQUAL(udp_receiver.get_bytes(bufptr), StreamSource::kBusy);
         TEST_EQUAL(sizeof(recv_buf) - bufptr.length, (size_t)0);
 
         PosixUdpTxChannel udp_sender;
@@ -49,17 +49,17 @@ int main(int argc, const char** argv) {
     
         std::string data = "Hello UDP!";
         cbufptr_t cbufptr = { .ptr = (const uint8_t*)data.c_str(), .length = data.size() };
-        TEST_EQUAL(udp_sender.process_bytes_(cbufptr, nullptr), StreamSink::OK);
+        TEST_EQUAL(udp_sender.process_bytes_(cbufptr, nullptr), StreamSink::kOk);
         
         // TODO: if the following tests fail we may need to add a small delay.
         bufptr = { .ptr = recv_buf, .length = sizeof(recv_buf) };
-        TEST_EQUAL(udp_receiver.get_bytes(bufptr), StreamSource::OK); // technically a return value of "BUSY" would also comply to the specs
+        TEST_EQUAL(udp_receiver.get_bytes(bufptr), StreamSource::kOk); // technically a return value of "kBusy" would also comply to the specs
         TEST_EQUAL(sizeof(recv_buf) - bufptr.length, data.size());
 
         TEST_EQUAL(std::string((const char *)recv_buf), data);
 
         // Receiver should now be busy (no new data)
-        TEST_EQUAL(udp_receiver.get_bytes(bufptr), StreamSource::BUSY);
+        TEST_EQUAL(udp_receiver.get_bytes(bufptr), StreamSource::kBusy);
         TEST_EQUAL(sizeof(recv_buf) - bufptr.length, data.size());
         
         TEST_ZERO(udp_receiver.close());

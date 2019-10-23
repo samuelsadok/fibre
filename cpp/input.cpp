@@ -36,26 +36,26 @@ int decode_fragment(Context* ctx, StreamSource* source) {
     Decoder<call_id_t>* call_id_decoder = alloc_decoder<call_id_t>(ctx);
     stream_copy_result_t status = stream_copy_all(call_id_decoder, source);
     const call_id_t* call_id_ptr = call_id_decoder->get();
-    if ((status.dst_status != StreamSink::CLOSED) || !call_id_ptr) {
+    if ((status.dst_status != StreamSink::kClosed) || !call_id_ptr) {
         dealloc_decoder(call_id_decoder);
         return -1;
     }
     call_id_t call_id = *call_id_ptr;
     dealloc_decoder(call_id_decoder);
-    if (status.src_status != StreamSource::OK) {
+    if (status.src_status != StreamSource::kOk) {
         return -1;
     }
 
     Decoder<size_t>* offset_decoder = alloc_decoder<size_t>(ctx);
     status = stream_copy_all(offset_decoder, source);
     const size_t* offset_ptr = offset_decoder->get();
-    if ((status.dst_status != StreamSink::CLOSED) || !offset_ptr) {
+    if ((status.dst_status != StreamSink::kClosed) || !offset_ptr) {
         dealloc_decoder(offset_decoder);
         return -1;
     }
     size_t offset = *offset_ptr;
     dealloc_decoder(offset_decoder);
-    if (status.src_status != StreamSource::OK) {
+    if (status.src_status != StreamSource::kOk) {
         return -1;
     }
 
@@ -67,7 +67,7 @@ int decode_fragment(Context* ctx, StreamSource* source) {
     // TODO: should use bufferless copy here
     uint8_t buf[1024];
     bufptr_t bufptr = {.ptr = buf, .length = sizeof(buf)};
-    if (source->get_all_bytes(bufptr) != StreamSource::CLOSED) {
+    if (source->get_all_bytes(bufptr) != StreamSource::kClosed) {
         return -1;
     }
     FIBRE_LOG(D) << "got " << (sizeof(buf) - bufptr.length) << " bytes from the source";
@@ -76,11 +76,11 @@ int decode_fragment(Context* ctx, StreamSource* source) {
     FIBRE_LOG(D) << "processed chunk";
 
     stream_copy_result_t copy_result = stream_copy_all(&call->decoder, &call->fragment_sink);
-    if (copy_result.src_status == StreamSource::ERROR) {
+    if (copy_result.src_status == StreamSource::kError) {
         FIBRE_LOG(E) << "defragmenter failed";
         return -1;
     }
-    if ((copy_result.dst_status == StreamSink::ERROR) || (copy_result.dst_status == StreamSink::CLOSED)) {
+    if ((copy_result.dst_status == StreamSink::kError) || (copy_result.dst_status == StreamSink::kClosed)) {
         end_call(call_id);
     }
 
@@ -93,7 +93,7 @@ int encode_fragment(outgoing_call_t call, StreamSink* sink) {
     stream_copy_result_t status = stream_copy_all(sink, call_id_encoder);
     dealloc_encoder(call_id_encoder);
     call_id_encoder = nullptr;
-    if ((status.src_status != StreamSource::CLOSED) || (status.dst_status != StreamSink::OK)) {
+    if ((status.src_status != StreamSource::kClosed) || (status.dst_status != StreamSink::kOk)) {
         return -1;
     }
 
@@ -111,7 +111,7 @@ int encode_fragment(outgoing_call_t call, StreamSink* sink) {
     status = stream_copy_all(sink, offset_encoder);
     dealloc_encoder(offset_encoder);
     offset_encoder = nullptr;
-    if ((status.src_status != StreamSource::CLOSED) || (status.dst_status != StreamSink::OK)) {
+    if ((status.src_status != StreamSource::kClosed) || (status.dst_status != StreamSink::kOk)) {
         return -1;
     }
 
@@ -158,8 +158,8 @@ void InputPipe::process_chunk(const uint8_t* buffer, size_t offset, size_t lengt
             size_t processed_bytes = 0;
             StreamSink::status_t status = input_handler_->process_bytes(buffer, length, &processed_bytes);
 
-            if (status != StreamSink::OK || processed_bytes != length) {
-                if (status != StreamSink::CLOSED || processed_bytes != length) {
+            if (status != StreamSink::kOk || processed_bytes != length) {
+                if (status != StreamSink::kClosed || processed_bytes != length) {
                     FIBRE_LOG(W) << "input handler for pipe " << id_ << " terminated abnormally: status " << status << ", processed " << processed_bytes << " bytes, should have processed " << length << " bytes";
                 }
                 set_handler(nullptr);
@@ -198,7 +198,7 @@ InputChannelDecoder::status_t InputChannelDecoder::process_bytes(const uint8_t* 
                 *processed_bytes += chunk;
 
             // finished receiving chunk header
-            if (status == CLOSED) {
+            if (status == kClosed) {
                 FIBRE_LOG(D) << "received chunk header: pipe " << get_pipe_no() << ", offset " << as_hex(get_chunk_offset()) << ", (length << 1) | packet_break " << as_hex(get_chunk_length()) << ", crc " << as_hex(get_chunk_crc());
                 in_header = false;
             }
@@ -237,7 +237,7 @@ InputChannelDecoder::status_t InputChannelDecoder::process_bytes(const uint8_t* 
             }
         }
     }
-    return OK;
+    return kOk;
 }
 
 size_t InputChannelDecoder::get_min_useful_bytes() const {
@@ -259,12 +259,12 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 
                 // TODO: behold, a race condition
                 if (endpoint_id >= global_state.functions_.size())
-                    return ERROR;
+                    return kError;
                 endpoint_ = global_state.functions_[endpoint_id];
 
                 if (!endpoint_) {
                     FIBRE_LOG(W) << "no endpoint at " << endpoint_id;
-                    return ERROR;
+                    return kError;
                 }
 
                 // Verify endpoint hash. The expected hash value depends on the selected endpoint.
@@ -273,7 +273,7 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 uint16_t expected_hash = endpoint_->get_hash();
                 if (expected_hash != endpoint_hash) {
                     FIBRE_LOG(W) << "hash mismatch for endpoint " << endpoint_id << ": expected " << as_hex(expected_hash) << ", got " << as_hex(endpoint_hash);
-                    return ERROR;
+                    return kError;
                 }
                 FIBRE_LOG(D) << "hash ok for endpoint " << endpoint_id;
 
@@ -281,17 +281,17 @@ IncomingConnectionDecoder::status_t IncomingConnectionDecoder::advance_state() {
                 //set_stream(nullptr);
                 // TODO: make sure the start_connection call invokes set_stream
                 state_ = RECEIVING_PAYLOAD;
-                return OK;
+                return kOk;
             }
         case RECEIVING_PAYLOAD:
             FIBRE_LOG(D) << "finished receiving payload";
             if (endpoint_)
                 endpoint_->decoder_finished(*this, output_pipe_);
             set_stream(nullptr);
-            return CLOSED;
+            return kClosed;
         default:
             set_stream(nullptr);
-            return ERROR;
+            return kError;
     }
 }
 

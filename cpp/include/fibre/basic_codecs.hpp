@@ -29,7 +29,7 @@ public:
             if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
                 FIBRE_LOG(E) << "varint overflow: tried to add " << as_hex(input_byte) << " << " << bit_pos_;
                 bit_pos_ = BIT_WIDTH;
-                return StreamSink::ERROR; // overflow
+                return StreamSink::kError; // overflow
             }
 
             buffer++;
@@ -38,9 +38,9 @@ public:
             if (!(input_byte & 0x80))
                 is_closed_ = true;
             else if (bit_pos_ >= BIT_WIDTH)
-                return StreamSink::ERROR;
+                return StreamSink::kError;
         }
-        return is_closed_ ? StreamSink::CLOSED : StreamSink::OK;
+        return is_closed_ ? StreamSink::kClosed : StreamSink::kOk;
     }
 
     const T* get() final {
@@ -80,7 +80,7 @@ public:
             }
             buffer++;
         }
-        return value_ ? StreamSource::OK : StreamSource::CLOSED;
+        return value_ ? StreamSource::kOk : StreamSource::kClosed;
     }
 
 private:
@@ -98,9 +98,9 @@ public:
         pos_ += chunk;
         if (pos_ >= serializer::BYTE_WIDTH) {
             value_ = serializer::read(buffer_);
-            return StreamSink::CLOSED;
+            return StreamSink::kClosed;
         } else {
-            return StreamSink::OK;
+            return StreamSink::kOk;
         }
     }
 
@@ -140,9 +140,9 @@ public:
         buffer += chunk;
         pos_ += chunk;
         if (pos_ >= serializer::BYTE_WIDTH) {
-            return StreamSource::CLOSED;
+            return StreamSource::kClosed;
         } else {
-            return StreamSource::OK;
+            return StreamSource::kOk;
         }
     }
 
@@ -187,7 +187,7 @@ public:
         size_t& received_length = std::get<1>(value_);
 
         if (!length_decoder_.get()) {
-            if ((status = length_decoder_.process_bytes(buffer)) != StreamSink::CLOSED) {
+            if ((status = length_decoder_.process_bytes(buffer)) != StreamSink::kClosed) {
                 return status;
             }
             FIBRE_LOG(D) << "UTF-8: received length " << *length_decoder_.get();
@@ -195,7 +195,7 @@ public:
         if (length_decoder_.get()) {
             while (received_length < *length_decoder_.get()) {
                 if (!buffer.length) {
-                    return StreamSink::OK;
+                    return StreamSink::kOk;
                 }
 
                 uint8_t byte = *(buffer++);
@@ -227,7 +227,7 @@ public:
                 }
             }
         }
-        return StreamSink::CLOSED;
+        return StreamSink::kClosed;
     }
 
     const std::tuple<std::array<T, MAX_SIZE>, size_t>* get() final {
@@ -248,10 +248,10 @@ class UTF8Decoder<sstring<CHARS...>> : public Decoder<sstring<CHARS...>> {
 public:
     StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
         StreamSink::status_t status;
-        if ((status = impl_.process_bytes(buffer)) != StreamSink::CLOSED) {
+        if ((status = impl_.process_bytes(buffer)) != StreamSink::kClosed) {
             return status;
         }
-        return get() ? StreamSink::CLOSED : StreamSink::ERROR;
+        return get() ? StreamSink::kClosed : StreamSink::kError;
     }
 
     sstring<CHARS...>* get() final {
@@ -304,13 +304,13 @@ public:
 
     StreamSource::status_t get_bytes(bufptr_t& buffer) final {
         if (!value_)
-            return StreamSource::CLOSED;
+            return StreamSource::kClosed;
 
         StreamSource::status_t status;
         std::array<T, MAX_SIZE>& str_buf = std::get<0>(*value_);
         size_t& str_length = std::get<1>(*value_);
 
-        if ((status = length_encoder_.get_bytes(buffer)) != StreamSource::CLOSED) {
+        if ((status = length_encoder_.get_bytes(buffer)) != StreamSource::kClosed) {
             return status;
         }
 
@@ -347,7 +347,7 @@ public:
             *(buffer++) = tmp_buf_[4 - (tmp_buf_len_--)];
         }
         
-        return (tmp_buf_len_ || sent_length_ < str_length) ? StreamSource::OK : StreamSource::CLOSED;
+        return (tmp_buf_len_ || sent_length_ < str_length) ? StreamSource::kOk : StreamSource::kClosed;
     }
 
 private:

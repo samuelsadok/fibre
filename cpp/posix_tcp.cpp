@@ -47,7 +47,7 @@ public:
         int bytes_sent = send(socket_fd_, buffer, length, 0);
         if (processed_bytes)
             *processed_bytes = (bytes_sent == -1) ? 0 : bytes_sent;
-        return (bytes_sent == -1) ? StreamSink::ERROR : StreamSink::OK;
+        return (bytes_sent == -1) ? StreamSink::kError : StreamSink::kOk;
     }
 
     size_t get_min_non_blocking_bytes() const final {
@@ -71,28 +71,28 @@ public:
 
         if (n_received_signed == 0) {
             FIBRE_LOG(D) << "TCP connection closed by remote host";
-            return StreamSource::CLOSED;
+            return StreamSource::kClosed;
         }
 
         if (n_received_signed < 0) {
             FIBRE_LOG(E) << "TCP connection broke unexpectedly: " << sys_err();
-            return StreamSource::ERROR;
+            return StreamSource::kError;
         }
 
         size_t n_received = static_cast<size_t>(n_received_signed);
         if (n_received > length) {
             FIBRE_LOG(E) << "too many bytes received";
-            return StreamSource::ERROR;
+            return StreamSource::kError;
         }
 
         if (generated_bytes)
             *generated_bytes += n_received;
-        return StreamSource::OK;
+        return StreamSource::kOk;
     }
 
     StreamSource::status_t get_bytes(uint8_t* buffer, size_t max_length, size_t* generated_bytes) final {
         if (min_length > max_length) {
-            return StreamSource::ERROR;
+            return StreamSource::kError;
         }
 
         StreamSource::status_t status;
@@ -100,7 +100,7 @@ public:
             // TODO: set timeout
             size_t chunk = 0;
             status = get_bytes(buffer, min_length, MSG_WAITALL, &chunk);
-            if (status != StreamSource::OK)
+            if (status != StreamSource::kOk)
                 return status;
             status = get_bytes(buffer + chunk, max_length - chunk, MSG_DONTWAIT, &chunk);
             if (generated_bytes)
@@ -130,13 +130,13 @@ bool handle_connection(int socket_fd) {
     uint8_t uuid_buf[16];
 
     FIBRE_LOG(D) << "sending own UUID";
-    if (connection.process_bytes(global_state.own_uuid.get_bytes().data(), 16, nullptr) != StreamSink::OK) {
+    if (connection.process_bytes(global_state.own_uuid.get_bytes().data(), 16, nullptr) != StreamSink::kOk) {
         FIBRE_LOG(E) << "failed to send own UUID";
         return false;
     }
 
     FIBRE_LOG(D) << "waiting for remote UUID";
-    if (connection.get_bytes(uuid_buf, 16, 16, nullptr) != StreamSource::OK) {
+    if (connection.get_bytes(uuid_buf, 16, 16, nullptr) != StreamSource::kOk) {
         FIBRE_LOG(E) << "failed to get remote UUID";
         return false;
     }
@@ -153,7 +153,7 @@ bool handle_connection(int socket_fd) {
         size_t n_min = std::min(input_decoder.get_min_useful_bytes(), sizeof(buf));
         StreamSource::status_t status =
                 connection.get_bytes(buf, n_min, sizeof(buf), &n_received);
-        if (status != StreamSource::OK) {
+        if (status != StreamSource::kOk) {
             FIBRE_LOG(D) << "connection closed";
             break;
         }

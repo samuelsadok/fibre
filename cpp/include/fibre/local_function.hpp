@@ -32,7 +32,7 @@ public:
      * 
      * To signify that no more data will be accepted (e.g. if all input
      * arguments of a function have been received), the stream sink shall return
-     * CLOSED.
+     * kClosed.
      * 
      * @param ctx: The context in which to execute the endpoint action. This
      *        shall for instance contain the tx_stream field, a stream that can
@@ -143,7 +143,7 @@ public:
         FIBRE_LOG(D) << "will encode string of length " << length;
         write_le<uint32_t>(i, buf);
         StreamSink::status_t status = output->process_bytes(buf, sizeof(buf), &processed_bytes);
-        if (status != StreamSink::OK || processed_bytes != sizeof(buf)) {
+        if (status != StreamSink::kOk || processed_bytes != sizeof(buf)) {
             FIBRE_LOG(W) << "not everything processed";
             return;
         }
@@ -154,7 +154,7 @@ public:
             if (processed_bytes != length) {
                 FIBRE_LOG(W) << "not everything processed: " << processed_bytes;
             }
-            if (status != StreamSink::OK) {
+            if (status != StreamSink::kOk) {
                 FIBRE_LOG(W) << "error in output";
             }
         } else {
@@ -551,7 +551,7 @@ public:
         uint8_t buf[4];
         write_le<uint32_t>(i, buf, sizeof(buf));
         StreamSink::status_t status = output->process_bytes(buf, sizeof(buf), &processed_bytes);
-        if (status != StreamSink::OK || processed_bytes != sizeof(buf)) {
+        if (status != StreamSink::kOk || processed_bytes != sizeof(buf)) {
             FIBRE_LOG(W) << "not everything processed";
             return;
         }
@@ -562,7 +562,7 @@ public:
             if (processed_bytes != length) {
                 FIBRE_LOG(W) << "not everything processed: " << processed_bytes;
             }
-            if (status != StreamSink::OK) {
+            if (status != StreamSink::kOk) {
                 FIBRE_LOG(W) << "error in output";
             }
         } else {

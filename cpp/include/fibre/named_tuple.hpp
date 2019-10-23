@@ -39,20 +39,20 @@ public:
         while (buffer.length && (received_vals_ < sizeof...(TTypes))) {
             if (waiting_for_key_) {
                 FIBRE_LOG(D) << "process key byte " << (buffer.length ? as_hex(*buffer) : as_hex((uint8_t)0));
-                if ((status = key_decoder_->process_bytes(buffer)) != StreamSink::CLOSED) {
+                if ((status = key_decoder_->process_bytes(buffer)) != StreamSink::kClosed) {
                     return status;
                 }
                 FIBRE_LOG(D) << "received key: " << *key_decoder_->get();
                 val_decoder_ = init_matching(std::make_index_sequence<sizeof...(TTypes)>());
                 if (!val_decoder_) {
                     FIBRE_LOG(D) << "received unknown key: " << *key_decoder_->get();
-                    return StreamSink::ERROR;
+                    return StreamSink::kError;
                 }
                 waiting_for_key_ = false;
             }
             if (!waiting_for_key_) {
                 FIBRE_LOG(D) << "process val byte " << (buffer.length ? as_hex(*buffer) : as_hex((uint8_t)0));
-                if ((status = val_decoder_->process_bytes(buffer)) != StreamSink::CLOSED) {
+                if ((status = val_decoder_->process_bytes(buffer)) != StreamSink::kClosed) {
                     return status;
                 }
                 deinit_matching(std::make_index_sequence<sizeof...(TTypes)>());
@@ -62,7 +62,7 @@ public:
                 FIBRE_LOG(D) << "received val number " << received_vals_;
             }
         }
-        return (received_vals_ >= sizeof...(TTypes)) ? StreamSink::CLOSED : StreamSink::OK;
+        return (received_vals_ >= sizeof...(TTypes)) ? StreamSink::kClosed : StreamSink::kOk;
     }
 
     std::tuple<TTypes...>* get() final {
@@ -186,12 +186,12 @@ private:
     StreamSource::status_t get_bytes(bufptr_t& buffer) final {
         StreamSource::status_t status;
         while (buffer.length && current_stream_) {
-            if ((status = current_stream_->get_bytes(buffer)) != StreamSource::CLOSED) {
+            if ((status = current_stream_->get_bytes(buffer)) != StreamSource::kClosed) {
                 return status;
             }
             set_next();
         }
-        return current_stream_ ? StreamSource::OK : StreamSource::CLOSED;
+        return current_stream_ ? StreamSource::kOk : StreamSource::kClosed;
     }
 
 private:

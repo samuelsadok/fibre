@@ -26,17 +26,17 @@ TestContext decoder_test_bytewise(TDecoder decoder_prototype, const uint8_t (&en
 
     static_assert(std::is_base_of<typename fibre::Decoder<TVal>, TDecoder>::value, "TDecoder must inherit Decoder<TVal>");
 
-    TEST_EQUAL(decoder.process_bytes_({nullptr, 0}, nullptr), StreamSink::OK);
+    TEST_EQUAL(decoder.process_bytes_({nullptr, 0}, nullptr), StreamSink::kOk);
     for (size_t i = 0; i < length - 1; ++i) {
-        TEST_EQUAL(decoder.process_bytes_({encoded + i, 1}, &processed_bytes), StreamSink::OK);
-        TEST_EQUAL(decoder.process_bytes_({encoded + i, 0}, &processed_bytes), StreamSink::OK);
+        TEST_EQUAL(decoder.process_bytes_({encoded + i, 1}, &processed_bytes), StreamSink::kOk);
+        TEST_EQUAL(decoder.process_bytes_({encoded + i, 0}, &processed_bytes), StreamSink::kOk);
         TEST_EQUAL(processed_bytes, i + 1);
         TEST_ZERO(decoder.get());
     }
-    TEST_EQUAL(decoder.process_bytes_({encoded + length - 1, 1}, &processed_bytes), StreamSink::CLOSED);
+    TEST_EQUAL(decoder.process_bytes_({encoded + length - 1, 1}, &processed_bytes), StreamSink::kClosed);
     TEST_EQUAL(processed_bytes, length);
-    TEST_EQUAL(decoder.process_bytes_({encoded + length - 1, 0}, &processed_bytes), StreamSink::CLOSED);
-    TEST_EQUAL(decoder.process_bytes_({encoded + length - 1, 1}, &processed_bytes), StreamSink::CLOSED);
+    TEST_EQUAL(decoder.process_bytes_({encoded + length - 1, 0}, &processed_bytes), StreamSink::kClosed);
+    TEST_EQUAL(decoder.process_bytes_({encoded + length - 1, 1}, &processed_bytes), StreamSink::kClosed);
     TEST_EQUAL(processed_bytes, length);
 
     TEST_NOT_NULL(decoder.get());
@@ -55,7 +55,7 @@ TestContext decoder_test_chunkwise(TDecoder decoder_prototype, const uint8_t (&e
 
     static_assert(std::is_base_of<typename fibre::Decoder<TVal>, TDecoder>::value, "TDecoder must inherit Decoder<TVal>");
 
-    StreamSink::status_t status = StreamSink::CLOSED;
+    StreamSink::status_t status = StreamSink::kClosed;
     decoder = decoder_prototype;
     uint8_t encoded_longer[length + 1];
     memcpy(encoded_longer, encoded, length);
@@ -65,11 +65,11 @@ TestContext decoder_test_chunkwise(TDecoder decoder_prototype, const uint8_t (&e
         TEST_ZERO(decoder.get());
         size_t prev_length = bufptr.length;
         status = decoder.process_bytes(bufptr);
-        if (status == StreamSink::OK) {
+        if (status == StreamSink::kOk) {
             TEST_ASSERT(prev_length > bufptr.length);
             TEST_ASSERT(bufptr.length > 1);
         } else {
-            TEST_EQUAL(status, StreamSink::CLOSED);
+            TEST_EQUAL(status, StreamSink::kClosed);
             TEST_EQUAL(bufptr.length, (size_t)1);
         }
     }
@@ -90,19 +90,19 @@ TestContext encoder_test_bytewise(TEncoder encoder_prototype, const uint8_t (&en
 
     static_assert(std::is_base_of<typename fibre::Encoder<TVal>, TEncoder>::value, "TEncoder must inherit Decoder<TVal>");
 
-    TEST_ASSERT(encoder.get_bytes_({nullptr, 0}, nullptr), StreamSource::CLOSED);
+    TEST_ASSERT(encoder.get_bytes_({nullptr, 0}, nullptr), StreamSource::kClosed);
     encoder.set(&decoded);
 
     uint8_t encoded_out[length + 1];
     for (size_t i = 0; i < length - 1; ++i) {
-        TEST_EQUAL(encoder.get_bytes_({encoded_out + i, 1}, &generated_bytes), StreamSource::OK);
-        TEST_EQUAL(encoder.get_bytes_({encoded_out + i, 0}, &generated_bytes), StreamSource::OK);
+        TEST_EQUAL(encoder.get_bytes_({encoded_out + i, 1}, &generated_bytes), StreamSource::kOk);
+        TEST_EQUAL(encoder.get_bytes_({encoded_out + i, 0}, &generated_bytes), StreamSource::kOk);
         TEST_EQUAL(generated_bytes, i + 1);
     }
-    TEST_EQUAL(encoder.get_bytes_({encoded_out + length - 1, 1}, &generated_bytes), StreamSource::CLOSED);
+    TEST_EQUAL(encoder.get_bytes_({encoded_out + length - 1, 1}, &generated_bytes), StreamSource::kClosed);
     TEST_EQUAL(generated_bytes, length);
-    TEST_EQUAL(encoder.get_bytes_({encoded_out + length - 1, 0}, &generated_bytes), StreamSource::CLOSED);
-    TEST_EQUAL(encoder.get_bytes_({encoded_out + length - 1, 1}, &generated_bytes), StreamSource::CLOSED);
+    TEST_EQUAL(encoder.get_bytes_({encoded_out + length - 1, 0}, &generated_bytes), StreamSource::kClosed);
+    TEST_EQUAL(encoder.get_bytes_({encoded_out + length - 1, 1}, &generated_bytes), StreamSource::kClosed);
     TEST_EQUAL(generated_bytes, length);
 
     TEST_ZERO(memcmp(encoded, encoded_out, length));

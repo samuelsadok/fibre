@@ -17,12 +17,12 @@ stream_copy_result_t stream_copy(StreamSink* dst, StreamSource* src) {
 
     //if (max_copy_size <= bufptr.length) {
     //    FIBRE_LOG(E) << "no progress";
-    //    return StreamSource::ERROR;
+    //    return StreamSource::kError;
     //}
 
     if (cbufptr.length > bufptr.length) {
         FIBRE_LOG(E) << "not all bytes processed";
-        return {StreamSink::ERROR, StreamSource::ERROR};
+        return {StreamSink::kError, StreamSource::kError};
     }
     return status;
 }
@@ -31,17 +31,17 @@ stream_copy_result_t stream_copy(StreamSink* dst, OpenStreamSource* src) {
     stream_copy_result_t status;
     
     cbufptr_t buf = { .ptr = nullptr, .length = SIZE_MAX };;
-    if (src->get_buffer(&buf) != StreamSource::OK) {
-        return {StreamSink::ERROR, StreamSource::ERROR};
+    if (src->get_buffer(&buf) != StreamSource::kOk) {
+        return {StreamSink::kError, StreamSource::kError};
     }
     FIBRE_LOG(D) << "got " << buf.length << " bytes at " << (void*)buf.ptr << " from source";
     size_t old_length = buf.length;
     status.dst_status = dst->process_bytes(buf);
     status.src_status = src->consume(old_length - buf.length);
 
-    if ((status.src_status == StreamSource::OK) && (status.dst_status == StreamSink::OK) && (old_length <= buf.length)) {
+    if ((status.src_status == StreamSource::kOk) && (status.dst_status == StreamSink::kOk) && (old_length <= buf.length)) {
         FIBRE_LOG(E) << "no progress: buf len went from " << old_length << " to " << buf.length;
-        return {StreamSink::ERROR, StreamSource::ERROR};
+        return {StreamSink::kError, StreamSource::kError};
     }
     return status;
 }

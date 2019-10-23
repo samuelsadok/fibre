@@ -112,11 +112,11 @@ StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
     // If recvfrom returns -1, an errno is set to indicate the error.
     if (n_received < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return StreamSource::BUSY;
+            return StreamSource::kBusy;
         } else {
             FIBRE_LOG(E) << "Socket read failed: " << sock_err();
             buffer += buffer.length; // the function might have written to the buffer
-            return StreamSource::ERROR;
+            return StreamSource::kError;
         }
     }
     
@@ -130,20 +130,20 @@ StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
         // by the peer. Therefore we know that it must be reason 1. or 3. above.
         // TODO: find a way to query if the socket was closed or not, so that
         // this works for a broader class of sockets.
-        return StreamSource::OK;
+        return StreamSource::kOk;
     }
 
     // This is unexpected and would indicate a bug in the OS
     // or does it just mean that the buffer was too small? Not sure.
     if (n_received > buffer.length) {
         buffer += buffer.length;
-        return StreamSource::ERROR;
+        return StreamSource::kError;
     }
 
     FIBRE_LOG(D) << "Received data from " << remote_addr << "\n";
 
     buffer += n_received;
-    return StreamSource::OK;
+    return StreamSource::kOk;
 }
 
 
@@ -198,9 +198,9 @@ int PosixSocketTXChannel::unsubscribe() {
 
 void PosixSocketTXChannel::tx_handler(uint32_t) {
     // TODO: the uint32_t arg signifies if we were called because of a close event
-    // In this case we should pass on the CLOSED (or ERROR?) status.
+    // In this case we should pass on the kClosed (or kError?) status.
     if (callback_)
-        (*callback_)(StreamSink::OK);
+        (*callback_)(StreamSink::kOk);
 }
 
 StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
@@ -208,7 +208,7 @@ StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
     // will return EMSGSIZE. This needs some testing if this correctly detects
     // the UDP message size.
     //if (buffer.length > get_mtu()) {
-    //    return StreamSink::ERROR;
+    //    return StreamSink::kError;
     //}
 
     // TODO: if the socket is already closed, the process will receive a SIGPIPE,
@@ -217,23 +217,23 @@ StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
     int n_sent = sendto(socket_id_, buffer.ptr, buffer.length, 0, reinterpret_cast<struct sockaddr*>(&remote_addr_), sizeof(remote_addr_));
     if (n_sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return StreamSink::BUSY;
+            return StreamSink::kBusy;
         } else {
             FIBRE_LOG(E) << "Socket write failed: " << sock_err();
-            return StreamSink::ERROR;
+            return StreamSink::kError;
         }
     }
     
     // This is unexpected and would indicate a bug in the OS.
     if (n_sent > buffer.length) {
         buffer += buffer.length;
-        return StreamSink::ERROR;
+        return StreamSink::kError;
     }
 
     buffer += n_sent;
 
     FIBRE_LOG(D) << "Sent data to " << remote_addr_ << "\n";
-    return StreamSink::OK;
+    return StreamSink::kOk;
 }
 
 
