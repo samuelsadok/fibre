@@ -2,9 +2,6 @@
 #define __FIBRE_POSIX_UDP_HPP
 
 #include <fibre/linux_worker.hpp>
-#include <fibre/linux_timer.hpp>
-#include <fibre/channel_discoverer.hpp>
-#include <fibre/context.hpp>
 #include <fibre/stream.hpp>
 
 #include <netinet/in.h>
@@ -14,10 +11,13 @@ namespace fibre {
 
 #if defined(__linux__)
 using TWorker = LinuxWorker; // TODO: rename to EPollWorker or LinuxEPollWorker
-//#elif defined(_WIN32) || defined(_WIN64)
-//using TWorker = PosixPollWorker;
+using socket_id_t = int;
+#elif defined(_WIN32) || defined(_WIN64)
+using TWorker = PosixPollWorker;
+using socket_id_t = SOCKET;
 #else
 using TWorker = KQueueWorker;
+using socket_id_t = int;
 #endif
 
 #if defined(_Win32) || defined(_Win64)
@@ -26,9 +26,6 @@ using TWorker = KQueueWorker;
 #define INVALID_SOCKET (-1)
 #define IS_INVALID_SOCKET(socket_id)    (socket_id < 0)
 #endif
-
-// TODO: have the user allocate buffer space for posix sockets
-#define POSIX_SOCKET_RX_BUFFER_SIZE 8192
 
 
 template<typename TWorker>
@@ -89,7 +86,7 @@ public:
      * The socket must be bound to a local address before this function is
      * called.
      */
-    int init(int socket_id);
+    int init(socket_id_t socket_id);
     int deinit();
 
     int subscribe(TWorker* worker, callback_t* callback) final;
@@ -97,18 +94,18 @@ public:
 
     status_t get_bytes(bufptr_t& buffer) final;
 
-    int get_socket_id() const { return socket_id_; }
+    socket_id_t get_socket_id() const { return socket_id_; }
 
     /** @brief Returns the remote address of the most recently received data */
-    struct sockaddr_in6 get_remote_address() const { return remote_addr_; }
+    struct sockaddr_storage get_remote_address() const { return remote_addr_; }
 
 private:
     void rx_handler(uint32_t);
 
-    int socket_id_ = INVALID_SOCKET;
+    socket_id_t socket_id_ = INVALID_SOCKET;
     TWorker* worker_ = nullptr;
     callback_t* callback_ = nullptr;
-    struct sockaddr_in6 remote_addr_ = {0}; // updated after each get_bytes() call
+    struct sockaddr_storage remote_addr_ = {0}; // updated after each get_bytes() call
 
     member_closure_t<decltype(&PosixSocketRXChannel::rx_handler)> rx_handler_obj{&PosixSocketRXChannel::rx_handler, this};
 };
@@ -130,7 +127,7 @@ public:
      *        socket()).
      *        The socket must be in non-blocking mode (opened with O_NONBLOCK)
      */
-    int init(int socket_id, struct sockaddr_in6 remote_addr);
+    int init(socket_id_t socket_id, struct sockaddr_storage remote_addr);
     int deinit();
 
     int subscribe(TWorker* worker, callback_t* callback) final;
@@ -138,15 +135,15 @@ public:
 
     status_t process_bytes(cbufptr_t& buffer) final;
 
-    int get_socket_id() const { return socket_id_; }
+    socket_id_t get_socket_id() const { return socket_id_; }
 
 private:
     void tx_handler(uint32_t);
 
-    int socket_id_ = INVALID_SOCKET;
+    socket_id_t socket_id_ = INVALID_SOCKET;
     TWorker* worker_ = nullptr;
     callback_t* callback_ = nullptr;
-    struct sockaddr_in6 remote_addr_;
+    struct sockaddr_storage remote_addr_;
 
     member_closure_t<decltype(&PosixSocketTXChannel::tx_handler)> tx_handler_obj{&PosixSocketTXChannel::tx_handler, this};
 };

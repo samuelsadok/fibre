@@ -1,23 +1,26 @@
 
+#include <fibre/posix_udp.hpp>
+#include <fibre/logging.hpp>
+#include <fibre/input.hpp>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <fibre/posix_udp.hpp>
-#include <fibre/logging.hpp>
-#include <fibre/input.hpp>
-
 DEFINE_LOG_TOPIC(UDP);
 USE_LOG_TOPIC(UDP);
+
+// TODO: have the user allocate buffer space for posix sockets
+#define POSIX_SOCKET_RX_BUFFER_SIZE 8192
 
 using namespace fibre;
 
 namespace std {
-static std::ostream& operator<<(std::ostream& stream, const struct sockaddr_in6& val) {
+static std::ostream& operator<<(std::ostream& stream, const struct sockaddr_storage& val) {
     char buf[128];
-    if (inet_ntop(AF_INET6, &val, buf, sizeof(buf))) {
+    if (inet_ntop(val.ss_family, &val, buf, sizeof(buf))) {
         return stream << buf;
     } else {
         return stream << "(invalid address)";
@@ -46,7 +49,7 @@ static std::ostream& operator<<(std::ostream& stream, const sock_err&) {
 
 /* PosixSocketRXChannel implementation ---------------------------------------*/
 
-int PosixSocketRXChannel::init(int socket_id) {
+int PosixSocketRXChannel::init(socket_id_t socket_id) {
     if (!IS_INVALID_SOCKET(socket_id_)) {
         FIBRE_LOG(E) << "already initialized";
         return -1;
@@ -101,7 +104,7 @@ void PosixSocketRXChannel::rx_handler(uint32_t) {
 }
 
 StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
-    struct sockaddr_in6 remote_addr;
+    struct sockaddr_storage remote_addr;
     socklen_t slen = sizeof(remote_addr);
     ssize_t n_received = recvfrom(socket_id_, buffer.ptr, buffer.length, 0,
             reinterpret_cast<struct sockaddr *>(&remote_addr), &slen);
@@ -146,7 +149,7 @@ StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
 
 /* PosixSocketTXChannel implementation ---------------------------------------*/
 
-int PosixSocketTXChannel::init(int socket_id, struct sockaddr_in6 remote_addr) {
+int PosixSocketTXChannel::init(socket_id_t socket_id, struct sockaddr_storage remote_addr) {
     if (!IS_INVALID_SOCKET(socket_id_)) {
         FIBRE_LOG(E) << "already initialized";
         return -1;
@@ -237,17 +240,17 @@ StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
 /* PosixUdpRxChannel implementation ------------------------------------------*/
 
 int PosixUdpRxChannel::open(std::string local_address, int local_port) {
-    struct sockaddr_in6 local_addr;
-    memset((char *) &local_addr, 0, sizeof(local_addr));
-    local_addr.sin6_family = AF_INET6;
-    local_addr.sin6_port = htons(local_port);
-    local_addr.sin6_flowinfo = 0;
-    if (inet_pton(AF_INET6, local_address.c_str(), &local_addr.sin6_addr) != 1) {
+    struct sockaddr_storage local_addr = {0};
+    struct sockaddr_in6 * local_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&local_addr);
+    local_addr_in6->sin6_family = AF_INET6;
+    local_addr_in6->sin6_port = htons(local_port);
+    local_addr_in6->sin6_flowinfo = 0;
+    if (inet_pton(AF_INET6, local_address.c_str(), &local_addr_in6->sin6_addr) != 1) {
         FIBRE_LOG(E) << "invalid IP address: " << sock_err();
         return -1;
     }
 
-    int socket_id = socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+    socket_id_t socket_id = socket(AF_INET6, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
     if (IS_INVALID_SOCKET(socket_id)) {
         FIBRE_LOG(E) << "failed to open socket: " << sock_err();
         return -1;
@@ -276,7 +279,7 @@ int PosixUdpRxChannel::open(const PosixUdpTxChannel& tx_channel) {
 
     // Duplicate socket ID in order to make the OS's internal ref count work
     // properly.
-    int socket_id = dup(tx_channel.get_socket_id());
+    socket_id_t socket_id = dup(tx_channel.get_socket_id());
     if (IS_INVALID_SOCKET(socket_id)) {
         FIBRE_LOG(E) << "failed to duplicate socket: " << sock_err();
     }
@@ -285,7 +288,7 @@ int PosixUdpRxChannel::open(const PosixUdpTxChannel& tx_channel) {
 
 int PosixUdpRxChannel::close() {
     int result = 0;
-    int socket_id = get_socket_id();
+    socket_id_t socket_id = get_socket_id();
     if (PosixSocketRXChannel::deinit()) {
         FIBRE_LOG(E) << "deinit() failed";
         result = -1;
@@ -301,12 +304,12 @@ int PosixUdpRxChannel::close() {
 /* PosixUdpTxChannel implementation ------------------------------------------*/
 
 int PosixUdpTxChannel::open(std::string remote_address, int remote_port) {
-    struct sockaddr_in6 remote_addr;
-    memset((char *) &remote_addr, 0, sizeof(remote_addr));
-    remote_addr.sin6_family = AF_INET6;
-    remote_addr.sin6_port = htons(remote_port);
-    remote_addr.sin6_flowinfo = 0;
-    if (inet_pton(AF_INET6, remote_address.c_str(), &remote_addr.sin6_addr) != 1) {
+    struct sockaddr_storage remote_addr = {0};
+    struct sockaddr_in6 * remote_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&remote_addr);
+    remote_addr_in6->sin6_family = AF_INET6;
+    remote_addr_in6->sin6_port = htons(remote_port);
+    remote_addr_in6->sin6_flowinfo = 0;
+    if (inet_pton(AF_INET6, remote_address.c_str(), &remote_addr_in6->sin6_addr) != 1) {
         FIBRE_LOG(E) << "invalid IP address: " << sock_err();
         return -1;
     }
@@ -329,15 +332,15 @@ fail1:
 }
 
 int PosixUdpTxChannel::open(const PosixUdpRxChannel& rx_channel) {
-    struct sockaddr_in6 remote_addr = rx_channel.get_remote_address();
-    if (remote_addr.sin6_family != AF_INET6) {
+    struct sockaddr_storage remote_addr = rx_channel.get_remote_address();
+    if (remote_addr.ss_family != AF_INET6) {
         FIBRE_LOG(E) << "RX channel has not received anything yet";
         return -1;
     }
 
     // Duplicate socket ID in order to make the OS's internal ref count work
     // properly.
-    int socket_id = dup(rx_channel.get_socket_id());
+    socket_id_t socket_id = dup(rx_channel.get_socket_id());
     if (IS_INVALID_SOCKET(socket_id)) {
         FIBRE_LOG(E) << "failed to duplicate socket: " << sock_err();
     }
@@ -346,7 +349,7 @@ int PosixUdpTxChannel::open(const PosixUdpRxChannel& rx_channel) {
 
 int PosixUdpTxChannel::close() {
     int result = 0;
-    int socket_id = get_socket_id();
+    socket_id_t socket_id = get_socket_id();
     if (PosixSocketTXChannel::deinit()) {
         FIBRE_LOG(E) << "deinit() failed";
         result = -1;
