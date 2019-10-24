@@ -20,6 +20,7 @@ function fibre_package(platform)
             'bluetooth_discoverer.cpp',
             --'shared_memory_discoverer.cpp',
             'posix_udp.cpp',
+            'posix_socket.cpp',
             'dbus.cpp'
         },
         extra_inputs = {'dbus_interfaces/*.hpp'},
