@@ -34,7 +34,8 @@ TestContext timer_test() {
 
     TEST_ZERO(timer.stop());
 
-    TEST_ASSERT(counter < 8 || counter > 12);
+    std::cout << "counter: " << counter << std::endl;
+    TEST_ASSERT(counter > 8 && counter < 12);
 
     TEST_ZERO(timer.deinit());
     TEST_ZERO(worker.deinit());

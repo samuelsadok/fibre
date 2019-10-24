@@ -61,6 +61,10 @@
 #include <mutex>
 #include <string.h>
 
+#if defined(_WIN32) || defined(_WIN64)
+#include "windows.h"
+#endif
+
 namespace fibre {
 
 // Maximum log verbosity that should be compiled into the binary.
@@ -242,13 +246,19 @@ constexpr const char * get_file_name(TFilepath file_path) {
  * @brief Tag type to print the last system error
  * 
  * The statement `std::out << sys_err();` will print the last system error
- * (based on `errno`) in the following format: "error description (errno)"
+ * in the following format: "error description (errno)".
+ * This is based on `GetLastError()` (Windows) or `errno` (all other systems).
  */
 struct sys_err {};
 
 namespace std {
 static std::ostream& operator<<(std::ostream& stream, const sys_err&) {
-    return stream << strerror(errno) << " (" << errno << ")";
+#if defined(_WIN32) || defined(_WIN64)
+    auto error_code = GetLastError();
+#else
+    auto error_code = errno;
+#endif
+    return stream << strerror(error_code) << " (" << error_code << ")";
 }
 }
 

@@ -278,16 +278,19 @@ function make_platform(input)
     end
 
     if (platform.prefix == 'i686-w64-mingw32-' or platform.prefix == 'x86_64-w64-mingw32-') then
+        -- target Windows Vista and later (could try for lower, but needs some code changes)
+        platform_compiler_flags = {'-D_WIN32_WINNT=_WIN32_WINNT_VISTA', '-DWINVER=_WIN32_WINNT_VISTA'}
         platform_linker_flags = ' -static-libgcc -static-libstdc++ -static'
         platform.main_extension = '.exe'
     else
+        platform_compiler_flags = {}
         platform_linker_flags = ''
         platform.main_extension = '.elf'
     end
 
-    platform.c_compiler = make_gcc_compiler(platform.prefix..'gcc -std=c99 -g -O3', builddir, {}, true)
-    platform.cpp_compiler = make_gcc_compiler(platform.prefix..'g++ -std=c++11 -g -O3', builddir, {}, true)
-    platform.asm_compiler = make_gcc_compiler(platform.prefix..'gcc -x assembler-with-cpp', builddir, {}, false)
+    platform.c_compiler = make_gcc_compiler(platform.prefix..'gcc -std=c99 -g -O3', builddir, platform_compiler_flags, true)
+    platform.cpp_compiler = make_gcc_compiler(platform.prefix..'g++ -std=c++11 -g -O3', builddir, platform_compiler_flags, true)
+    platform.asm_compiler = make_gcc_compiler(platform.prefix..'gcc -x assembler-with-cpp', builddir, platform_compiler_flags, false)
     platform.linker = make_gcc_linker(platform.prefix..'g++ -g -O3'..platform_linker_flags, platform.prefix..'size', platform.prefix..'objcopy', builddir, platform.main_extension)
 
     if run_now(platform.prefix..'pkg-config --version') then

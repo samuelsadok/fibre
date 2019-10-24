@@ -75,9 +75,18 @@ end
 
 
 -- try to compile a few components for windows (will be removed when everything compiles)
-winpkg = make_exe_package({
-    sources = {'worker_test.cpp', '../cpp/windows_worker.cpp', '../cpp/logging.cpp'},
-    include_dirs = {'../cpp/include'}
+winpkg1 = make_exe_package({
+    sources = {'worker_test.cpp', '../cpp/windows_worker.cpp', '../cpp/logging.cpp', '../cpp/windows_udp.cpp'},
+    include_dirs = {'../cpp/include'},
+    outputs = {exported_lib_flags = {'-lws2_32'}}
 })
 winplatform = make_platform('x86_64-w64-mingw32')
-build_packages({winpkg}, {}, winplatform)
+build_packages({winpkg1}, {}, winplatform)
+
+winpkg2 = make_exe_package({
+    sources = {'udp_test.cpp', '../cpp/windows_worker.cpp', '../cpp/logging.cpp', '../cpp/windows_udp.cpp'},
+    include_dirs = {'../cpp/include'},
+    outputs = {exported_lib_flags = {'-lws2_32'}}
+})
+winplatform = make_platform('x86_64-w64-mingw32')
+build_packages({winpkg2}, {}, winplatform)

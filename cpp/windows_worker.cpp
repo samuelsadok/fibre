@@ -72,19 +72,67 @@ int WindowsIOCPWorker::deinit() {
     return result;
 }
 
+int WindowsIOCPWorker::register_object(HANDLE* hFile, callback_t* callback) {
+    if (!hFile)
+        return -1;
+
+    HANDLE hNew;
+    if (!DuplicateHandle(GetCurrentProcess(), *hFile, GetCurrentProcess(), &hNew, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        FIBRE_LOG(E) << "DuplicateHandle() failed: " << sys_err();
+        return -1;
+    }
+
+    if (CreateIoCompletionPort(hNew, h_completion_port_, (uintptr_t)callback, 0) == NULL) {
+        FIBRE_LOG(E) << "CreateIoCompletionPort() failed: " << sys_err();
+        return -1;
+    }
+
+    handles_[hNew] = hFile;
+    *hFile = hNew;
+    return 0;
+}
+
+int WindowsIOCPWorker::deregister_object(HANDLE* hFile) {
+    if (!hFile)
+        return -1;
+
+    if (!CloseHandle(*hFile)) {
+        FIBRE_LOG(E) << "CloseHandle() failed: " << sys_err();
+        return -1;
+    }
+
+    // Fetch the original handle that was passed to register_object()
+    auto it = handles_.find(*hFile);
+    if (it == handles_.end()) {
+        return -1;
+    } else {
+        HANDLE hOld = it->second;
+        handles_.erase(*hFile);
+        *hFile = hOld;
+        return 0;
+    }
+}
+
 void WindowsIOCPWorker::event_loop() {
     while (should_run_) {
         iterations_++;
 
         uintptr_t completion_key;
-        if (!GetQueuedCompletionStatus(h_completion_port_, NULL, &completion_key, NULL, INFINITE)) {
-            FIBRE_LOG(E) << "GetQueuedCompletionStatus() failed: " << sys_err() << " - Terminating worker thread.";
-            break;
+        LPOVERLAPPED overlapped;
+        int error_code = ERROR_SUCCESS;
+
+        if (!GetQueuedCompletionStatus(h_completion_port_, NULL, &completion_key, &overlapped, INFINITE)) {
+            if (overlapped) {
+                error_code = GetLastError();
+            } else {
+                FIBRE_LOG(E) << "GetQueuedCompletionStatus() failed: " << sys_err() << " - Terminating worker thread.";
+                break;
+            }
         }
 
         callback_t* callback = (callback_t*)completion_key;
         if (callback) {
-            (*callback)();
+            (*callback)(error_code, overlapped);
         }
     }
 }
