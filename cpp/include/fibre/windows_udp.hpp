@@ -19,13 +19,33 @@ public:
     using callback_t = Callback<StreamSource::status_t, cbufptr_t>;
 
     /**
-     * @brief Initializes the RX channel with the given socket ID.
+     * @brief Initializes the RX channel by opening a socket using the
+     * WSASocket() function.
      * 
-     * For Unix-like systems this should be a file descriptor, for Windows this
-     * should be a Windows Socket ID (as returned by socket()).
+     * The resulting socket will be bound to the address provided in `local_addr`.
+     * 
+     * @param type: Will be passed as 2nd argument to WSASocket(). Can be for
+     *        instance SOCK_DGRAM or SOCKET_STREAM.
+     * @param protocol: Will be passed as 3rd argument to WSASocket(). Can be for
+     *        instance IPPROTO_UDP or IPPROTO_TCP.
+     * @param local_addr: The local address to the socket should be bound. The
+     *        ss_family field of this address is passed as 1st argument to
+     *        WSASocket().
+     */
+    int init(int type, int protocol, struct sockaddr_storage local_addr);
+
+    /**
+     * @brief Initializes the RX channel with the given socket ID.
      * 
      * The socket must be bound to a local address before this function is
      * called.
+     * 
+     * @param socket_id: This should be a Windows Socket ID as returned by
+     *        socket() or WSASocket().
+     *        The socket must be in non-blocking mode.
+     *        The socket will internally be duplicated using DuplicateHandle()
+     *        so deinit() can be called regardless of what overload of init()
+     *        was used.
      */
     int init(SOCKET socket_id);
     int deinit();
@@ -61,12 +81,28 @@ public:
     using callback_t = Callback<StreamSink::status_t>;
 
     /**
+     * @brief Initializes the TX channel by opening a socket using the
+     * WSASocket() function.
+     * 
+     * @param type: Will be passed as 2nd argument to WSASocket(). Can be for
+     *        instance SOCK_DGRAM or SOCKET_STREAM.
+     * @param protocol: Will be passed as 3rd argument to WSASocket(). Can be for
+     *        instance IPPROTO_UDP or IPPROTO_TCP.
+     * @param remote_addr: The remote address to which data should be sent. The
+     *        ss_family field of this address is passed as 1st argument to
+     *        WSASocket().
+     */
+    int init(int type, int protocol, struct sockaddr_storage remote_addr);
+
+    /**
      * @brief Initializes the TX channel with the given socket ID.
      * 
-     * @param socket_id: For Unix-like systems this should be a file descriptor,
-     *        for Windows this should be a Windows Socket ID (as returned by
-     *        socket()).
-     *        The socket must be in non-blocking mode (opened with O_NONBLOCK)
+     * @param socket_id: This should be a Windows Socket ID as returned by
+     *        socket() or WSASocket().
+     *        The socket must be in non-blocking mode.
+     *        The socket will internally be duplicated using DuplicateHandle()
+     *        so deinit() can be called regardless of what overload of init()
+     *        was used.
      */
     int init(SOCKET socket_id, struct sockaddr_storage remote_addr);
     int deinit();

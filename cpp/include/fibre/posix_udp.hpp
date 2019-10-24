@@ -39,6 +39,22 @@ public:
     using callback_t = Callback<StreamSource::status_t, cbufptr_t>;
 
     /**
+     * @brief Initializes the RX channel by opening a socket using the socket()
+     * function.
+     * 
+     * The resulting socket will be bound to the address provided in `local_addr`.
+     * 
+     * @param type: Will be passed as 2nd argument to socket(). Can be for
+     *        instance SOCK_DGRAM or SOCKET_STREAM.
+     * @param protocol: Will be passed as 3rd argument to socket(). Can be for
+     *        instance IPPROTO_UDP or IPPROTO_TCP.
+     * @param local_addr: The local address to the socket should be bound. The
+     *        ss_family field of this address is passed as 1st argument to
+     *        socket().
+     */
+    int init(int type, int protocol, struct sockaddr_storage local_addr);
+
+    /**
      * @brief Initializes the RX channel with the given socket ID.
      * 
      * The socket must be bound to a local address before this function is
@@ -48,6 +64,8 @@ public:
      *        for Windows this should be a Windows Socket ID (as returned by
      *        socket()).
      *        The socket must be in non-blocking mode (opened with O_NONBLOCK)
+     *        The socket will internally be duplicated using dup() so deinit()
+     *        can be called regardless of what overload of init() was used.
      */
     int init(socket_id_t socket_id);
     int deinit();
@@ -83,14 +101,34 @@ public:
     using callback_t = Callback<StreamSink::status_t>;
 
     /**
+     * @brief Initializes the TX channel by opening a socket using the socket()
+     * function.
+     * 
+     * @param type: Will be passed as 2nd argument to socket(). Can be for
+     *        instance SOCK_DGRAM or SOCKET_STREAM.
+     * @param protocol: Will be passed as 3rd argument to socket(). Can be for
+     *        instance IPPROTO_UDP or IPPROTO_TCP.
+     * @param remote_addr: The remote address to which data should be sent. The
+     *        ss_family field of this address is passed as 1st argument to
+     *        socket().
+     */
+    int init(int type, int protocol, struct sockaddr_storage remote_addr);
+
+    /**
      * @brief Initializes the TX channel with the given socket ID.
      * 
      * @param socket_id: For Unix-like systems this should be a file descriptor,
      *        for Windows this should be a Windows Socket ID (as returned by
      *        socket()).
      *        The socket must be in non-blocking mode (opened with O_NONBLOCK)
+     *        The socket will internally be duplicated using dup() so deinit()
+     *        can be called regardless of what overload of init() was used.
      */
     int init(socket_id_t socket_id, struct sockaddr_storage remote_addr);
+
+    /**
+     * @brief Deinits a socket that was initialized with init().
+     */
     int deinit();
 
     int subscribe(TWorker* worker, callback_t* callback) final;

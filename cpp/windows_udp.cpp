@@ -72,13 +72,63 @@ int wsa_stop() {
 
 /* WindowsSocketRXChannel implementation -------------------------------------*/
 
-int WindowsSocketRXChannel::init(SOCKET socket_id) {
+int WindowsSocketRXChannel::init(int type, int protocol, struct sockaddr_storage local_addr) {
+    if (wsa_start())
+        return -1;
+
     if (socket_id_ != INVALID_SOCKET) {
         FIBRE_LOG(E) << "already initialized";
         return -1;
     }
 
+    SOCKET socket_id = WSASocketW(local_addr.ss_family, type, protocol, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (socket_id == INVALID_SOCKET) {
+        FIBRE_LOG(E) << "failed to open socket: " << sock_err();
+        return -1;
+    }
+
+    // Make socket non-blocking
+    u_long iMode = 1; // non-blocking mode
+    if (ioctlsocket(socket_id, FIONBIO, &iMode)) {
+        FIBRE_LOG(E) << "ioctlsocket() failed: " << sock_err();
+        goto fail;
+    }
+
+    if (bind(socket_id, reinterpret_cast<struct sockaddr*>(&local_addr), sizeof(local_addr))) {
+        FIBRE_LOG(E) << "failed to bind socket: " << sock_err();
+        goto fail;
+    }
+
     socket_id_ = socket_id;
+    return 0;
+
+fail:
+    CloseHandle((HANDLE)socket_id);
+    return -1;
+}
+
+int WindowsSocketRXChannel::init(SOCKET socket_id) {
+    if (wsa_start())
+        return -1;
+
+    if (socket_id_ != INVALID_SOCKET) {
+        FIBRE_LOG(E) << "already initialized";
+        return -1;
+    }
+
+    // Duplicate socket ID in order to make the OS's internal ref count work
+    // properly.
+    HANDLE new_socket_id;
+    BOOL result = DuplicateHandle(GetCurrentProcess(), (HANDLE)socket_id,
+            GetCurrentProcess(), &new_socket_id,
+            0, FALSE, DUPLICATE_SAME_ACCESS);
+
+    if (!result || !new_socket_id) {
+        FIBRE_LOG(E) << "DuplicateHandle() failed: " << sys_err();
+        return -1;
+    }
+
+    socket_id_ = (SOCKET)new_socket_id;
     return 0;
 }
 
@@ -88,8 +138,17 @@ int WindowsSocketRXChannel::deinit() {
         return -1;
     }
 
+    int result = 0;
+    if (!CloseHandle((HANDLE)socket_id_)) {
+        FIBRE_LOG(E) << "CloseHandle() failed: " << sock_err();
+        result = -1;
+    }
+
+    if (wsa_stop())
+        result = -1;
+
     socket_id_ = INVALID_SOCKET;
-    return 0;
+    return result;
 }
 
 int WindowsSocketRXChannel::subscribe(TWorker* worker, callback_t* callback) {
@@ -173,16 +232,59 @@ StreamSource::status_t WindowsSocketRXChannel::get_bytes(bufptr_t& buffer) {
 
 /* WindowsSocketTXChannel implementation -------------------------------------*/
 
-int WindowsSocketTXChannel::init(SOCKET socket_id, struct sockaddr_storage remote_addr) {
+int WindowsSocketTXChannel::init(int type, int protocol, struct sockaddr_storage remote_addr) {
+    if (wsa_start())
+        return -1;
+
     if (socket_id_ != INVALID_SOCKET) {
         FIBRE_LOG(E) << "already initialized";
         return -1;
     }
 
-    // TODO: make non-blocking:
-    //ioctlsocket(hSocket, FIONBIO, &lNonBlocking);
+    SOCKET socket_id = WSASocketW(remote_addr.ss_family, type, protocol, NULL, 0, WSA_FLAG_OVERLAPPED);
+    if (socket_id == INVALID_SOCKET) {
+        FIBRE_LOG(E) << "failed to open socket: " << sock_err();
+        return -1;
+    }
+
+    // Make socket non-blocking
+    u_long iMode = 1; // non-blocking mode
+    if (ioctlsocket(socket_id, FIONBIO, &iMode)) {
+        FIBRE_LOG(E) << "ioctlsocket() failed: " << sock_err();
+        goto fail;
+    }
 
     socket_id_ = socket_id;
+    remote_addr_ = remote_addr;
+    return 0;
+
+fail:
+    CloseHandle((HANDLE)socket_id);
+    return -1;
+}
+
+int WindowsSocketTXChannel::init(SOCKET socket_id, struct sockaddr_storage remote_addr) {
+    if (wsa_start())
+        return -1;
+
+    if (socket_id_ != INVALID_SOCKET) {
+        FIBRE_LOG(E) << "already initialized";
+        return -1;
+    }
+
+    // Duplicate socket ID in order to make the OS's internal ref count work
+    // properly.
+    HANDLE new_socket_id;
+    BOOL result = DuplicateHandle(GetCurrentProcess(), (HANDLE)socket_id,
+            GetCurrentProcess(), &new_socket_id,
+            0, FALSE, DUPLICATE_SAME_ACCESS);
+
+    if (!result || !new_socket_id) {
+        FIBRE_LOG(E) << "DuplicateHandle() failed: " << sys_err();
+        return -1;
+    }
+
+    socket_id_ = (SOCKET)new_socket_id;
     remote_addr_ = remote_addr;
     return 0;
 }
@@ -193,9 +295,18 @@ int WindowsSocketTXChannel::deinit() {
         return -1;
     }
 
+    int result = 0;
+    if (!CloseHandle((HANDLE)socket_id_)) {
+        FIBRE_LOG(E) << "CloseHandle() failed: " << sock_err();
+        result = -1;
+    }
+
+    if (wsa_stop())
+        result = -1;
+
     socket_id_ = INVALID_SOCKET;
     remote_addr_ = {0};
-    return 0;
+    return result;
 }
 
 int WindowsSocketTXChannel::subscribe(TWorker* worker, callback_t* callback) {
@@ -283,10 +394,6 @@ StreamSink::status_t WindowsSocketTXChannel::process_bytes(cbufptr_t& buffer) {
 /* WindowsUdpRxChannel implementation ----------------------------------------*/
 
 int WindowsUdpRxChannel::open(std::string local_address, int local_port) {
-    if (wsa_start()) {
-        return -1;
-    }
-
     // TODO: this is equivalent in WindowsUdpTxChannel::open(). Move to function.
     struct sockaddr_storage local_addr = {0};
     struct sockaddr_in6 * local_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&local_addr);
@@ -303,87 +410,22 @@ int WindowsUdpRxChannel::open(std::string local_address, int local_port) {
         return -1;
     }
 
-    SOCKET socket_id = WSASocketW(AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (socket_id == INVALID_SOCKET) {
-        FIBRE_LOG(E) << "failed to open socket: " << sock_err();
-        return -1;
-    }
-
-    // Make socket non-blocking
-    u_long iMode = 1; // non-blocking mode
-    if (ioctlsocket(socket_id, FIONBIO, &iMode)) {
-        FIBRE_LOG(E) << "ioctlsocket() failed: " << sock_err();
-        goto fail1;
-    }
-
-    if (WindowsSocketRXChannel::init(socket_id)) {
-        FIBRE_LOG(E) << "failed to init socket";
-        goto fail1;
-    }
-
-    if (bind(socket_id, reinterpret_cast<struct sockaddr*>(&local_addr), sizeof(local_addr))) {
-        FIBRE_LOG(E) << "failed to bind socket: " << sock_err();
-        goto fail2;
-    }
-    return 0;
-
-fail2:
-    WindowsSocketRXChannel::deinit();
-fail1:
-    CloseHandle((HANDLE)socket_id);
-    return -1;
+    return WindowsSocketRXChannel::init(SOCK_DGRAM, IPPROTO_UDP, local_addr);
 }
 
 int WindowsUdpRxChannel::open(const WindowsUdpTxChannel& tx_channel) {
-    if (wsa_start()) {
-        return -1;
-    }
-
     // TODO: add check if anything was sent yet.
-
-    // Duplicate socket ID in order to make the OS's internal ref count work
-    // properly.
-    HANDLE socket_id;
-    BOOL result = DuplicateHandle(GetCurrentProcess(), (HANDLE)tx_channel.get_socket_id(),
-            GetCurrentProcess(), &socket_id,
-            0, FALSE, DUPLICATE_SAME_ACCESS);
-
-    if (!result || !socket_id) {
-        FIBRE_LOG(E) << "DuplicateHandle() failed: " << sys_err();
-        return -1;
-    }
-    if (WindowsSocketRXChannel::init((SOCKET)socket_id)) {
-        CloseHandle(socket_id);
-        return -1;
-    }
-    return 0;
+    return WindowsSocketRXChannel::init(tx_channel.get_socket_id());
 }
 
 int WindowsUdpRxChannel::close() {
-    int result = 0;
-    SOCKET socket_id = get_socket_id();
-    if (WindowsSocketRXChannel::deinit()) {
-        FIBRE_LOG(E) << "deinit() failed";
-        result = -1;
-    }
-    if (!CloseHandle((HANDLE)socket_id)) {
-        FIBRE_LOG(E) << "close() failed: " << sock_err();
-        result = -1;
-    }
-    if (wsa_stop()) {
-        result = -1;
-    }
-    return result;
+    return WindowsSocketRXChannel::deinit();
 }
 
 
 /* WindowsUdpTxChannel implementation ----------------------------------------*/
 
 int WindowsUdpTxChannel::open(std::string remote_address, int remote_port) {
-    if (wsa_start()) {
-        return -1;
-    }
-
     struct sockaddr_storage remote_addr = {0};
     struct sockaddr_in6 * remote_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&remote_addr);
     remote_addr_in6->sin6_family = AF_INET6;
@@ -399,72 +441,19 @@ int WindowsUdpTxChannel::open(std::string remote_address, int remote_port) {
         return -1;
     }
 
-    SOCKET socket_id = WSASocketW(AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (socket_id == INVALID_SOCKET) {
-        FIBRE_LOG(E) << "failed to open socket: " << sock_err();
-        return -1;
-    }
-
-    // Make socket non-blocking
-    u_long iMode = 1; // non-blocking mode
-    if (ioctlsocket(socket_id, FIONBIO, &iMode)) {
-        FIBRE_LOG(E) << "ioctlsocket() failed: " << sock_err();
-        goto fail1;
-    }
-
-    if (WindowsSocketTXChannel::init(socket_id, remote_addr)) {
-        FIBRE_LOG(E) << "failed to init socket";
-        goto fail1;
-    }
-    return 0;
-
-fail1:
-    CloseHandle((HANDLE)socket_id);
-    return -1;
+    return WindowsSocketTXChannel::init(SOCK_DGRAM, IPPROTO_UDP, remote_addr);
 }
 
 int WindowsUdpTxChannel::open(const WindowsUdpRxChannel& rx_channel) {
-    if (wsa_start()) {
-        return -1;
-    }
-
     struct sockaddr_storage remote_addr = rx_channel.get_remote_address();
     if (remote_addr.ss_family != AF_INET6) {
         FIBRE_LOG(E) << "RX channel has not received anything yet";
         return -1;
     }
 
-    // Duplicate socket ID in order to make the OS's internal ref count work
-    // properly.
-    HANDLE socket_id;
-    BOOL result = DuplicateHandle(GetCurrentProcess(), (HANDLE)rx_channel.get_socket_id(),
-            GetCurrentProcess(), &socket_id,
-            0, FALSE, DUPLICATE_SAME_ACCESS);
-            
-    if (!result || !socket_id) {
-        FIBRE_LOG(E) << "DuplicateHandle() failed: " << sys_err();
-        return -1;
-    }
-    if (WindowsSocketTXChannel::init((SOCKET)socket_id, remote_addr)) {
-        CloseHandle(socket_id);
-        return -1;
-    }
-    return 0;
+    return WindowsSocketTXChannel::init(rx_channel.get_socket_id(), remote_addr);
 }
 
 int WindowsUdpTxChannel::close() {
-    int result = 0;
-    SOCKET socket_id = get_socket_id();
-    if (WindowsSocketTXChannel::deinit()) {
-        FIBRE_LOG(E) << "deinit() failed";
-        result = -1;
-    }
-    if (!CloseHandle((HANDLE)socket_id)) {
-        FIBRE_LOG(E) << "close() failed: " << sock_err();
-        result = -1;
-    }
-    if (wsa_stop()) {
-        result = -1;
-    }
-    return result;
+    return WindowsSocketTXChannel::deinit();
 }
