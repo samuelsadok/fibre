@@ -14,12 +14,12 @@
 // and some XMLs: https://github.com/labapart/gattlib/tree/51c6cbeee2c7af15347d40389dd9a05ac829f674/dbus/dbus-bluez-v5.48
 
 #include <fibre/bluetooth_discoverer.hpp>
-#include "dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
-#include "dbus_interfaces/org.freedesktop.DBus.Properties.hpp"
-#include "dbus_interfaces/org.bluez.LEAdvertisingManager1.hpp"
-#include "dbus_interfaces/org.bluez.GattManager1.hpp"
-#include "dbus_interfaces/org.bluez.LEAdvertisement1.hpp"
-#include "dbus_interfaces/org.bluez.GattService1.hpp"
+#include "platform_support/dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
+#include "platform_support/dbus_interfaces/org.freedesktop.DBus.Properties.hpp"
+#include "platform_support/dbus_interfaces/org.bluez.LEAdvertisingManager1.hpp"
+#include "platform_support/dbus_interfaces/org.bluez.GattManager1.hpp"
+#include "platform_support/dbus_interfaces/org.bluez.LEAdvertisement1.hpp"
+#include "platform_support/dbus_interfaces/org.bluez.GattService1.hpp"
 
 using namespace fibre;
 

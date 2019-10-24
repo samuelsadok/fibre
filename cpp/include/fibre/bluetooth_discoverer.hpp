@@ -1,13 +1,13 @@
 #ifndef __FIBRE_BLUETOOTH_DISCOVERER_HPP
 #define __FIBRE_BLUETOOTH_DISCOVERER_HPP
 
-#include <fibre/linux_worker.hpp>
-#include <fibre/linux_timer.hpp>
-#include <fibre/dbus.hpp>
+#include <fibre/platform_support/linux_worker.hpp>
+#include <fibre/platform_support/linux_timer.hpp>
+#include <fibre/platform_support/dbus.hpp>
 #include <fibre/channel_discoverer.hpp>
-#include "../../dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
-#include "../../dbus_interfaces/org.bluez.LEAdvertisingManager1.hpp"
-#include "../../dbus_interfaces/org.bluez.GattManager1.hpp"
+#include "../../platform_support/dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
+#include "../../platform_support/dbus_interfaces/org.bluez.LEAdvertisingManager1.hpp"
+#include "../../platform_support/dbus_interfaces/org.bluez.GattManager1.hpp"
 
 namespace fibre {
 

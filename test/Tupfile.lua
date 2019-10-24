@@ -48,7 +48,7 @@ packages = {
 tup.foreach_rule(
     {"../tools/dbus_interface_definitions/*.xml"},
     "python ../tools/dbus_interface_parser.py -d %f -t ../tools/dbus_interface.c.j2 -o %o",
-    {"../cpp/dbus_interfaces/%B.hpp"}
+    {"../cpp/platform_support/dbus_interfaces/%B.hpp"}
 )
 
 --toolchain=GCCToolchain('', 'build', {'-O3', '-fvisibility=hidden', '-frename-registers', '-funroll-loops'}, {})
@@ -76,7 +76,7 @@ end
 
 -- try to compile a few components for windows (will be removed when everything compiles)
 winpkg1 = make_exe_package({
-    sources = {'worker_test.cpp', '../cpp/windows_worker.cpp', '../cpp/logging.cpp'},
+    sources = {'worker_test.cpp', '../cpp/logging.cpp', '../cpp/platform_support/windows_worker.cpp'},
     include_dirs = {'../cpp/include'},
     outputs = {exported_lib_flags = {'-lws2_32'}}
 })
@@ -84,7 +84,7 @@ winplatform = make_platform('x86_64-w64-mingw32')
 build_packages({winpkg1}, {}, winplatform)
 
 winpkg2 = make_exe_package({
-    sources = {'udp_test.cpp', '../cpp/windows_worker.cpp', '../cpp/logging.cpp', '../cpp/windows_udp.cpp', '../cpp/windows_socket.cpp'},
+    sources = {'udp_test.cpp', '../cpp/logging.cpp', '../cpp/platform_support/windows_worker.cpp', '../cpp/platform_support/windows_udp.cpp', '../cpp/platform_support/windows_socket.cpp'},
     include_dirs = {'../cpp/include'},
     outputs = {exported_lib_flags = {'-lws2_32'}}
 })

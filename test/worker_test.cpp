@@ -1,13 +1,13 @@
 
 #if defined(_WIN32) || defined(_WIN64)
-#include <fibre/windows_worker.hpp>
-//#include <fibre/windows_timer.hpp>
+#include <fibre/platform_support/windows_worker.hpp>
+//#include <fibre/platform_support/windows_timer.hpp>
 #define usleep(arg)  ((void)(arg))
 #endif
 
 #if defined(__linux__)
-#include <fibre/linux_worker.hpp>
-#include <fibre/linux_timer.hpp>
+#include <fibre/platform_support/linux_worker.hpp>
+#include <fibre/platform_support/linux_timer.hpp>
 #include <unistd.h>
 #endif
 

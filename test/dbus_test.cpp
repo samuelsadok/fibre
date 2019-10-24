@@ -1,11 +1,11 @@
 
-#include <fibre/dbus.hpp>
+#include <fibre/platform_support/dbus.hpp>
 #include <dbus/dbus.h>
 #include <sys/epoll.h>
-#include <fibre/linux_worker.hpp>
-#include <fibre/linux_timer.hpp>
-#include <fibre/../../dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp>
-#include <fibre/../../dbus_interfaces/io.fibre.TestInterface.hpp>
+#include <fibre/platform_support/linux_worker.hpp>
+#include <fibre/platform_support/linux_timer.hpp>
+#include <fibre/../../platform_support/dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp>
+#include <fibre/../../platform_support/dbus_interfaces/io.fibre.TestInterface.hpp>
 #include <fibre/print_utils.hpp>
 #include <unistd.h>
 

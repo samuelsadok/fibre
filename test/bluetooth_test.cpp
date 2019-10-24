@@ -5,8 +5,8 @@
 // echo "1-8" | sudo tee /sys/bus/usb/drivers/usb/unbind
 // echo "1-8" | sudo tee /sys/bus/usb/drivers/usb/bind
 
-#include <fibre/linux_worker.hpp>
-#include <fibre/dbus.hpp>
+#include <fibre/platform_support/linux_worker.hpp>
+#include <fibre/platform_support/dbus.hpp>
 
 #include <fibre/bluetooth_discoverer.hpp>
 

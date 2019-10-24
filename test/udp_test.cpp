@@ -1,10 +1,10 @@
 
 #if defined(_WIN32) || defined(_WIN64)
-#include <fibre/windows_udp.hpp>
+#include <fibre/platform_support/windows_udp.hpp>
 #endif
 
 #if defined(__linux__)
-#include <fibre/posix_udp.hpp>
+#include <fibre/platform_support/posix_udp.hpp>
 #endif
 
 #include <fibre/print_utils.hpp>

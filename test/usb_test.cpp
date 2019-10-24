@@ -1,6 +1,6 @@
 
 #include <fibre/usb_discoverer.hpp>
-#include <fibre/linux_worker.hpp>
+#include <fibre/platform_support/linux_worker.hpp>
 
 #include <unistd.h>
 

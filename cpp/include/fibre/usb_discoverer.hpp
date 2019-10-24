@@ -1,8 +1,8 @@
 #ifndef __FIBRE_USB_DISCOVERER_HPP
 #define __FIBRE_USB_DISCOVERER_HPP
 
-#include <fibre/linux_worker.hpp>
-#include <fibre/linux_timer.hpp>
+#include <fibre/platform_support/linux_worker.hpp>
+#include <fibre/platform_support/linux_timer.hpp>
 #include <fibre/channel_discoverer.hpp>
 
 #include <libusb.h>

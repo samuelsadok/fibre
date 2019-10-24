@@ -11,24 +11,24 @@ function fibre_package(platform)
             'stream.cpp',
             --'output.cpp',
             --'remote_node.cpp',
-            --'posix_tcp.cpp',
             'logging.cpp',
-            'linux_event.cpp',
-            'linux_timer.cpp',
-            'linux_worker.cpp',
             'usb_discoverer.cpp',
             'bluetooth_discoverer.cpp',
             --'shared_memory_discoverer.cpp',
-            'posix_udp.cpp',
-            'posix_socket.cpp',
-            'dbus.cpp'
+            'platform_support/dbus.cpp',
+            'platform_support/posix_udp.cpp',
+            --'platform_support/posix_tcp.cpp',
+            'platform_support/posix_socket.cpp',
+            'platform_support/linux_event.cpp',
+            'platform_support/linux_timer.cpp',
+            'platform_support/linux_worker.cpp',
         },
-        extra_inputs = {'dbus_interfaces/*.hpp'},
+        extra_inputs = {'platform_support/dbus_interfaces/*.hpp'},
         include_dirs = {'include'},
         depends = {'pthread'},
         outputs = {
             exported_includes = {'include'}, -- todo: consistent naming
-            exported_extra_inputs = {'dbus_interfaces/*.hpp'}
+            exported_extra_inputs = {'platform_support/dbus_interfaces/*.hpp'}
         }
     }
 
