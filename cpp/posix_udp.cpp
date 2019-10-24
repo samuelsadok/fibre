@@ -79,9 +79,13 @@ int PosixSocketRXChannel::subscribe(TWorker* worker, callback_t* callback) {
         return -1;
     }
 
+    if (worker_->register_event(socket_id_, EPOLLIN, &rx_handler_obj)) {
+        return -1;
+    }
+
     worker_ = worker;
     callback_ = callback;
-    return worker_->register_event(socket_id_, EPOLLIN, &rx_handler_obj);
+    return 0;
 }
 
 int PosixSocketRXChannel::unsubscribe() {
@@ -104,10 +108,9 @@ void PosixSocketRXChannel::rx_handler(uint32_t) {
 }
 
 StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
-    struct sockaddr_storage remote_addr;
-    socklen_t slen = sizeof(remote_addr);
+    socklen_t slen = sizeof(remote_addr_);
     ssize_t n_received = recvfrom(socket_id_, buffer.ptr, buffer.length, 0,
-            reinterpret_cast<struct sockaddr *>(&remote_addr), &slen);
+            reinterpret_cast<struct sockaddr *>(&remote_addr_), &slen);
 
     // If recvfrom returns -1, an errno is set to indicate the error.
     if (n_received < 0) {
@@ -140,7 +143,7 @@ StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
         return StreamSource::kError;
     }
 
-    FIBRE_LOG(D) << "Received data from " << remote_addr << "\n";
+    FIBRE_LOG(D) << "Received data from " << remote_addr_;
 
     buffer += n_received;
     return StreamSource::kOk;
@@ -181,9 +184,13 @@ int PosixSocketTXChannel::subscribe(TWorker* worker, callback_t* callback) {
         return -1;
     }
 
+    if (worker_->register_event(socket_id_, EPOLLOUT, &tx_handler_obj)) {
+        return -1;
+    }
+
     worker_ = worker;
     callback_ = callback;
-    return worker_->register_event(socket_id_, EPOLLOUT, &tx_handler_obj);
+    return 0;
 }
 
 int PosixSocketTXChannel::unsubscribe() {
@@ -232,7 +239,7 @@ StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
 
     buffer += n_sent;
 
-    FIBRE_LOG(D) << "Sent data to " << remote_addr_ << "\n";
+    FIBRE_LOG(D) << "Sent data to " << remote_addr_;
     return StreamSink::kOk;
 }
 
@@ -282,8 +289,13 @@ int PosixUdpRxChannel::open(const PosixUdpTxChannel& tx_channel) {
     socket_id_t socket_id = dup(tx_channel.get_socket_id());
     if (IS_INVALID_SOCKET(socket_id)) {
         FIBRE_LOG(E) << "failed to duplicate socket: " << sock_err();
+        return -1;
     }
-    return PosixSocketRXChannel::init(socket_id);
+    if (PosixSocketRXChannel::init(socket_id)) {
+        ::close(socket_id);
+        return -1;
+    }
+    return 0;
 }
 
 int PosixUdpRxChannel::close() {
@@ -343,8 +355,13 @@ int PosixUdpTxChannel::open(const PosixUdpRxChannel& rx_channel) {
     socket_id_t socket_id = dup(rx_channel.get_socket_id());
     if (IS_INVALID_SOCKET(socket_id)) {
         FIBRE_LOG(E) << "failed to duplicate socket: " << sock_err();
+        return -1;
     }
-    return PosixSocketTXChannel::init(socket_id, remote_addr);
+    if (PosixSocketTXChannel::init(socket_id, remote_addr)) {
+        ::close(socket_id);
+        return -1;
+    }
+    return 0;
 }
 
 int PosixUdpTxChannel::close() {

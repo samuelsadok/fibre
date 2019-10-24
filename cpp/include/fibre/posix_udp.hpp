@@ -80,11 +80,13 @@ public:
     /**
      * @brief Initializes the RX channel with the given socket ID.
      * 
-     * For Unix-like systems this should be a file descriptor, for Windows this
-     * should be a Windows Socket ID (as returned by socket()).
-     * 
      * The socket must be bound to a local address before this function is
      * called.
+     * 
+     * @param socket_id: For Unix-like systems this should be a file descriptor,
+     *        for Windows this should be a Windows Socket ID (as returned by
+     *        socket()).
+     *        The socket must be in non-blocking mode (opened with O_NONBLOCK)
      */
     int init(socket_id_t socket_id);
     int deinit();
