@@ -10,14 +10,60 @@
 
 namespace fibre {
 
-using TWorker = WindowsIOCPWorker;
+using WindowsSocketWorker = WindowsIOCPWorker;
 
 /**
- * @brief Provides a StreamSource based on a WinSock socket ID.
+ * @brief Base class for various types of Windows sockets.
  */
-class WindowsSocketRXChannel : public StreamSource, public ActiveStreamSource<TWorker> {
+class WindowsSocket {
+public:
+    /**
+     * @brief Initializes the socket by using the WSASocket() function.
+     * 
+     * @param family: Will be passed as 1st argument to WSASocket(). Can be for
+     *        instance AF_INET or AF_INET6.
+     * @param type: Will be passed as 2nd argument to WSASocket(). Can be for
+     *        instance SOCK_DGRAM or SOCKET_STREAM.
+     * @param protocol: Will be passed as 3rd argument to WSASocket(). Can be for
+     *        instance IPPROTO_UDP or IPPROTO_TCP.
+     */
+    int init(int family, int type, int protocol);
+
+    /**
+     * @brief Initializes the socket with the given socket ID.
+     * 
+     * @param socket_id: A Windows Socket ID as is returned by socket() or
+     *        WSASocket().
+     *        The socket must be in non-blocking mode.
+     *        The socket will internally be duplicated using DuplicateHandle()
+     *        so deinit() can be called regardless of what overload of init()
+     *        was used.
+     */
+    int init(SOCKET socket_id);
+
+    /**
+     * @brief Deinits a socket that was initialized with init().
+     */
+    int deinit();
+
+    int subscribe(WindowsSocketWorker* worker, WindowsSocketWorker::callback_t* callback);
+    int unsubscribe();
+
+    SOCKET get_socket_id() const { return socket_id_; }
+
+private:
+    SOCKET socket_id_ = INVALID_SOCKET;
+    WindowsSocketWorker* worker_ = nullptr;
+};
+
+/**
+ * @brief StreamSource based on a WinSock socket ID.
+ */
+class WindowsSocketRXChannel : public WindowsSocket, public StreamSource, public ActiveStreamSource<WindowsSocketWorker> {
 public:
     using callback_t = Callback<StreamSource::status_t, cbufptr_t>;
+    int init(int, int, int) = delete;
+    using WindowsSocket::init;
 
     /**
      * @brief Initializes the RX channel by opening a socket using the
@@ -35,6 +81,7 @@ public:
      */
     int init(int type, int protocol, struct sockaddr_storage local_addr);
 
+#if 0
     /**
      * @brief Initializes the RX channel with the given socket ID.
      * 
@@ -49,14 +96,17 @@ public:
      *        was used.
      */
     int init(SOCKET socket_id);
+#endif
+
+    /**
+     * @brief Deinits a socket that was initialized with init().
+     */
     int deinit();
 
-    int subscribe(TWorker* worker, callback_t* callback) final;
+    int subscribe(WindowsSocketWorker* worker, callback_t* callback) final;
     int unsubscribe() final;
 
     status_t get_bytes(bufptr_t& buffer) final;
-
-    SOCKET get_socket_id() const { return socket_id_; }
 
     /** @brief Returns the remote address of the most recently received data */
     struct sockaddr_storage get_remote_address() const { return remote_addr_; }
@@ -64,8 +114,6 @@ public:
 private:
     void rx_handler(int, LPOVERLAPPED);
 
-    SOCKET socket_id_ = INVALID_SOCKET;
-    TWorker* worker_ = nullptr;
     callback_t* callback_ = nullptr;
     struct sockaddr_storage remote_addr_ = {0}; // updated after each get_bytes() call
     WSABUF recv_buf_;
@@ -75,11 +123,13 @@ private:
 };
 
 /**
- * @brief Provides a StreamSink based on a WinSock socket ID.
+ * @brief StreamSink based on a WinSock socket ID.
  */
-class WindowsSocketTXChannel : public StreamSink, public ActiveStreamSink<TWorker> {
+class WindowsSocketTXChannel : public WindowsSocket, public StreamSink, public ActiveStreamSink<WindowsSocketWorker> {
 public:
     using callback_t = Callback<StreamSink::status_t>;
+    int init(int, int, int) = delete;
+    int init(int) = delete;
 
     /**
      * @brief Initializes the TX channel by opening a socket using the
@@ -106,20 +156,20 @@ public:
      *        was used.
      */
     int init(SOCKET socket_id, struct sockaddr_storage remote_addr);
+
+    /**
+     * @brief Deinits a socket that was initialized with init().
+     */
     int deinit();
 
-    int subscribe(TWorker* worker, callback_t* callback) final;
+    int subscribe(WindowsSocketWorker* worker, callback_t* callback) final;
     int unsubscribe() final;
 
     status_t process_bytes(cbufptr_t& buffer) final;
 
-    SOCKET get_socket_id() const { return socket_id_; }
-
 private:
     void tx_handler(int, LPOVERLAPPED);
 
-    SOCKET socket_id_ = INVALID_SOCKET;
-    TWorker* worker_ = nullptr;
     callback_t* callback_ = nullptr;
     struct sockaddr_storage remote_addr_;
     WSABUF send_buf_;

@@ -37,34 +37,25 @@ std::ostream& operator<<(std::ostream& stream, const sock_err&) {
 }
 
 
-/* PosixSocketRXChannel implementation ---------------------------------------*/
+/* PosixSocket implementation ---------------------------------------*/
 
-int PosixSocketRXChannel::init(int type, int protocol, struct sockaddr_storage local_addr) {
+int PosixSocket::init(int family, int type, int protocol) {
     if (!IS_INVALID_SOCKET(socket_id_)) {
         FIBRE_LOG(E) << "already initialized";
         return -1;
     }
 
-    socket_id_t socket_id = socket(local_addr.ss_family, type | SOCK_NONBLOCK, protocol);
+    socket_id_t socket_id = socket(family, type | SOCK_NONBLOCK, protocol);
     if (IS_INVALID_SOCKET(socket_id)) {
         FIBRE_LOG(E) << "failed to open socket: " << sock_err();
         return -1;
     }
 
-    if (bind(socket_id, reinterpret_cast<struct sockaddr*>(&local_addr), sizeof(local_addr))) {
-        FIBRE_LOG(E) << "failed to bind socket: " << sock_err();
-        goto fail;
-    }
-
     socket_id_ = socket_id;
     return 0;
-
-fail:
-    close(socket_id);
-    return -1;
 }
 
-int PosixSocketRXChannel::init(socket_id_t socket_id) {
+int PosixSocket::init(socket_id_t socket_id) {
     if (!IS_INVALID_SOCKET(socket_id_)) {
         FIBRE_LOG(E) << "already initialized";
         return -1;
@@ -82,7 +73,7 @@ int PosixSocketRXChannel::init(socket_id_t socket_id) {
     return 0;
 }
 
-int PosixSocketRXChannel::deinit() {
+int PosixSocket::deinit() {
     if (IS_INVALID_SOCKET(socket_id_)) {
         FIBRE_LOG(E) << "not initialized";
         return -1;
@@ -98,8 +89,8 @@ int PosixSocketRXChannel::deinit() {
     return result;
 }
 
-int PosixSocketRXChannel::subscribe(TWorker* worker, callback_t* callback) {
-    if (IS_INVALID_SOCKET(socket_id_)) {
+int PosixSocket::subscribe(PosixSocketWorker* worker, int events, PosixSocketWorker::callback_t* callback) {
+    if (IS_INVALID_SOCKET(get_socket_id())) {
         FIBRE_LOG(E) << "not initialized";
         return -1;
     }
@@ -108,22 +99,61 @@ int PosixSocketRXChannel::subscribe(TWorker* worker, callback_t* callback) {
         return -1;
     }
 
-    if (worker_->register_event(socket_id_, EPOLLIN, &rx_handler_obj)) {
+    if (worker_->register_event(get_socket_id(), events, callback)) {
         return -1;
     }
 
     worker_ = worker;
-    callback_ = callback;
     return 0;
 }
 
-int PosixSocketRXChannel::unsubscribe() {
+int PosixSocket::unsubscribe() {
     if (!worker_) {
         FIBRE_LOG(E) << "not subscribed";
         return -1;
     }
-    int result = worker_->deregister_event(socket_id_);
-    socket_id_ = INVALID_SOCKET;
+    int result = worker_->deregister_event(get_socket_id());
+    worker_ = nullptr;
+    return result;
+}
+
+
+/* PosixSocketRXChannel implementation ---------------------------------------*/
+
+int PosixSocketRXChannel::init(int type, int protocol, struct sockaddr_storage local_addr) {
+    if (PosixSocket::init(local_addr.ss_family, type, protocol)) {
+        FIBRE_LOG(E) << "failed to open socket.";
+        return -1;
+    }
+
+    if (bind(get_socket_id(), reinterpret_cast<struct sockaddr*>(&local_addr), sizeof(local_addr))) {
+        FIBRE_LOG(E) << "failed to bind socket: " << sock_err();
+        goto fail;
+    }
+
+    return 0;
+
+fail:
+    PosixSocket::deinit();
+    return -1;
+}
+
+int PosixSocketRXChannel::deinit() {
+    return PosixSocket::deinit();
+}
+
+int PosixSocketRXChannel::subscribe(PosixSocketWorker* worker, callback_t* callback) {
+    callback_ = callback;
+    if (PosixSocket::subscribe(worker, EPOLLIN, &rx_handler_obj)) {
+        callback_ = nullptr;
+        return -1;
+    }
+    return 0;
+}
+
+int PosixSocketRXChannel::unsubscribe() {
+    int result = PosixSocket::unsubscribe();
+    callback_ = nullptr;
     return result;
 }
 
@@ -138,7 +168,7 @@ void PosixSocketRXChannel::rx_handler(uint32_t) {
 
 StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
     socklen_t slen = sizeof(remote_addr_);
-    ssize_t n_received = recvfrom(socket_id_, buffer.ptr, buffer.length, 0,
+    ssize_t n_received = recvfrom(get_socket_id(), buffer.ptr, buffer.length, 0,
             reinterpret_cast<struct sockaddr *>(&remote_addr_), &slen);
 
     // If recvfrom returns -1, an errno is set to indicate the error.
@@ -182,84 +212,42 @@ StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
 /* PosixSocketTXChannel implementation ---------------------------------------*/
 
 int PosixSocketTXChannel::init(int type, int protocol, struct sockaddr_storage remote_addr) {
-    if (!IS_INVALID_SOCKET(socket_id_)) {
-        FIBRE_LOG(E) << "already initialized";
+    if (PosixSocket::init(remote_addr.ss_family, type, protocol)) {
+        FIBRE_LOG(E) << "failed to open socket.";
         return -1;
     }
 
-    int socket_id = socket(remote_addr.ss_family, type | SOCK_NONBLOCK, protocol);
-    if (IS_INVALID_SOCKET(socket_id)) {
-        FIBRE_LOG(E) << "failed to open socket: " << sock_err();
-        return -1;
-    }
-
-    socket_id_ = socket_id;
     remote_addr_ = remote_addr;
     return 0;
 }
 
 int PosixSocketTXChannel::init(socket_id_t socket_id, struct sockaddr_storage remote_addr) {
-    if (!IS_INVALID_SOCKET(socket_id_)) {
-        FIBRE_LOG(E) << "already initialized";
+    if (PosixSocket::init(socket_id)) {
+        FIBRE_LOG(E) << "failed to open socket.";
         return -1;
     }
 
-    // Duplicate socket ID in order to make the OS's internal ref count work
-    // properly.
-    socket_id = dup(socket_id);
-    if (IS_INVALID_SOCKET(socket_id)) {
-        FIBRE_LOG(E) << "failed to duplicate socket: " << sock_err();
-        return -1;
-    }
-
-    socket_id_ = socket_id;
     remote_addr_ = remote_addr;
     return 0;
 }
 
 int PosixSocketTXChannel::deinit() {
-    if (IS_INVALID_SOCKET(socket_id_)) {
-        FIBRE_LOG(E) << "not initialized";
-        return -1;
-    }
-
-    int result = 0;
-    if (::close(socket_id_)) {
-        FIBRE_LOG(E) << "close() failed: " << sock_err();
-        result = -1;
-    }
-
-    socket_id_ = INVALID_SOCKET;
     remote_addr_ = {0};
-    return result;
+    return PosixSocket::deinit();
 }
 
-int PosixSocketTXChannel::subscribe(TWorker* worker, callback_t* callback) {
-    if (IS_INVALID_SOCKET(socket_id_)) {
-        FIBRE_LOG(E) << "not initialized";
-        return -1;
-    }
-    if (worker_) {
-        FIBRE_LOG(E) << "already subscribed";
-        return -1;
-    }
-
-    if (worker_->register_event(socket_id_, EPOLLOUT, &tx_handler_obj)) {
-        return -1;
-    }
-
-    worker_ = worker;
+int PosixSocketTXChannel::subscribe(PosixSocketWorker* worker, callback_t* callback) {
     callback_ = callback;
+    if (PosixSocket::subscribe(worker, EPOLLOUT, &tx_handler_obj)) {
+        callback_ = nullptr;
+        return -1;
+    }
     return 0;
 }
 
 int PosixSocketTXChannel::unsubscribe() {
-    if (!worker_) {
-        FIBRE_LOG(E) << "not subscribed";
-        return -1;
-    }
-    int result = worker_->deregister_event(socket_id_);
-    socket_id_ = INVALID_SOCKET;
+    int result = PosixSocket::unsubscribe();
+    callback_ = nullptr;
     return result;
 }
 
@@ -281,7 +269,7 @@ StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
     // TODO: if the socket is already closed, the process will receive a SIGPIPE,
     // which kills it if unhandled. That is very impolite and we should install
     // a signal handler to prevent the killing.
-    int n_sent = sendto(socket_id_, buffer.ptr, buffer.length, 0, reinterpret_cast<struct sockaddr*>(&remote_addr_), sizeof(remote_addr_));
+    int n_sent = sendto(get_socket_id(), buffer.ptr, buffer.length, 0, reinterpret_cast<struct sockaddr*>(&remote_addr_), sizeof(remote_addr_));
     if (n_sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return StreamSink::kBusy;

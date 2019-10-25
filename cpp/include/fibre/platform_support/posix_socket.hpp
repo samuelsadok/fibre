@@ -12,13 +12,13 @@ namespace fibre {
 
 
 #if defined(__linux__)
-using TWorker = LinuxWorker; // TODO: rename to EPollWorker or LinuxEPollWorker
+using PosixSocketWorker = LinuxWorker; // TODO: rename to EPollWorker or LinuxEPollWorker
 using socket_id_t = int;
 #elif defined(_WIN32) || defined(_WIN64)
-using TWorker = PosixPollWorker;
+using PosixSocketWorker = PosixPollWorker;
 using socket_id_t = SOCKET;
 #else
-using TWorker = KQueueWorker;
+using PosixSocketWorker = KQueueWorker;
 using socket_id_t = int;
 #endif
 
@@ -31,13 +31,61 @@ using socket_id_t = int;
 
 
 /**
- * @brief Provides a StreamSource based on a Posix or WinSock socket ID.
+ * @brief Base class for various types of Posix sockets.
  * 
  * Note: To make this work on Windows, a "poll"-based worker must be implemented.
  */
-class PosixSocketRXChannel : public StreamSource, public ActiveStreamSource<TWorker> {
+class PosixSocket {
+public:
+    /**
+     * @brief Initializes the socket by using the socket() function.
+     * 
+     * @param family: Will be passed as 1st argument to socket(). Can be for
+     *        instance AF_INET or AF_INET6.
+     * @param type: Will be passed as 2nd argument to socket(). Can be for
+     *        instance SOCK_DGRAM or SOCKET_STREAM.
+     * @param protocol: Will be passed as 3rd argument to socket(). Can be for
+     *        instance IPPROTO_UDP or IPPROTO_TCP.
+     */
+    int init(int family, int type, int protocol);
+
+    /**
+     * @brief Initializes the socket with the given socket ID.
+     * 
+     * @param socket_id: For Unix-like systems this should be a file descriptor,
+     *        for Windows this should be a Windows Socket ID (as returned by
+     *        socket()).
+     *        The socket must be in non-blocking mode (opened with O_NONBLOCK)
+     *        The socket will internally be duplicated using dup() so deinit()
+     *        can be called regardless of what overload of init() was used.
+     */
+    int init(socket_id_t socket_id);
+
+    /**
+     * @brief Deinits a socket that was initialized with init().
+     */
+    int deinit();
+
+    int subscribe(PosixSocketWorker* worker, int events, PosixSocketWorker::callback_t* callback);
+    int unsubscribe();
+
+    socket_id_t get_socket_id() const { return socket_id_; }
+
+private:
+    socket_id_t socket_id_ = INVALID_SOCKET;
+    PosixSocketWorker* worker_ = nullptr;
+};
+
+/**
+ * @brief StreamSource based on a Posix or WinSock socket ID.
+ * 
+ * Note: To make this work on Windows, a "poll"-based worker must be implemented.
+ */
+class PosixSocketRXChannel : public PosixSocket, public StreamSource, public ActiveStreamSource<PosixSocketWorker> {
 public:
     using callback_t = Callback<StreamSource::status_t, cbufptr_t>;
+    int init(int, int, int) = delete;
+    using PosixSocket::init;
 
     /**
      * @brief Initializes the RX channel by opening a socket using the socket()
@@ -55,6 +103,7 @@ public:
      */
     int init(int type, int protocol, struct sockaddr_storage local_addr);
 
+#if 0
     /**
      * @brief Initializes the RX channel with the given socket ID.
      * 
@@ -69,14 +118,17 @@ public:
      *        can be called regardless of what overload of init() was used.
      */
     int init(socket_id_t socket_id);
+#endif
+
+    /**
+     * @brief Deinits a socket that was initialized with init().
+     */
     int deinit();
 
-    int subscribe(TWorker* worker, callback_t* callback) final;
+    int subscribe(PosixSocketWorker* worker, callback_t* callback) final;
     int unsubscribe() final;
 
     status_t get_bytes(bufptr_t& buffer) final;
-
-    socket_id_t get_socket_id() const { return socket_id_; }
 
     /** @brief Returns the remote address of the most recently received data */
     struct sockaddr_storage get_remote_address() const { return remote_addr_; }
@@ -84,8 +136,6 @@ public:
 private:
     void rx_handler(uint32_t);
 
-    socket_id_t socket_id_ = INVALID_SOCKET;
-    TWorker* worker_ = nullptr;
     callback_t* callback_ = nullptr;
     struct sockaddr_storage remote_addr_ = {0}; // updated after each get_bytes() call
 
@@ -93,13 +143,15 @@ private:
 };
 
 /**
- * @brief Provides a StreamSink based on a Posix or WinSock socket ID.
+ * @brief StreamSink based on a Posix or WinSock socket ID.
  * 
  * Note: To make this work on Windows, a "poll"-based worker must be implemented.
  */
-class PosixSocketTXChannel : public StreamSink, public ActiveStreamSink<TWorker> {
+class PosixSocketTXChannel : public PosixSocket, public StreamSink, public ActiveStreamSink<PosixSocketWorker> {
 public:
     using callback_t = Callback<StreamSink::status_t>;
+    int init(int, int, int) = delete;
+    int init(int) = delete;
 
     /**
      * @brief Initializes the TX channel by opening a socket using the socket()
@@ -132,18 +184,14 @@ public:
      */
     int deinit();
 
-    int subscribe(TWorker* worker, callback_t* callback) final;
+    int subscribe(PosixSocketWorker* worker, callback_t* callback) final;
     int unsubscribe() final;
 
     status_t process_bytes(cbufptr_t& buffer) final;
 
-    socket_id_t get_socket_id() const { return socket_id_; }
-
 private:
     void tx_handler(uint32_t);
 
-    socket_id_t socket_id_ = INVALID_SOCKET;
-    TWorker* worker_ = nullptr;
     callback_t* callback_ = nullptr;
     struct sockaddr_storage remote_addr_;
 
