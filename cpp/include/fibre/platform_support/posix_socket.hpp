@@ -29,6 +29,7 @@ using socket_id_t = int;
 #define IS_INVALID_SOCKET(socket_id)    (socket_id < 0)
 #endif
 
+struct sockaddr_storage to_posix_socket_addr(std::tuple<std::string, int> address, bool passive);
 
 /**
  * @brief Base class for various types of Posix sockets.
@@ -130,7 +131,15 @@ public:
 
     status_t get_bytes(bufptr_t& buffer) final;
 
-    /** @brief Returns the remote address of the most recently received data */
+    /**
+     * @brief Returns the remote address of this socket.
+     * 
+     * For connectionless sockets this is origin of the most recently received
+     * data and it is only valid from the moment something was actually received.
+     * 
+     * For connection-oriented sockets this address is valid as soon as the
+     * socket is initialized.
+     */
     struct sockaddr_storage get_remote_address() const { return remote_addr_; }
 
 private:

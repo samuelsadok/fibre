@@ -23,7 +23,7 @@ public:
      * 
      * @returns Zero on success or a non-zero error code otherwise.
      */
-    int open(std::string local_address, int local_port);
+    int open(std::tuple<std::string, int> local_address);
 
     /**
      * @brief Opens this channel for incoming UDP packets using the same
@@ -63,7 +63,7 @@ public:
      * 
      * @returns Zero on success or a non-zero error code otherwise.
      */
-    int open(std::string remote_address, int remote_port);
+    int open(std::tuple<std::string, int> remote_address);
 
     /**
      * @brief Opens this channel for outgoing UDP packets using the same

@@ -37,6 +37,49 @@ std::ostream& operator<<(std::ostream& stream, const sock_err&) {
 }
 }
 
+struct sockaddr_storage fibre::to_winsock_addr(std::tuple<std::string, int> address) {
+    struct addrinfo hints = {
+        .ai_flags = AI_NUMERICHOST | AI_NUMERICSERV, // avoid name lookups
+        .ai_family = AF_UNSPEC,
+        .ai_socktype = SOCK_STREAM,
+    };
+    struct addrinfo* addr_list = nullptr;
+    struct sockaddr_storage result = {0};
+
+    // TODO: this can block during a DNS lookup, which is bad. Windows 7 and
+    // earlier don't support async name lookups, so we need to create a lookup
+    // thread.
+    // https://docs.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-getaddrinfoexa?redirectedfrom=MSDN
+    int rc = getaddrinfo(std::get<0>(address).c_str(), std::to_string(std::get<1>(address)).c_str(), &hints, &addr_list);
+    if (rc == 0) {
+        if (addr_list && addr_list->ai_addrlen <= sizeof(result)) {
+            result = *reinterpret_cast<struct sockaddr_storage *>(addr_list->ai_addr);
+        }
+    } else {
+        const char * errstr = gai_strerror(rc);
+        FIBRE_LOG(E) << "invalid address \"" << std::get<0>(address) << "\": " << (errstr ? errstr : "[unknown error]") << " (" << rc << ")";
+    }
+    freeaddrinfo(addr_list);
+    return result;
+
+/*
+    struct sockaddr_storage local_addr = {0};
+    struct sockaddr_in6 * local_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&local_addr);
+    local_addr_in6->sin6_family = AF_INET6;
+    local_addr_in6->sin6_port = htons(local_port);
+    local_addr_in6->sin6_flowinfo = 0;
+
+#if _WIN32_WINNT < _WIN32_WINNT_VISTA
+#error "InetPtonA not supported on Windows Vista or lower"
+#endif
+
+    if (InetPtonA(AF_INET6, local_address.c_str(), &local_addr_in6->sin6_addr) != 1) {
+        FIBRE_LOG(E) << "invalid IP address: " << sock_err();
+        return -1;
+    }
+*/
+}
+
 int wsa_start() {
     WSADATA data;
     int rc = WSAStartup(MAKEWORD(2, 2), &data); // Not sure what version is needed

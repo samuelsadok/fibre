@@ -13,6 +13,9 @@
 
 using namespace fibre;
 
+//const std::string kTestAddr = "[::1]:54344";
+const std::tuple<std::string, int> kTestAddr = {"::1", 54344};
+
 template<typename TRxChannel, typename TTxChannel>
 TestContext test_impl() {
     TestContext context;
@@ -20,32 +23,32 @@ TestContext test_impl() {
     // Server: Try open + close
     {
         TRxChannel udp_receiver;
-        TEST_ZERO(udp_receiver.open("::1", 54344)); // local address
+        TEST_ZERO(udp_receiver.open(kTestAddr)); // local address
         TEST_ZERO(udp_receiver.close());
     }
 
     // Server: Try open + reopen + close
     {
         TRxChannel udp_receiver, udp_receiver2;
-        TEST_ZERO(udp_receiver.open("::1", 54344)); // local address
+        TEST_ZERO(udp_receiver.open(kTestAddr)); // local address
         // This should fail with "Address already in use".
         // On Wine we might get "Unknown error", but the error code should be 10048 (WSAEADDRINUSE).
         // TODO: suppress error output
-        TEST_NOT_NULL(udp_receiver2.open("::1", 54344)); // local address
+        TEST_NOT_NULL(udp_receiver2.open(kTestAddr)); // local address
         TEST_ZERO(udp_receiver.close());
     }
 
     // Client: Try open + close
     {
         TTxChannel udp_sender;
-        TEST_ZERO(udp_sender.open("::1", 54344)); // remote address
+        TEST_ZERO(udp_sender.open(kTestAddr)); // remote address
         TEST_ZERO(udp_sender.close());
     }
 
     // Server + Client: Try to send a packet
     {
         TRxChannel udp_receiver;
-        TEST_ZERO(udp_receiver.open("::1", 54344)); // local address
+        TEST_ZERO(udp_receiver.open(kTestAddr)); // local address
 
         // At this point, no data should be available yet.
         uint8_t recv_buf[128] = {0};
@@ -54,7 +57,7 @@ TestContext test_impl() {
         TEST_EQUAL(sizeof(recv_buf) - bufptr.length, (size_t)0);
 
         TTxChannel udp_sender;
-        TEST_ZERO(udp_sender.open("::1", 54344)); // remote address
+        TEST_ZERO(udp_sender.open(kTestAddr)); // remote address
        
         std::string data = "Hello UDP!";
         cbufptr_t cbufptr = { .ptr = (const uint8_t*)data.c_str(), .length = data.size() };

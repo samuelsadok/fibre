@@ -12,6 +12,8 @@ namespace fibre {
 
 using WindowsSocketWorker = WindowsIOCPWorker;
 
+struct sockaddr_storage to_winsock_addr(std::tuple<std::string, int> address);
+
 /**
  * @brief Base class for various types of Windows sockets.
  */

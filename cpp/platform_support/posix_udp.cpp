@@ -15,18 +15,13 @@ using namespace fibre;
 
 /* PosixUdpRxChannel implementation ------------------------------------------*/
 
-int PosixUdpRxChannel::open(std::string local_address, int local_port) {
-    struct sockaddr_storage local_addr = {0};
-    struct sockaddr_in6 * local_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&local_addr);
-    local_addr_in6->sin6_family = AF_INET6;
-    local_addr_in6->sin6_port = htons(local_port);
-    local_addr_in6->sin6_flowinfo = 0;
-    if (inet_pton(AF_INET6, local_address.c_str(), &local_addr_in6->sin6_addr) != 1) {
-        FIBRE_LOG(E) << "invalid IP address: " << sock_err();
+int PosixUdpRxChannel::open(std::tuple<std::string, int> local_address) {
+    struct sockaddr_storage posix_local_addr = to_posix_socket_addr(local_address, true);
+    if (posix_local_addr.ss_family) {
+        return PosixSocketRXChannel::init(SOCK_DGRAM, IPPROTO_UDP, posix_local_addr);
+    } else {
         return -1;
     }
-
-    return PosixSocketRXChannel::init(SOCK_DGRAM, IPPROTO_UDP, local_addr);
 }
 
 int PosixUdpRxChannel::open(const PosixUdpTxChannel& tx_channel) {
@@ -41,18 +36,13 @@ int PosixUdpRxChannel::close() {
 
 /* PosixUdpTxChannel implementation ------------------------------------------*/
 
-int PosixUdpTxChannel::open(std::string remote_address, int remote_port) {
-    struct sockaddr_storage remote_addr = {0};
-    struct sockaddr_in6 * remote_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&remote_addr);
-    remote_addr_in6->sin6_family = AF_INET6;
-    remote_addr_in6->sin6_port = htons(remote_port);
-    remote_addr_in6->sin6_flowinfo = 0;
-    if (inet_pton(AF_INET6, remote_address.c_str(), &remote_addr_in6->sin6_addr) != 1) {
-        FIBRE_LOG(E) << "invalid IP address: " << sock_err();
+int PosixUdpTxChannel::open(std::tuple<std::string, int> remote_address) {
+    struct sockaddr_storage posix_remote_addr = to_posix_socket_addr(remote_address, false);
+    if (posix_remote_addr.ss_family) {
+        return PosixSocketTXChannel::init(SOCK_DGRAM, IPPROTO_UDP, posix_remote_addr);
+    } else {
         return -1;
     }
-
-    return PosixSocketTXChannel::init(SOCK_DGRAM, IPPROTO_UDP, remote_addr);
 }
 
 int PosixUdpTxChannel::open(const PosixUdpRxChannel& rx_channel) {

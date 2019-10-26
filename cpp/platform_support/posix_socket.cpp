@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <netdb.h>
 
 DEFINE_LOG_TOPIC(SOCKET);
 USE_LOG_TOPIC(SOCKET);
@@ -36,6 +37,44 @@ std::ostream& operator<<(std::ostream& stream, const sock_err&) {
 }
 }
 
+struct sockaddr_storage fibre::to_posix_socket_addr(std::tuple<std::string, int> address, bool passive) {
+    struct addrinfo hints = {
+        .ai_flags = AI_NUMERICHOST | AI_NUMERICSERV | (passive ? AI_PASSIVE : 0), // avoid name lookups
+        .ai_family = AF_UNSPEC,
+        .ai_socktype = 0, // this makes apparently no difference for numerical addresses
+    };
+    struct addrinfo* addr_list = nullptr;
+    struct sockaddr_storage result = {0};
+
+    // TODO: this can block during a DNS lookup, which is bad. Use getaddrinfo_a instead.
+    // https://stackoverflow.com/questions/58069/how-to-use-getaddrinfo-a-to-do-async-resolve-with-glibc
+    int rc = getaddrinfo(std::get<0>(address).c_str(), std::to_string(std::get<1>(address)).c_str(), &hints, &addr_list);
+    if (rc == 0) {
+        if (addr_list && addr_list->ai_addrlen <= sizeof(result)) {
+            result = *reinterpret_cast<struct sockaddr_storage *>(addr_list->ai_addr);
+        }
+    } else {
+        const char * errstr = gai_strerror(rc);
+        FIBRE_LOG(E) << "invalid address \"" << std::get<0>(address) << "\": " << (errstr ? errstr : "[unknown error]") << " (" << rc << ")";
+    }
+    freeaddrinfo(addr_list);
+    return result;
+
+/*
+    struct sockaddr_storage posix_addr = {0};
+    struct sockaddr_in6 * posix_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&posix_addr);
+    posix_addr_in6->sin6_family = AF_INET6;
+    posix_addr_in6->sin6_port = htons(std::get<1>(address));
+    posix_addr_in6->sin6_flowinfo = 0;
+    // TODO: use getaddrinfo() instead, which is more powerful and also allows
+    // passing in hostnames (which can resolve to either IPv4 or IPv6 addresses).
+    if (inet_pton(AF_INET6, std::get<0>(address).c_str(), &posix_addr_in6->sin6_addr) != 1) {
+        FIBRE_LOG(E) << "invalid IP address: " << sock_err();
+        return {0};
+    }
+    return posix_addr;
+*/
+}
 
 /* PosixSocket implementation ---------------------------------------*/
 
@@ -99,7 +138,7 @@ int PosixSocket::subscribe(PosixSocketWorker* worker, int events, PosixSocketWor
         return -1;
     }
 
-    if (worker_->register_event(get_socket_id(), events, callback)) {
+    if (worker->register_event(get_socket_id(), events, callback)) {
         return -1;
     }
 

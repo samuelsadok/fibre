@@ -16,24 +16,13 @@ using namespace fibre;
 
 /* WindowsUdpRxChannel implementation ----------------------------------------*/
 
-int WindowsUdpRxChannel::open(std::string local_address, int local_port) {
-    // TODO: this is equivalent in WindowsUdpTxChannel::open(). Move to function.
-    struct sockaddr_storage local_addr = {0};
-    struct sockaddr_in6 * local_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&local_addr);
-    local_addr_in6->sin6_family = AF_INET6;
-    local_addr_in6->sin6_port = htons(local_port);
-    local_addr_in6->sin6_flowinfo = 0;
-
-#if _WIN32_WINNT < _WIN32_WINNT_VISTA
-#error "InetPtonA not supported on Windows Vista or lower"
-#endif
-
-    if (InetPtonA(AF_INET6, local_address.c_str(), &local_addr_in6->sin6_addr) != 1) {
-        FIBRE_LOG(E) << "invalid IP address: " << sock_err();
+int WindowsUdpRxChannel::open(std::tuple<std::string, int> local_address) {
+    struct sockaddr_storage win_local_addr = to_winsock_addr(local_address);
+    if (win_local_addr.ss_family) {
+        return WindowsSocketRXChannel::init(SOCK_DGRAM, IPPROTO_UDP, win_local_addr);
+    } else {
         return -1;
     }
-
-    return WindowsSocketRXChannel::init(SOCK_DGRAM, IPPROTO_UDP, local_addr);
 }
 
 int WindowsUdpRxChannel::open(const WindowsUdpTxChannel& tx_channel) {
@@ -48,23 +37,13 @@ int WindowsUdpRxChannel::close() {
 
 /* WindowsUdpTxChannel implementation ----------------------------------------*/
 
-int WindowsUdpTxChannel::open(std::string remote_address, int remote_port) {
-    struct sockaddr_storage remote_addr = {0};
-    struct sockaddr_in6 * remote_addr_in6 = reinterpret_cast<struct sockaddr_in6 *>(&remote_addr);
-    remote_addr_in6->sin6_family = AF_INET6;
-    remote_addr_in6->sin6_port = htons(remote_port);
-    remote_addr_in6->sin6_flowinfo = 0;
-
-#if _WIN32_WINNT < _WIN32_WINNT_VISTA
-#error "InetPtonA not supported on Windows Vista or lower"
-#endif
-
-    if (InetPtonA(AF_INET6, remote_address.c_str(), &remote_addr_in6->sin6_addr) != 1) {
-        FIBRE_LOG(E) << "invalid IP address: " << sock_err();
+int WindowsUdpTxChannel::open(std::tuple<std::string, int> remote_address) {
+    struct sockaddr_storage win_remote_addr = to_winsock_addr(remote_address);
+    if (win_remote_addr.ss_family) {
+        return WindowsSocketTXChannel::init(SOCK_DGRAM, IPPROTO_UDP, win_remote_addr);
+    } else {
         return -1;
     }
-
-    return WindowsSocketTXChannel::init(SOCK_DGRAM, IPPROTO_UDP, remote_addr);
 }
 
 int WindowsUdpTxChannel::open(const WindowsUdpRxChannel& rx_channel) {
