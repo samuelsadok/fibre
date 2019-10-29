@@ -13,8 +13,33 @@
 
 using namespace fibre;
 
-//const std::string kTestAddr = "[::1]:54344";
 const std::tuple<std::string, int> kTestAddr = {"::1", 54344};
+
+
+TestContext test_tx(StreamSink& sink, std::string str) {
+    TestContext context;
+
+    cbufptr_t cbufptr = { .ptr = (const uint8_t*)str.c_str(), .length = str.size() };
+    TEST_EQUAL(sink.process_all_bytes(cbufptr), StreamSink::kOk); // technically a return value of "kBusy" would also comply to the specs
+    TEST_ZERO(cbufptr.length);
+
+    return context;
+}
+
+TestContext test_rx(StreamSource& source, std::string str) {
+    TestContext context;
+
+    uint8_t recv_buf[str.size() + 2];
+    bufptr_t bufptr = { .ptr = recv_buf, .length = sizeof(recv_buf) };
+    
+    TEST_EQUAL(source.get_all_bytes(bufptr), StreamSource::kBusy); // technically a return value of "kOk" would also comply to the specs
+    TEST_EQUAL(sizeof(recv_buf) - bufptr.length, str.size());
+
+    TEST_EQUAL(std::string((const char *)recv_buf, str.size()), str);
+
+    return context;
+}
+
 
 template<typename TRxChannel, typename TTxChannel>
 TestContext test_impl() {
@@ -59,20 +84,9 @@ TestContext test_impl() {
         TTxChannel udp_sender;
         TEST_ZERO(udp_sender.open(kTestAddr)); // remote address
        
-        std::string data = "Hello UDP!";
-        cbufptr_t cbufptr = { .ptr = (const uint8_t*)data.c_str(), .length = data.size() };
-        TEST_EQUAL(udp_sender.process_bytes_(cbufptr, nullptr), StreamSink::kOk);
-     
+        TEST_ADD(test_tx(udp_sender, "Hello UDP!"));
         // TODO: if the following tests fail we may need to add a small delay.
-        bufptr = { .ptr = recv_buf, .length = sizeof(recv_buf) };
-        TEST_EQUAL(udp_receiver.get_bytes(bufptr), StreamSource::kOk); // technically a return value of "kBusy" would also comply to the specs
-        TEST_EQUAL(sizeof(recv_buf) - bufptr.length, data.size());
-
-        TEST_EQUAL(std::string((const char *)recv_buf), data);
-
-        // Receiver should now be busy (no new data)
-        TEST_EQUAL(udp_receiver.get_bytes(bufptr), StreamSource::kBusy);
-        TEST_EQUAL(sizeof(recv_buf) - bufptr.length, data.size());
+        TEST_ADD(test_rx(udp_receiver, "Hello UDP!"));
         
         TEST_ZERO(udp_receiver.close());
         TEST_ZERO(udp_sender.close());
