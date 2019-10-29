@@ -17,7 +17,7 @@ function fibre_package(platform)
             --'shared_memory_discoverer.cpp',
             'platform_support/dbus.cpp',
             'platform_support/posix_udp.cpp',
-            --'platform_support/posix_tcp.cpp',
+            'platform_support/posix_tcp.cpp',
             'platform_support/posix_socket.cpp',
             'platform_support/linux_event.cpp',
             'platform_support/linux_timer.cpp',

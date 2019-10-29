@@ -1,4 +1,5 @@
 
+#include <fibre/platform_support/posix_tcp.hpp>
 #include <fibre/logging.hpp>
 
 #include <arpa/inet.h>
@@ -11,214 +12,216 @@
 #include <future>
 #include <vector>
 
-#include <fibre/fibre.hpp>
-
 #define TCP_RX_BUF_LEN	512
+#define MAX_CONCURRENT_CONNECTIONS 128
 
 DEFINE_LOG_TOPIC(TCP);
 USE_LOG_TOPIC(TCP);
 
 namespace fibre {
 
-class TCPConnection : public OutputChannel, public StreamSource {
-public:
-    TCPConnection(const char * name, int socket_fd) :
-        name_(name),
-        socket_fd_(socket_fd)
-    {
-        int val = 0;
-        socklen_t val_len = sizeof(val);
-        if (getsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &val, &val_len) != 0) {
-            FIBRE_LOG(E) << "failed to get socket send buffer size";
-            throw "TCP connection init failed";
-        }
-        if (val < 0) {
-            FIBRE_LOG(E) << "invalid socket send buffer size";
-            throw "TCP connection init failed";
-        }
-        kernel_send_buffer_size_ = val;
-    }
+/* PosixTcpServer implementation ---------------------------------------------*/
 
-    ~TCPConnection() {
-        close(socket_fd_);
-    }
+int PosixTcpServer::init(std::tuple<std::string, int> local_addr, PosixSocketWorker* worker, callback_t* connected_callback) {
+    struct sockaddr_storage addr = to_posix_socket_addr(local_addr, true);
 
-    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
-        int bytes_sent = send(socket_fd_, buffer, length, 0);
-        if (processed_bytes)
-            *processed_bytes = (bytes_sent == -1) ? 0 : bytes_sent;
-        return (bytes_sent == -1) ? StreamSink::kError : StreamSink::kOk;
-    }
-
-    size_t get_min_non_blocking_bytes() const final {
-        int pending_bytes = 0;
-        ioctl(socket_fd_, TIOCOUTQ, &pending_bytes);
-        if (pending_bytes < 0) {
-            FIBRE_LOG(W) << "less than zero pending bytes";
-            return kernel_send_buffer_size_;
-        } else if (static_cast<unsigned int>(pending_bytes) > kernel_send_buffer_size_) {
-            FIBRE_LOG(W) << "a lot of pending bytes";
-            return 0;
-        } else {
-            return kernel_send_buffer_size_ - pending_bytes;
-        }
-    }
-
-    StreamSource::status_t get_bytes(uint8_t* buffer, size_t length, int flags, size_t* generated_bytes) {
-        // returns as soon as there is some data
-        // -1 indicates error and 0 means that the client gracefully terminated
-        ssize_t n_received_signed = recv(socket_fd_, buffer, length, flags);
-
-        if (n_received_signed == 0) {
-            FIBRE_LOG(D) << "TCP connection closed by remote host";
-            return StreamSource::kClosed;
-        }
-
-        if (n_received_signed < 0) {
-            FIBRE_LOG(E) << "TCP connection broke unexpectedly: " << sys_err();
-            return StreamSource::kError;
-        }
-
-        size_t n_received = static_cast<size_t>(n_received_signed);
-        if (n_received > length) {
-            FIBRE_LOG(E) << "too many bytes received";
-            return StreamSource::kError;
-        }
-
-        if (generated_bytes)
-            *generated_bytes += n_received;
-        return StreamSource::kOk;
-    }
-
-    StreamSource::status_t get_bytes(uint8_t* buffer, size_t max_length, size_t* generated_bytes) final {
-        if (min_length > max_length) {
-            return StreamSource::kError;
-        }
-
-        StreamSource::status_t status;
-        if (min_length > 1) {
-            // TODO: set timeout
-            size_t chunk = 0;
-            status = get_bytes(buffer, min_length, MSG_WAITALL, &chunk);
-            if (status != StreamSource::kOk)
-                return status;
-            status = get_bytes(buffer + chunk, max_length - chunk, MSG_DONTWAIT, &chunk);
-            if (generated_bytes)
-                *generated_bytes += chunk;
-            return status;
-        } else {
-            return get_bytes(buffer, max_length, 0, generated_bytes);
-        }
-    }
-
-    const char * get_name() const final {
-        return name_;
-    }
-
-    void terminate() {
-        shutdown(socket_fd_, SHUT_RDWR);
-    }
-
-private:
-    const char * name_;
-    int socket_fd_;
-    size_t kernel_send_buffer_size_;
-};
-
-bool handle_connection(int socket_fd) {
-    TCPConnection connection("TCP connection", socket_fd);
-    uint8_t uuid_buf[16];
-
-    FIBRE_LOG(D) << "sending own UUID";
-    if (connection.process_bytes(global_state.own_uuid.get_bytes().data(), 16, nullptr) != StreamSink::kOk) {
-        FIBRE_LOG(E) << "failed to send own UUID";
-        return false;
-    }
-
-    FIBRE_LOG(D) << "waiting for remote UUID";
-    if (connection.get_bytes(uuid_buf, 16, 16, nullptr) != StreamSource::kOk) {
-        FIBRE_LOG(E) << "failed to get remote UUID";
-        return false;
-    }
-
-    FIBRE_LOG(D) << "handshake complete";
-
-    RemoteNode* remote_node = fibre::get_remote_node(Uuid(uuid_buf));
-    remote_node->add_output_channel(&connection);
-    InputChannelDecoder input_decoder(remote_node);
-
-    for (;;) {
-        uint8_t buf[TCP_RX_BUF_LEN];
-        size_t n_received = 0;
-        size_t n_min = std::min(input_decoder.get_min_useful_bytes(), sizeof(buf));
-        StreamSource::status_t status =
-                connection.get_bytes(buf, n_min, sizeof(buf), &n_received);
-        if (status != StreamSource::kOk) {
-            FIBRE_LOG(D) << "connection closed";
-            break;
-        }
-        input_decoder.process_bytes(buf, n_received, nullptr);
-    }
-
-    if (remote_node)
-        remote_node->remove_output_channel(&connection);
-
-    return 0;
-}
-
-
-// function to check if a worker thread handling a single client is done
-template<typename T>
-bool future_is_ready(std::future<T>& t){
-    return t.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-}
-
-int serve_on_tcp(unsigned int port) {
-    struct sockaddr_in6 si_me, si_other;
-    int s;
-
-
-    if ((s=socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP)) == -1) {
-        FIBRE_LOG(E) << "failed to create socket: " << sys_err();
+    if (!addr.ss_family) {
         return -1;
     }
 
-    memset((char *) &si_me, 0, sizeof(si_me));
-    si_me.sin6_family = AF_INET6;
-    si_me.sin6_port = htons(port);
-    si_me.sin6_flowinfo = 0;
-    si_me.sin6_addr = in6addr_any;
-    if (bind(s, reinterpret_cast<struct sockaddr *>(&si_me), sizeof(si_me)) == -1) {
-        FIBRE_LOG(E) << "failed to bind socket: " << sys_err();
+    FIBRE_LOG(D) << "open TCP server on " << addr;
+
+    if (socket_.init(addr.ss_family, SOCK_STREAM, IPPROTO_TCP)) {
         return -1;
+    }
+
+    // Reuse local address.
+    // This helps reusing ports that were previously not closed cleanly and
+    // are therefore still lingering in the TIME_WAIT state.
+    int flag = 1;
+    if (setsockopt(socket_.get_socket_id(), SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag))) {
+        FIBRE_LOG(E) << "failed to make socket reuse addresses: " << sock_err();
+        goto fail;
+    }
+   
+    if (bind(socket_.get_socket_id(), reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr))) {
+        FIBRE_LOG(E) << "failed to bind socket: " << sock_err();
+        goto fail;
     }
 
     // make this socket a passive socket
-    if (listen(s, 128) != 0) {
+    if (listen(socket_.get_socket_id(), MAX_CONCURRENT_CONNECTIONS) != 0) {
         FIBRE_LOG(E) << "failed to listen on TCP: " << sys_err();
+        goto fail;
+    }
+
+    connected_callback_ = connected_callback;
+    if (socket_.subscribe(worker, EPOLLIN, &accept_handler_obj)) {
+        goto fail;
+    }
+
+    return 0;
+
+fail:
+    connected_callback_ = nullptr;
+    socket_.deinit();
+    return -1;
+}
+
+int PosixTcpServer::deinit() {
+    int result = 0;
+    if (socket_.unsubscribe()) {
+        FIBRE_LOG(E) << "failed to unsubscribe";
+        result = -1;
+    }
+    connected_callback_ = nullptr;
+    if (socket_.deinit()) {
+        FIBRE_LOG(E) << "failed to deinit()";
+        result = -1;
+    }
+    return result;
+}
+
+void PosixTcpServer::accept_handler(uint32_t) {
+    struct sockaddr_storage remote_addr;
+    socklen_t slen = sizeof(remote_addr);
+
+    FIBRE_LOG(D) << "incoming TCP connection";
+    int socket_id = accept(socket_.get_socket_id(), reinterpret_cast<struct sockaddr *>(&remote_addr), &slen);
+    if (IS_INVALID_SOCKET(socket_id)) {
+        FIBRE_LOG(E) << "accept() returned invalid socket: " << sock_err();
+        return;
+    }
+    
+    const int mode = 1;
+    PosixTcpRXChannel rx_channel;
+    PosixTcpTXChannel tx_channel;
+
+    // Make socket non-blocking
+    if (ioctl(socket_id, FIONBIO, &mode)) {
+        FIBRE_LOG(E) << "ioctlsocket() failed: " << sock_err();
+        goto fail1;
+    }
+
+    if (connected_callback_) {
+        if (rx_channel.init(socket_id)) {
+            FIBRE_LOG(E) << "failed to create RX channel for accepted TCP connection";
+            goto fail1;
+        }
+        if (tx_channel.init(socket_id, remote_addr)) {
+            FIBRE_LOG(E) << "failed to create TX channel for accepted TCP connection";
+            goto fail2;
+        }
+
+        (*connected_callback_)(rx_channel, tx_channel);
+    }
+
+    // The socket handle was duplicated in rx_channel.init() and tx_channel.init(),
+    // we can therefore safely close it here.
+    close(socket_id);
+    return;
+
+fail2:
+    rx_channel.deinit();
+fail1:
+    close(socket_id);
+}
+
+/* PosixTcpClient implementation ---------------------------------------------*/
+
+int PosixTcpClient::start_connecting(std::tuple<std::string, int> remote_addr, PosixSocketWorker* worker, callback_t* connected_callback) {
+    struct sockaddr_storage addr = to_posix_socket_addr(remote_addr, true);
+
+    if (!IS_INVALID_SOCKET(rx_channel_.get_socket_id()) || !IS_INVALID_SOCKET(tx_channel_.get_socket_id())) {
+        FIBRE_LOG(E) << "previous connection still open";
         return -1;
     }
 
-    FIBRE_LOG(D) << "listening";
-    std::vector<std::future<bool>> serv_pool;
-    for (;;) {
-        memset(&si_other, 0, sizeof(si_other));
+    if (!addr.ss_family) {
+        return -1;
+    }
 
-        socklen_t silen = sizeof(si_other);
-        // TODO: Add a limit on accepting connections
-        int client_portal_fd = accept(s, reinterpret_cast<sockaddr *>(&si_other), &silen); // blocking call
-        FIBRE_LOG(D) << "accepted connection";
-        serv_pool.push_back(std::async(std::launch::async, handle_connection, client_portal_fd));
-        // do a little clean up on the pool
-        for (std::vector<std::future<bool>>::iterator it = serv_pool.end()-1; it >= serv_pool.begin(); --it) {
-            if (future_is_ready(*it)) {
-                // we can erase this thread
-                serv_pool.erase(it);
-            }
+    FIBRE_LOG(D) << "client: start connecting to " << addr;
+
+    if (socket_.init(addr.ss_family, SOCK_STREAM, IPPROTO_TCP)) {
+        return -1;
+    }
+   
+    if (connect(socket_.get_socket_id(), reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+        if (errno != EINPROGRESS) {
+            FIBRE_LOG(E) << "connect() failed: " << sock_err();
+            goto fail;
         }
     }
 
-    close(s);
+    worker_ = worker;
+    connected_callback_ = connected_callback;
+    if (socket_.subscribe(worker, EPOLLOUT | EPOLLHUP | EPOLLERR, &connected_handler_obj)) {
+        goto fail;
+    }
+
+    return 0;
+
+fail:
+    worker_ = nullptr;
+    connected_callback_ = nullptr;
+    socket_.deinit();
+    return -1;
+}
+
+int PosixTcpClient::stop_connecting() {
+    FIBRE_LOG(D) << "client: stop connecting";
+
+    int result = worker_->run_sync([this](){
+        if (connected_callback_) {
+            connected_handler(EPOLLHUP);
+        }
+    });
+
+    if (result) {
+        FIBRE_LOG(E) << "failed to terminate connection attempt";
+    }
+
+    worker_ = nullptr;
+    connected_callback_ = nullptr; // should already be the case
+
+    if (socket_.deinit()) {
+        result = -1;
+    }
+    return result;
+}
+
+void PosixTcpClient::connected_handler(uint32_t mask) {
+    FIBRE_LOG(D) << "connected_handler";
+
+    if (connected_callback_) {
+        bool is_success = !(mask & EPOLLHUP);
+
+        if (socket_.unsubscribe()) {
+            FIBRE_LOG(E) << "failed to unsubscribe after connecting";
+        }
+
+        if (is_success) {
+            if (rx_channel_.init(socket_.get_socket_id())) {
+                FIBRE_LOG(E) << "failed to create RX channel for TCP connection";
+                goto fail1;
+            }
+            if (tx_channel_.init(socket_.get_socket_id(), {0})) {
+                FIBRE_LOG(E) << "failed to create TX channel for TCP connection";
+                goto fail2;
+            }
+        }
+
+        (*connected_callback_)(is_success, *this);
+        connected_callback_ = nullptr;
+    }
+
+    return;
+
+fail2:
+    rx_channel_.deinit();
+fail1:
+    return;
 }
 
 }

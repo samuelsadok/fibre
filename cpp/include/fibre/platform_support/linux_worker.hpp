@@ -6,6 +6,7 @@
 #include <thread>
 #include <sys/epoll.h>
 #include <unordered_map>
+#include <mutex>
 
 namespace fibre {
 
@@ -28,6 +29,31 @@ public:
     int register_event(int event_fd, uint32_t events, callback_t* callback);
     //int modify_event(int event_fd, uint32_t events, callback_t* callback);
     int deregister_event(int event_fd);
+
+    template<typename TFunctor>
+    int run_sync(const TFunctor& functor) {
+        std::mutex mutex;
+        
+        std::unique_lock<std::mutex> lock(mutex); // = std::make_shared(new std::unique_lock<std::mutex>{mutex});
+
+        LinuxAutoResetEvent event = LinuxAutoResetEvent("run_sync");
+        auto closure = make_lambda_closure([&lock, &functor](){
+            functor();
+            lock = std::unique_lock<std::mutex>{};
+        });
+        
+        event.init();
+        event.subscribe(this, &closure);
+        event.set();
+        std::cout << "will wait";
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+        }
+        std::cout << "did wait";
+        event.unsubscribe();
+        event.deinit();
+        return 0;
+    }
 
 private:
     void event_loop();

@@ -36,6 +36,10 @@ packages = {
         depends = {'fibre'}
     }),
     make_exe_package({
+        sources = {'tcp_test.cpp'},
+        depends = {'fibre'}
+    }),
+    make_exe_package({
         sources = {'call_decoder_test.cpp'},
         depends = {'fibre'}
     }),
