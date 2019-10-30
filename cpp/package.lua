@@ -6,7 +6,7 @@ function fibre_package(platform)
         root = fibre_dir,
         sources = {
             --'fibre.cpp',
-            'input.cpp',
+            'calls.cpp',
             'local_endpoint.cpp',
             'stream.cpp',
             --'output.cpp',

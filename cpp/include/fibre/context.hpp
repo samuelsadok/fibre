@@ -6,6 +6,7 @@
 #include "cpp_utils.hpp"
 #include "logging.hpp"
 #include <utility>
+#include <memory>
 
 // need to include all default encoders
 #include "basic_codecs.hpp"
@@ -54,9 +55,11 @@ struct default_codec<sstring<CHARS...>> {
     using enc_type = UTF8Encoder<sstring<CHARS...>>;
 };
 
-
 struct Context {
-
+    std::shared_ptr<StreamSink> preferred_tx_channel;
+    void add_tx_channel(std::shared_ptr<StreamSink> sink) {
+        preferred_tx_channel = sink;
+    }
 };
 
 /**

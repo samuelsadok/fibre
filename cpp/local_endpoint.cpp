@@ -1,8 +1,7 @@
 
-#include <fibre/local_function.hpp>
+#include <fibre/local_endpoint.hpp>
 #include <fibre/logging.hpp>
 
-DEFINE_LOG_TOPIC(LOCAL_ENDPOINT);
 USE_LOG_TOPIC(LOCAL_ENDPOINT);
 
 namespace fibre {

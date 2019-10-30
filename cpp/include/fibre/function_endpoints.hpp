@@ -1,15 +1,5 @@
-/*
-* Implements types and macros needed to export local function to remote Fibre
-* nodes.
-* This file is analogous and similar in structure to local_ref_types.hpp.
-*/
-#ifndef __FIBRE_LOCAL_FUNCTION_HPP
-#define __FIBRE_LOCAL_FUNCTION_HPP
-
-//#ifndef __FIBRE_HPP
-//#error "This file should not be included directly. Include fibre.hpp instead."
-//#endif
-//#include <fibre/fibre.hpp>
+#ifndef __FIBRE_FUNCTION_ENDPOINTS_HPP
+#define __FIBRE_FUNCTION_ENDPOINTS_HPP
 
 #include <fibre/closure.hpp>
 #include <fibre/logging.hpp>
@@ -18,50 +8,13 @@
 #include <fibre/uuid.hpp>
 #include <fibre/context.hpp>
 #include <fibre/named_tuple.hpp>
+#include <fibre/local_endpoint.hpp>
+#include <fibre/calls.hpp>
 
-DEFINE_LOG_TOPIC(LOCAL_FUNCTION);
-#define current_log_topic LOG_TOPIC_LOCAL_FUNCTION
+DEFINE_LOG_TOPIC(FUNCTION_ENDPOINTS);
+#define current_log_topic LOG_TOPIC_FUNCTION_ENDPOINTS
 
 namespace fibre {
-
-class LocalEndpoint {
-public:
-    /**
-     * @brief Shall initialize a decoder that will process an incoming byte
-     * stream and generate an output byte stream.
-     * 
-     * To signify that no more data will be accepted (e.g. if all input
-     * arguments of a function have been received), the stream sink shall return
-     * kClosed.
-     * 
-     * @param ctx: The context in which to execute the endpoint action. This
-     *        shall for instance contain the tx_stream field, a stream that can
-     *        be used to return data to the caller.
-     *        The object pointed to by this pointer must remain valid until
-     *        close() is called on it. Note that ctx and its tx_stream may be
-     *        required to live longer than the corresponding
-     *        LocalEndpoint::close() call.
-     * @returns Shall return NULL if the stream could not be opened, for
-     *          instance because too many streams are already open.
-     */
-    virtual StreamSink* open(Context* ctx) = 0;
-
-    /**
-     * @brief Signifies to the local endpoint that no more data will be passed
-     * to the given stream.
-     * 
-     * The local endpoint may chose to keep the stream object allocated if there
-     * is still a processes going on. For instance if all arguments to a
-     * function have been received, the input handler may call close()
-     * but the invoked function may still be executing or sending a reply.
-     * 
-     * close() must be called at most once for each open() call.
-     * 
-     * @param stream_sink: Pointer to a stream sink that was previously returned
-     *        by open().
-     */
-    virtual int close(StreamSink* stream_sink) = 0;
-};
 
 /*class LocalEndpoint {
 public:
@@ -941,4 +894,4 @@ int unregister_endpoint(Uuid uuid);
 
 #undef current_log_topic
 
-#endif // __FIBRE_LOCAL_FUNCTION_HPP
+#endif // __FIBRE_FUNCTION_ENDPOINTS_HPP

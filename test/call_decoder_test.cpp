@@ -1,7 +1,6 @@
 
-#include <fibre/local_function.hpp>
+#include <fibre/function_endpoints.hpp>
 #include <fibre/closure.hpp>
-#include <fibre/input.hpp>
 #include <fibre/uuid.hpp>
 #include "test_utils.hpp"
 
