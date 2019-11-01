@@ -38,6 +38,7 @@
 #include <fibre/cpp_utils.hpp>
 #include <fibre/print_utils.hpp>
 #include <fibre/logging.hpp>
+#include <fibre/callback_list.hpp>
 #include <unistd.h>
 
 DEFINE_LOG_TOPIC(DBUS);
@@ -106,42 +107,6 @@ using dbus_type_id_t = std::string; // Used as a key in internal data structures
 
 using FunctionImplTable = std::unordered_map<fibre::dbus_type_id_t, int(*)(void*, DBusMessage*, DBusMessage*)>;
 using ExportTableBase = std::unordered_map<std::string, FunctionImplTable>;
-
-
-// TODO: this is quite general and could reside outside of DBus
-template<typename ... TArgs>
-class DBusSignal {
-public:
-    DBusSignal() {}
-
-    DBusSignal& operator+=(Callback<TArgs...>* callback) {
-        callbacks_.push_back(callback);
-        return *this;
-    }
-
-    DBusSignal& operator-=(Callback<TArgs...>* callback) {
-        auto it = std::find(callbacks_.begin(), callbacks_.end(), callback);
-        if (it != callbacks_.end()) {
-            callbacks_.erase(it);
-        } else {
-            FIBRE_LOG(E) << "attempt to deregister a callback more than once";
-        }
-        return *this;
-    }
-
-    void trigger(TArgs... args) const {
-        for (auto it: callbacks_) {
-            if (it) {
-                (*it)(args...);
-            }
-        }
-    }
-
-    size_t size() const { return callbacks_.size(); }
-
-private:
-    std::vector<Callback<TArgs...>*> callbacks_;
-};
 
 
 /* Function definitions ------------------------------------------------------*/
@@ -265,7 +230,7 @@ void handle_reply_message(DBusMessage* msg, TInterface* obj, Callback<TInterface
 }
 
 template<typename TInterface, typename ... TArgs, size_t ... I>
-void handle_signal_message(DBusMessage* msg, TInterface* obj, const DBusSignal<TInterface*, TArgs...>& signal, std::index_sequence<I...>) {
+void handle_signal_message(DBusMessage* msg, TInterface* obj, const CallbackList<TInterface*, TArgs...>& signal, std::index_sequence<I...>) {
     std::tuple<TArgs...> values;
     if (unpack_message(msg, values, DBUS_MESSAGE_TYPE_SIGNAL) != 0) {
         FIBRE_LOG(E) << "Failed to unpack signal. Will not invoke callback.";
@@ -691,7 +656,7 @@ private:
 
     TInterface* parent_;
     const char* name_;
-    DBusSignal<TInterface*, TArgs...> signal_;
+    CallbackList<TInterface*, TArgs...> signal_;
     bool is_active = false;
 };
 
@@ -1329,8 +1294,8 @@ fail1:
      */
     std::string get_path() { return name_; }
 
-    DBusSignal<DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>> InterfacesAdded;
-    DBusSignal<DBusObjectPath, std::vector<std::string>> InterfacesRemoved;
+    CallbackList<DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>> InterfacesAdded;
+    CallbackList<DBusObjectPath, std::vector<std::string>> InterfacesRemoved;
 
 private:
     using prop_list_t = std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>;

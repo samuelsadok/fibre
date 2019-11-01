@@ -138,9 +138,9 @@ public:
         return {in_arg2 + "berry", in_arg1 + 5};
     }
 
-    fibre::DBusSignal<> Signal1;
-    fibre::DBusSignal<int32_t> Signal2;
-    fibre::DBusSignal<int32_t, std::string> Signal3;
+    fibre::CallbackList<> Signal1;
+    fibre::CallbackList<int32_t> Signal2;
+    fibre::CallbackList<int32_t, std::string> Signal3;
 };
 
 

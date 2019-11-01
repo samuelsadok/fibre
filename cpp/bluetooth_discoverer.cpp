@@ -61,7 +61,7 @@ public:
     void Set(std::string interface, std::string name, dbus_variant val) {
         FIBRE_LOG(D) << "[AD] someone wants to set property " << name;
     }
-    DBusSignal<std::string, std::unordered_map<std::string, fibre::dbus_variant>, std::vector<std::string>> PropertiesChanged;
+    CallbackList<std::string, std::unordered_map<std::string, fibre::dbus_variant>, std::vector<std::string>> PropertiesChanged;
 };
 
 class Srv {
@@ -94,7 +94,7 @@ public:
         FIBRE_LOG(D) << "[GATTSERVICE] someone wants to set property " << name;
     }
 
-    DBusSignal<std::string, std::unordered_map<std::string, fibre::dbus_variant>, std::vector<std::string>> PropertiesChanged;
+    CallbackList<std::string, std::unordered_map<std::string, fibre::dbus_variant>, std::vector<std::string>> PropertiesChanged;
 };
 
 
