@@ -87,12 +87,42 @@ void dealloc_decoder(Decoder<T>* decoder) {
  */
 template<typename T>
 Encoder<T>* alloc_encoder(Context* ctx) {
-    return new default_encoder_t<T>; // TODO: remove dynamic allocation
+    // TODO: make context-dependent
+    // TODO: remove dynamic allocation
+    return new default_encoder_t<T>;
 }
 
 template<typename T>
 void dealloc_encoder(Encoder<T>* decoder) {
     delete decoder;
+}
+
+template<typename T>
+int encode(T& val, bufptr_t& bufptr, Context* ctx) {
+    int result = -1;
+    Encoder<T>* encoder = alloc_encoder<T>(ctx);
+    if (encoder) {
+        encoder->set(&val);
+        result = (encoder->get_all_bytes(bufptr) == StreamSource::kClosed ? 0 : -1);
+        dealloc_encoder(encoder);
+    }
+    return result;
+}
+
+template<typename T>
+int decode(cbufptr_t& bufptr, T* val, Context* ctx) {
+    int result = -1;
+    Decoder<T>* decoder = alloc_decoder<T>(ctx);
+    if (decoder) {
+        result = (decoder->process_all_bytes(bufptr) == StreamSink::kClosed ? 0 : -1);
+        if (!decoder->get()) {
+            result = -1;
+        } else if (val) {
+            *val = *decoder->get();
+        }
+        dealloc_decoder(decoder);
+    }
+    return result;
 }
 
 

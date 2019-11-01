@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <functional>
+#include <random>
 
 namespace fibre {
 
@@ -51,6 +52,19 @@ public:
         write_be(clk_seq, bytes + 8);
         memcpy(bytes + 10, node, 6);
         return Uuid(bytes);
+    }
+
+    /**
+     * @brief Constructs a random UUID.
+     * TODO: might not compile on bare metal systems
+     */
+    static Uuid random() {
+        std::random_device rd;
+        std::uniform_int_distribution<uint8_t> dist;
+        uint8_t buffer[16] = { 0 };
+        for (size_t i = 0; i < sizeof(buffer); ++i)
+            buffer[i] = dist(rd);
+        return {buffer};
     }
 
     /** @brief Constructs a Uuid object from a string of the

@@ -9,6 +9,9 @@
 #include <fibre/logging.hpp>
 #include <fibre/local_endpoint.hpp>
 #include <fibre/fragmenter.hpp>
+#include <fibre/closure.hpp>
+#include <fibre/callback_list.hpp>
+#include <fibre/platform_support/linux_timer.hpp>
 
 DEFINE_LOG_TOPIC(CALLS);
 #define current_log_topic LOG_TOPIC_CALLS
@@ -98,213 +101,206 @@ struct incoming_call_t {
     FixedBufferDefragmenter<1024> fragment_sink;
 };
 
+// TODO: ensure that cancellation token cannot trigger twice
+using CancellationToken = CallbackList<>;
+
+class TimedCancellationToken : public CallbackList<> {
+public:
+    TimedCancellationToken(LinuxWorker* worker)
+        : worker_(worker) {}
+    
+    int init(uint32_t delay_ms) {
+        if (timer_.init(worker_)) {
+            return -1;
+        }
+        if (timer_.start(delay_ms, false, &timeout_handler_obj)) {
+            timer_.deinit();
+            return -1;
+        }
+        return 0;
+    }
+
+    int deinit() {
+        int result = 0;
+        if (timer_.stop()) {
+            result = -1;
+        }
+        if (timer_.deinit()) {
+            result = -1;
+        }
+        return result;
+    }
+
+private:
+    void timeout_handler() {
+        FIBRE_LOG(D) << "cancellation token timed out";
+        trigger();
+    }
+
+    LinuxTimer timer_;
+    LinuxWorker* worker_;
+
+    member_closure_t<decltype(&TimedCancellationToken::timeout_handler)> timeout_handler_obj{&TimedCancellationToken::timeout_handler, this};
+};
+
+struct outgoing_call_t;
+void dispose(std::shared_ptr<outgoing_call_t> call);
+
 struct outgoing_call_t {
     Uuid uuid;
     Context* ctx;
     CallEncoder encoder; // TODO: put actual call encoder (call id + forward content)
     FixedBufferFragmenter<1024> fragment_source;
+    CancellationToken* cancellation_token;
+    Callback<>* finished_callback;
+
+    Closure<decltype(&dispose), std::tuple<std::shared_ptr<outgoing_call_t>>, std::tuple<>, void> cancel_obj;
 };
 
-
-
-
-/*
-class FragmentedCallDecoder : public StreamSink {
-public:
-    FragmentedCallDecoder(Context* ctx) : ctx_(ctx) {}
-
-    status_t process_bytes(cbufptr_t& buffer) final {
-        status_t status;
-        if (pos_ == 0) {
-            if ((status = call_id_decoder->process_bytes(buffer)) != kClosed) {
-                return status;
-            }
-            const call_id_t* call_id = call_id_decoder->get();
-            if (call_id != nullptr) {
-                start_or_get_call(ctx_, *call_id, &call_);
-            }
-            pos_++;
-        }
-        if (pos_ == 1) {
-            if ((status = offset_decoder->process_bytes(buffer)) != kClosed) {
-                return status;
-            }
-            offset_ = *offset_decoder->get();
-            pos_++;
-        }
-        if (pos_ == 2) {
-            call_->fragment_sink.process_chunk(buffer, offset_);
-            stream_copy(&call_->decoder, &call_->fragment_sink);
-        }
-        return kOk;
-    }
-
-private:
-    Context* ctx_ = nullptr;
-    size_t pos_ = 0;
-    Decoder<call_id_t>* call_id_decoder = nullptr;
-    Decoder<size_t>* offset_decoder = nullptr;
-    incoming_call_t* call_ = nullptr;
-    size_t offset_ = 0;
-};*/
+int start_or_get_call(Context* ctx, call_id_t call_id, incoming_call_t** call);
+int end_call(call_id_t call_id);
 
 int decode_fragment(Context* ctx, StreamSource* source);
 int encode_fragment(outgoing_call_t call, StreamSink* sink);
 
-/*class FragmentedCallEncoder : public StreamSource {
+
+class MultiFragmentEncoder {
 public:
-    status_t get_bytes(bufptr_t& buffer) {
-        status_t status;
-        if (pos_ == 0) {
-            if ((status = call_id_decoder->get_bytes(buffer)) != kClosed) {
-                return status;
-            }
-            const call_id_t* call_id = call_id_decoder->get();
-            if (call_id != nullptr) {
-                start_or_get_call(*call_id, &call_);
-            }
-            pos_++;
-        }
-        if (pos_ == 1) {
-            if ((status = offset_decoder->get_bytes(buffer)) != kClosed) {
-                return status;
-            }
-            offset_ = *offset_decoder->get();
-            pos_++;
-        }
-        if (pos_ == 2) {
-            call_->fragment_sink.process_chunk(buffer, offset_);
-            stream_copy(call_->decoder, &call_->fragment_sink);
-        }
-    }
-
-private:
-    size_t pos_ = 0;
-    size_t offset_ = 0;
-};*/
-
-#if 0
-
-class InputPipe {
-    // don't allow copy/move (we don't know if it's save to relocate the buffer)
-    InputPipe(const InputPipe&) = delete;
-    InputPipe& operator=(const InputPipe&) = delete;
-
-    // TODO: use Decoder infrastructure to process incoming bytes
-    uint8_t rx_buf_[RX_BUF_SIZE];
-    //uint8_t tx_buf_[TX_BUF_SIZE]; // TODO: this does not belong here
-    size_t pos_ = 0;
-    bool at_packet_break = true;
-    size_t crc_ = CANONICAL_CRC16_INIT;
-    size_t total_length_ = 0;
-    bool total_length_known = false;
-    size_t id_; // last bit indicates server (0) or client (1)
-    StreamSink* input_handler_ = nullptr; // TODO: destructor
-    OutputPipe* output_pipe_ = nullptr; // must be set immediately after constructor call
-public:
-    InputPipe(RemoteNode* remote_node, size_t idx, bool is_server)
-        : id_((idx << 1) | (is_server ? 0 : 1)) {}
-
-    size_t get_id() const { return id_; }
-    void set_output_pipe(OutputPipe* output_pipe) { output_pipe_ = output_pipe; }
-
-    template<typename TDecoder, typename ... TArgs>
-    void construct_decoder(TArgs&& ... args) {
-        set_handler(nullptr);
-        static_assert(sizeof(TDecoder) <= RX_BUF_SIZE, "TDecoder is too large. Increase the buffer size of this pipe.");
-        set_handler(new (rx_buf_) TDecoder(std::forward<TArgs>(args)...));
-    }
-    void set_handler(StreamSink* new_handler) {
-        if (input_handler_)
-            input_handler_->~StreamSink();
-        input_handler_ = new_handler;
-    }
-
-    void process_chunk(const uint8_t* buffer, size_t offset, size_t length, uint16_t crc, bool packet_break);
+    virtual int encode_fragment(outgoing_call_t* calls, size_t n_calls) = 0;
 };
 
-
-class InputChannelDecoder /*: public StreamSink*/ {
+// Recommended way to encode fragments on UDP
+class CRCMultiFragmentEncoder : public MultiFragmentEncoder {
 public:
-    InputChannelDecoder(RemoteNode* remote_node) :
-        remote_node_(remote_node),
-        header_decoder_(make_header_decoder())
-        {}
-    
-    StreamSink::status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes);
-    size_t get_min_useful_bytes() const;
-private:
-    using HeaderDecoder = StaticStreamChain<
-            FixedIntDecoder<uint16_t, false>,
-            FixedIntDecoder<uint16_t, false>,
-            FixedIntDecoder<uint16_t, false>,
-            FixedIntDecoder<uint16_t, false>>;
-    RemoteNode* remote_node_;
-    HeaderDecoder header_decoder_;
-    bool in_header = true;
+    CRCMultiFragmentEncoder(std::shared_ptr<StreamSink> sink, std::shared_ptr<Context> ctx)
+        : sink_(sink), ctx_(ctx) {}
 
-    static HeaderDecoder make_header_decoder() {
-        return HeaderDecoder(
-                FixedIntDecoder<uint16_t, false>(),
-                FixedIntDecoder<uint16_t, false>(),
-                FixedIntDecoder<uint16_t, false>(),
-                FixedIntDecoder<uint16_t, false>()
-        );
+    std::tuple<size_t, size_t> get_size_function() {
+        return {16, 2};
     }
 
-    uint16_t& get_pipe_no() { return header_decoder_.get_stream<0>().get_value(); }
-    uint16_t& get_chunk_offset() { return header_decoder_.get_stream<1>().get_value(); }
-    uint16_t& get_chunk_crc() { return header_decoder_.get_stream<2>().get_value(); }
-    uint16_t& get_chunk_length() { return header_decoder_.get_stream<3>().get_value(); }
+    int encode_fragment(outgoing_call_t* calls, size_t n_calls) final {
+        // TODO: the windows API allows passing fragmented buffers (WSABUF)
+        // to the socket. We should honor this to reduce the number of copy
+        // operations.
+        uint8_t buffer[mtu_];
+        const size_t footer_length = 2;
+        bufptr_t bufptr = {.ptr = buffer, .length = sizeof(buffer)};
 
-    void reset() {
-        header_decoder_ = make_header_decoder();
-        in_header = true;
+        // Each chunk has the following format:
+        //  1 byte: length of the following fields:
+        //      16 bytes: call UUID
+        //      ? bytes: offset
+        //      ? bytes: data
+
+        for (size_t i = 0; i < n_calls; ++i) {
+            if (bufptr.length < 1 + footer_length) {
+                break; // not enough space to hold next chunk
+            }
+            size_t max_chunk_length = std::min(bufptr.length - 1 - footer_length, (size_t)255);
+            bufptr_t chunk_bufptr = {.ptr = bufptr.ptr + 1, .length = max_chunk_length};
+
+            // Enqueue call ID
+            if (encode(calls[i].uuid, chunk_bufptr, ctx_.get()) != 0) {
+                FIBRE_LOG(W) << "could not encode chunk";
+                continue;
+            }
+
+            size_t offset;
+            cbufptr_t chunk = {.ptr = nullptr, .length = chunk_bufptr.length};
+            calls[i].fragment_source.get_chunk(chunk, &offset);
+
+            // Enqueue offset
+            if (encode(offset, chunk_bufptr, ctx_.get()) != 0) {
+                FIBRE_LOG(W) << "could not encode chunk";
+                continue;
+            }
+
+            // Write chunk content
+            size_t actual_chunk_length = std::min(chunk.length, chunk_bufptr.length);
+            memcpy(chunk_bufptr.ptr, chunk.ptr, actual_chunk_length);
+            chunk_bufptr += actual_chunk_length;
+
+            // Write chunk length
+            *bufptr.ptr = (max_chunk_length - chunk_bufptr.length);
+            bufptr += (max_chunk_length - chunk_bufptr.length) + 1;
+
+            FIBRE_LOG(D) << "added fragment: call ID " << calls[i].uuid << ", chunk " << offset << " length " << chunk.length;
+        }
+
+        // TODO: add CRC
+        bufptr += 2;
+
+        cbufptr_t cbufptr = {.ptr = buffer, .length = sizeof(buffer) - bufptr.length};
+        return sink_->process_bytes(cbufptr); // TODO: error handling
     }
+
+
+    std::shared_ptr<StreamSink> sink_;
+    std::shared_ptr<Context> ctx_;
+    size_t mtu_ = 1024; // TODO: read dynamically from sink
 };
 
-class IncomingConnectionDecoder : public DynamicStreamChain<RX_BUF_SIZE - 52> {
+// Recommended way to decode fragments on UDP
+class CRCMultiFragmentDecoder {
 public:
-    IncomingConnectionDecoder(OutputPipe& output_pipe) : output_pipe_(&output_pipe) {
-        set_stream<HeaderDecoderChain>(FixedIntDecoder<uint16_t, false>(), FixedIntDecoder<uint16_t, false>());
-    }
-    template<typename TDecoder, typename ... TArgs>
-    void set_stream(TArgs&& ... args) {
-        DynamicStreamChain::set_stream<TDecoder, TArgs...>(std::forward<TArgs>(args)...);
-    }
-    void set_stream(StreamSink* new_stream) {
-        DynamicStreamChain::set_stream(new_stream);
-    }
-    template<typename TDecoder>
-    TDecoder* get_stream() {
-        return DynamicStreamChain::get_stream<TDecoder>();
-    }
-    template<typename TDecoder>
-    const TDecoder* get_stream() const {
-        return DynamicStreamChain::get_stream<TDecoder>();
-    }
-private:
-    enum {
-        RECEIVING_HEADER,
-        RECEIVING_PAYLOAD
-    } state_ = RECEIVING_HEADER;
-    const LocalEndpoint* endpoint_ = nullptr;
-    OutputPipe* output_pipe_ = nullptr;
+    static int decode_fragments(cbufptr_t bufptr, Context* ctx) {
+        // TODO: CRC check
+        if (bufptr.length >= 2) {
+            bufptr.length -= 2;
+        } else {
+            return -1;
+        }
 
-    using HeaderDecoderChain = StaticStreamChain<
-                FixedIntDecoder<uint16_t, false>,
-                FixedIntDecoder<uint16_t, false>
-            >; // size: 96 bytes
+        while (bufptr.length > 0) {
+            FIBRE_LOG(D) << "incoming chunk";
+            FIBRE_LOG(D) << bufptr.length << " bytes left in buffer, len field is " << (size_t)bufptr.ptr[0];
+            size_t total_chunk_length = std::min(bufptr.length - 1, (size_t)bufptr.ptr[0]);
+            cbufptr_t chunk_bufptr = {.ptr = bufptr.ptr + 1, .length = total_chunk_length};
 
-    status_t advance_state() final;
+            call_id_t call_id;
+            if (decode(chunk_bufptr, &call_id, ctx)) {
+                FIBRE_LOG(W) << "failed to decode call ID";
+                bufptr += total_chunk_length + 1;
+                continue;
+            }
+
+            FIBRE_LOG(D) << "call ID is " << call_id;
+
+            size_t offset;
+            if (decode(chunk_bufptr, &offset, ctx)) {
+                FIBRE_LOG(W) << "failed to decode offset";
+                bufptr += total_chunk_length + 1;
+                continue;
+            }
+
+            incoming_call_t* call;
+            start_or_get_call(ctx, call_id, &call);
+
+            FIBRE_LOG(D) << "incoming fragment on stream " << call_id << ", offset " << offset;
+
+            //FIBRE_LOG(D) << "got " << (sizeof(buf) - bufptr.length) << " bytes from the source";
+            call->fragment_sink.process_chunk(chunk_bufptr, offset);
+            FIBRE_LOG(D) << "processed chunk";
+
+
+            // Shovel data from the defragmenter to the actual handler
+            stream_copy_result_t copy_result = stream_copy_all(&call->decoder, &call->fragment_sink);
+            if (copy_result.src_status == StreamSource::kError) {
+                FIBRE_LOG(E) << "defragmenter failed";
+            } else if ((copy_result.dst_status == StreamSink::kError) || (copy_result.dst_status == StreamSink::kClosed)) {
+                end_call(call_id);
+            }
+
+            bufptr += total_chunk_length + 1;
+        }
+
+        return 0;
+    }
+
+    static const size_t mtu_ = 1024; // TODO: read dynamically from sink
 };
 
-//template<size_t s> struct incomplete;
-//int asd() {
-//incomplete<sizeof(IncomingConnectionDecoder)> a;
-//}
-static_assert(sizeof(IncomingConnectionDecoder) == RX_BUF_SIZE, "Something is off. Please fix.");
-#endif
 
 }
 

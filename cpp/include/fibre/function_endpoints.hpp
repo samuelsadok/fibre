@@ -10,6 +10,7 @@
 #include <fibre/named_tuple.hpp>
 #include <fibre/local_endpoint.hpp>
 #include <fibre/calls.hpp>
+#include <fibre/dispatcher.hpp>
 
 DEFINE_LOG_TOPIC(FUNCTION_ENDPOINTS);
 #define current_log_topic LOG_TOPIC_FUNCTION_ENDPOINTS
@@ -713,8 +714,8 @@ private:
     using EncoderType = VerboseNamedTupleEncoderV1<TInArgNames, TInArgTypes>;
 
 public:
-    SimplexRemoteFuncEndpoint(TInArgNames in_arg_names)
-        : in_arg_names_(in_arg_names) {}
+    SimplexRemoteFuncEndpoint(Uuid endpoint_id, TInArgNames in_arg_names)
+        : endpoint_id_(endpoint_id), in_arg_names_(in_arg_names) {}
     
     StreamSource* invoke(Context* ctx, TInArgTypes* args) {
         EncoderType* encoder = new EncoderType{ctx, in_arg_names_}; // TODO: fix dynamic allocation
@@ -722,7 +723,39 @@ public:
         return encoder;
     }
 
+    int invoke_async(TInArgTypes* args, CancellationToken* cancellation_token, Callback<>* finished_callback, Context* ctx = nullptr) {
+        auto* arg_encoder = invoke(ctx, args);
+
+        auto uuid = Uuid::random();
+
+        // TODO: fix dynamic allocation
+        outgoing_call_t* call = new outgoing_call_t{
+            .uuid{uuid},
+            .ctx = nullptr,
+            .encoder = CallEncoder(nullptr, endpoint_id_, arg_encoder),
+            .cancellation_token = cancellation_token,
+            .finished_callback = finished_callback,
+            .cancel_obj{&dispose, nullptr}
+        };
+
+
+        {
+            std::shared_ptr<outgoing_call_t> call_ptr(call, [](outgoing_call_t* ptr){
+                FIBRE_LOG(D) << "closing outgoing call " << ptr->uuid;
+                delete ptr;
+            });
+
+            call->cancel_obj = decltype(call->cancel_obj){&dispose, call_ptr};
+
+            *call->cancellation_token += &call->cancel_obj;
+            main_dispatcher.add_call(call_ptr);
+        }
+
+        return 0;
+    }
+
 private:
+    Uuid endpoint_id_;
     TInArgNames in_arg_names_;
 };
 

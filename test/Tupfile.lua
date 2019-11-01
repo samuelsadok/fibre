@@ -43,6 +43,10 @@ packages = {
         sources = {'call_decoder_test.cpp'},
         depends = {'fibre'}
     }),
+    make_exe_package({
+        sources = {'udp_call_test.cpp'},
+        depends = {'fibre'}
+    }),
     --make_exe_package({
     --    sources = {'run_tests.cpp'},
     --    depends = {'fibre'}
