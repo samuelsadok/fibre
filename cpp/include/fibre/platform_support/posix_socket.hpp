@@ -90,7 +90,7 @@ public:
 
     /**
      * @brief Initializes the RX channel by opening a socket using the socket()
-     * function.
+     * and bind() functions.
      * 
      * The resulting socket will be bound to the address provided in `local_addr`.
      * 

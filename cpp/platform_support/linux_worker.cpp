@@ -107,7 +107,13 @@ int LinuxWorker::deinit() {
  *        corresponding event has returned.
  */
 int LinuxWorker::register_event(int event_fd, uint32_t events, callback_t* callback) {
+    if (epoll_fd_ < 0) {
+        FIBRE_LOG(E) << "not initialized";
+        return -1;
+    }
+    
     if (event_fd < 0) {
+        FIBRE_LOG(E) << "invalid argument";
         return -1;
     }
 
@@ -154,6 +160,11 @@ int LinuxWorker::register_event(int event_fd, uint32_t events, callback_t* callb
  * event's callback has returned.
  */
 int LinuxWorker::deregister_event(int event_fd) {
+    if (epoll_fd_ < 0) {
+        FIBRE_LOG(E) << "not initialized";
+        return -1;
+    }
+
     int result = 0;
 
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, event_fd, nullptr) != 0) {

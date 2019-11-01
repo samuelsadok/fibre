@@ -137,6 +137,10 @@ int PosixSocket::subscribe(PosixSocketWorker* worker, int events, PosixSocketWor
         FIBRE_LOG(E) << "already subscribed";
         return -1;
     }
+    if (!worker) {
+        FIBRE_LOG(E) << "worker is NULL";
+        return -1;
+    }
 
     if (worker->register_event(get_socket_id(), events, callback)) {
         return -1;
@@ -198,9 +202,9 @@ int PosixSocketRXChannel::unsubscribe() {
 
 void PosixSocketRXChannel::rx_handler(uint32_t) {
     uint8_t internal_buffer[POSIX_SOCKET_RX_BUFFER_SIZE];
-    bufptr_t bufptr = { .ptr = internal_buffer, .length = sizeof(bufptr_t) };
+    bufptr_t bufptr = { .ptr = internal_buffer, .length = sizeof(internal_buffer) };
     status_t status = get_bytes(bufptr);
-    cbufptr_t cbufptr = { .ptr = internal_buffer, .length = sizeof(bufptr_t) - bufptr.length };
+    cbufptr_t cbufptr = { .ptr = internal_buffer, .length = sizeof(internal_buffer) - bufptr.length };
     if (callback_)
         (*callback_)(status, cbufptr);
 }
@@ -241,7 +245,7 @@ StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
         return StreamSource::kError;
     }
 
-    FIBRE_LOG(D) << "Received data from " << remote_addr_;
+    FIBRE_LOG(D) << "Received " << n_received << " bytes from " << remote_addr_;
 
     buffer += n_received;
     return StreamSource::kOk;
@@ -326,6 +330,6 @@ StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
 
     buffer += n_sent;
 
-    FIBRE_LOG(D) << "Sent data to " << remote_addr_;
+    FIBRE_LOG(D) << "Sent " << n_sent << " bytes to " << remote_addr_;
     return StreamSink::kOk;
 }

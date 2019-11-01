@@ -19,6 +19,7 @@ using namespace fibre;
 int WindowsUdpRxChannel::open(std::tuple<std::string, int> local_address) {
     struct sockaddr_storage win_local_addr = to_winsock_addr(local_address);
     if (win_local_addr.ss_family) {
+        // TODO: join multicast group (same as in posix_udp.cpp)
         return WindowsSocketRXChannel::init(SOCK_DGRAM, IPPROTO_UDP, win_local_addr);
     } else {
         return -1;
