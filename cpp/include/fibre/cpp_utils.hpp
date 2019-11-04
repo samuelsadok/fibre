@@ -1165,15 +1165,35 @@ namespace fibre {
 template<typename T>
 class HexPrinter {
 public:
-    HexPrinter(T val, bool prefix) : val_(val), prefix_(prefix) {}
+    HexPrinter(T val, bool prefix) : val_(val) /*, prefix_(prefix)*/ {
+        const char digits[] = "0123456789abcdef";
+        size_t prefix_length = prefix ? 2 : 0;
+        if (prefix) {
+            str[0] = '0';
+            str[1] = 'x';
+        }
+        str[prefix_length + hex_digits<T>()] = '\0';
+        
+        for (size_t i = 0; i < hex_digits<T>(); ++i) {
+            str[prefix_length + hex_digits<T>() - i - 1] = digits[val & 0xf];
+            val >>= 4;
+        }
+    }
+    std::string to_string() const { return str; }
+    void to_string(char* buf) const {
+        for (size_t i = 0; (i < sizeof(str)) && str[i]; ++i)
+            buf[i] = str[i];
+    }
+
     T val_;
-    bool prefix_;
+    //bool prefix_;
+    char str[hex_digits<T>() + 1];
 };
 
 template<typename T>
 std::ostream& operator<<(std::ostream& stream, const HexPrinter<T>& printer) {
     // TODO: specialize for char
-    return stream << (printer.prefix_ ? "0x" : "") << std::hex << std::setw(hex_digits<T>()) << std::setfill('0') << static_cast<uint64_t>(printer.val_) << std::dec;
+    return stream << printer.to_string();
 }
 
 template<typename T>

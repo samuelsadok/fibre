@@ -103,6 +103,34 @@ public:
 	//void swap(Uuid &other);
 	//bool isValid() const;
 
+    void to_string(char (&str)[37]) const {
+        const uint8_t * buffer = get_bytes().data();
+
+        size_t length = 16;
+        as_hex(read_be<uint32_t>(&buffer, &length), false).to_string(str + 0);
+        as_hex(read_be<uint16_t>(&buffer, &length), false).to_string(str + 9);
+        as_hex(read_be<uint16_t>(&buffer, &length), false).to_string(str + 14);
+        as_hex(read_be<uint16_t>(&buffer, &length), false).to_string(str + 19);
+        as_hex(buffer[0], false).to_string(str + 24);
+        as_hex(buffer[1], false).to_string(str + 26);
+        as_hex(buffer[2], false).to_string(str + 28);
+        as_hex(buffer[3], false).to_string(str + 30);
+        as_hex(buffer[4], false).to_string(str + 32);
+        as_hex(buffer[5], false).to_string(str + 34);
+
+        str[8] = '-';
+        str[13] = '-';
+        str[18] = '-';
+        str[23] = '-';
+        str[36] = '\0';
+    }
+
+    std::string to_string() const {
+        char str[37];
+        to_string(str);
+        return {str};
+    }
+
 private:
     //uint32_t time_low;
     //uint16_t time_mid;
@@ -121,13 +149,7 @@ using Guid = Uuid; // Dude, it's the same thing.
 
 __attribute__((unused))
 static std::ostream& operator<<(std::ostream& stream, const Uuid& uuid) {
-    const uint8_t * buffer = uuid.get_bytes().data();
-    size_t length = 16;
-    return stream << as_hex(read_be<uint32_t>(&buffer, &length), false) << "-"
-        << as_hex(read_be<uint16_t>(&buffer, &length), false) << "-"
-        << as_hex(read_be<uint16_t>(&buffer, &length), false) << "-"
-        << as_hex(read_be<uint16_t>(&buffer, &length), false) << "-"
-        << as_hex(buffer[0], false) << as_hex(buffer[1], false) << as_hex(buffer[2], false) << as_hex(buffer[3], false) << as_hex(buffer[4], false) << as_hex(buffer[5], false);
+    return stream << uuid.to_string();
 }
 
 }

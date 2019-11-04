@@ -44,6 +44,10 @@ packages = {
         depends = {'fibre'}
     }),
     make_exe_package({
+        sources = {'uuid_test.cpp'},
+        depends = {'fibre'}
+    }),
+    make_exe_package({
         sources = {'udp_call_test.cpp'},
         depends = {'fibre'}
     }),
