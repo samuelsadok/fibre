@@ -6,68 +6,65 @@
 // echo "1-8" | sudo tee /sys/bus/usb/drivers/usb/bind
 
 #include <fibre/platform_support/linux_worker.hpp>
-#include <fibre/platform_support/dbus.hpp>
+#include <fibre/platform_support/bluez.hpp>
 
-#include <fibre/bluetooth_discoverer.hpp>
+#include "test_utils.hpp"
 
 using namespace fibre;
 
+//class MyService : public LocalGattService {
+//    MyService() : LocalGattService()
+//};
+
+
 int main(int argc, const char** argv) {
+    TestContext context;
+
     LinuxWorker worker;
-    if (worker.init() != 0) {
-        printf("worker init failed.\n");
-        return -1;
-    }
+    TEST_ZERO(worker.init());
 
     DBusConnectionWrapper dbus_connection;
-    if (dbus_connection.init(&worker, true) != 0) {
-        printf("DBus init failed.\n");
-        return -1;
-    }
+    TEST_ZERO(dbus_connection.init(&worker, true));
 
+    BluezPeripheralController peripheral;
+    TEST_ZERO(peripheral.init(&worker, &dbus_connection));
 
-    /*printf("dispatch message...\n");
-    org_freedesktop_DBus_Introspectable bluez_root_obj(&dbus_connection, "org.bluez", "/");
-    //DBusObject bluez(&dbus_connection, "org.bluez", "/org/bluez");
-
-    Callback<const char*> callback = {
-        [](void*, const char* xml) { printf("XML: %s", xml); }, nullptr
+    BluetoothPeripheralController::Ad_t my_ad = {
+        /*.is_connectable = true,
+        .include_tx_power = true,
+        .local_name = "Hello World",
+        .service_uuid = "57155f13-33ec-456f-b9da-d2c876e2ecdc"*/
     };
-    bluez_root_obj.Introspect_async(&callback);
-    bluez_root_obj.Introspect_async(&callback);
-    bluez_root_obj.Introspect_async(&callback);*/
 
-    BluetoothCentralSideDiscoverer bluetooth_discoverer;
-    if (bluetooth_discoverer.init(&worker, &dbus_connection) != 0) {
-        printf("Discoverer init failed\n");
-        return -1;
-    }
+    LocalGattService my_service{"57155f13-33ec-456f-b9da-d2c876e2ecdc"};
+    //my_service.add_characteristic(); // TODO: add characteristics
 
-    void* ctx;
-    if (bluetooth_discoverer.start_channel_discovery(nullptr, &ctx) != 0) {
-        printf("Discoverer start failed\n");
-        return -1;
-    }
+    printf("press [ENTER] to register service and start advertising\n");
+    getchar(); // TODO: make stdin unbuffered
 
-    printf("waiting for a bit...\n");
-    //usleep(3000000);
+    void* token;
+    TEST_ZERO(peripheral.register_service(&my_service));
+    TEST_ZERO(peripheral.start_advertising(my_ad, &token));
+    
+    printf("press [ENTER] to stop advertising and deregister service\n");
     getchar(); // TODO: make stdin unbuffered
     printf("done...\n");
 
+    TEST_ZERO(peripheral.stop_advertising(token));
+    TEST_ZERO(peripheral.deregister_service(&my_service));
+    TEST_ZERO(peripheral.deinit());
 
+    /*BluezBluetoothCentral central;
 
+    central.start_scan();
+    central.connect(peripheral);
+    central.stop_scan();
 
-    if (bluetooth_discoverer.deinit() != 0) {
-        printf("Discoverer deinit failed.\n");
-    }
+    LocalPeripheral peripheral;
+    peripheral*/
 
-    if (dbus_connection.deinit() != 0) {
-        printf("Connection deinit failed.\n");
-    }
+    TEST_ZERO(dbus_connection.deinit());
+    TEST_ZERO(worker.deinit());
 
-    if (worker.deinit() != 0) {
-        printf("worker deinit failed.\n");
-    }
-
-    return 0;
+    return context.summarize();
 }

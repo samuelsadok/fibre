@@ -31,6 +31,10 @@ int DBusConnectionWrapper::init(LinuxWorker* worker, bool system_bus) {
 
     FIBRE_LOG(D) << "my name on the bus is " << dbus_bus_get_unique_name(conn_);
 
+    // Prevent libdbus from killing our process when it receives a disconnect
+    // message on the bus.
+    dbus_connection_set_exit_on_disconnect(conn_, false);
+
     /*// request a name on the bus
     ret = dbus_bus_request_name(conn_, "test.method.server", 
             DBUS_NAME_FLAG_ALLOW_REPLACEMENT, &err_);

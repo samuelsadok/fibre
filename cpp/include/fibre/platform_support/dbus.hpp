@@ -193,7 +193,7 @@ int unpack_message(DBusMessage* message, std::tuple<Ts...>& tuple, int expected_
         if (type == DBUS_MESSAGE_TYPE_ERROR) {
             std::string error_msg;
             if (unpack_message(&args, error_msg) != 0) {
-                FIBRE_LOG(E) << "DBus error received but failted to unpack error message.";
+                FIBRE_LOG(E) << "DBus error received but failed to unpack error message.";
             } else {
                 FIBRE_LOG(E) << "DBus error received: " << error_msg;
             }

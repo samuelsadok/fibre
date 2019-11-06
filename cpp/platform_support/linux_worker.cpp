@@ -225,7 +225,11 @@ void LinuxWorker::event_loop() {
         for (int i = 0; i < n_triggered_events_; ++i) {
             callback_t* callback = (callback_t*)triggered_events_[i].data.ptr;
             if (callback) {
-                (*callback)(triggered_events_[i].events);
+                try { // TODO: not sure if using "try" without throwing exceptions will do unwanted things with the stack
+                    (*callback)(triggered_events_[i].events);
+                } catch (...) {
+                    FIBRE_LOG(E) << "worker callback threw an exception.";
+                }
             }
         }
     }
