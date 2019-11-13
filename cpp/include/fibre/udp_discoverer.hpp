@@ -23,7 +23,7 @@ private:
     int drop_effort_from_1() override;
 
 private:
-    void rx_handler(StreamSource::status_t status, cbufptr_t bufptr);
+    void rx_handler(StreamStatus status, cbufptr_t bufptr);
 
     PosixSocketWorker* worker_ = nullptr;
 

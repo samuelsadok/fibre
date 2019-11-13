@@ -96,19 +96,19 @@ public:
         uint8_t buf[4];
         FIBRE_LOG(D) << "will encode string of length " << length;
         write_le<uint32_t>(i, buf);
-        StreamSink::status_t status = output->process_bytes(buf, sizeof(buf), &processed_bytes);
-        if (status != StreamSink::kOk || processed_bytes != sizeof(buf)) {
+        StreamStatus status = output->process_bytes(buf, sizeof(buf), &processed_bytes);
+        if (status != kStreamOk || processed_bytes != sizeof(buf)) {
             FIBRE_LOG(W) << "not everything processed";
             return;
         }
 
         if (str) {
             processed_bytes = 0;
-            StreamSink::status_t status = output->process_bytes(reinterpret_cast<const uint8_t*>(str), length, &processed_bytes);
+            StreamStatus status = output->process_bytes(reinterpret_cast<const uint8_t*>(str), length, &processed_bytes);
             if (processed_bytes != length) {
                 FIBRE_LOG(W) << "not everything processed: " << processed_bytes;
             }
-            if (status != StreamSink::kOk) {
+            if (status != kStreamOk) {
                 FIBRE_LOG(W) << "error in output";
             }
         } else {
@@ -504,19 +504,19 @@ public:
         size_t processed_bytes = 0;
         uint8_t buf[4];
         write_le<uint32_t>(i, buf, sizeof(buf));
-        StreamSink::status_t status = output->process_bytes(buf, sizeof(buf), &processed_bytes);
-        if (status != StreamSink::kOk || processed_bytes != sizeof(buf)) {
+        StreamStatus status = output->process_bytes(buf, sizeof(buf), &processed_bytes);
+        if (status != kStreamOk || processed_bytes != sizeof(buf)) {
             FIBRE_LOG(W) << "not everything processed";
             return;
         }
 
         if (str) {
             processed_bytes = 0;
-            StreamSink::status_t status = output->process_bytes(reinterpret_cast<const uint8_t*>(str), length, &processed_bytes);
+            StreamStatus status = output->process_bytes(reinterpret_cast<const uint8_t*>(str), length, &processed_bytes);
             if (processed_bytes != length) {
                 FIBRE_LOG(W) << "not everything processed: " << processed_bytes;
             }
-            if (status != StreamSink::kOk) {
+            if (status != kStreamOk) {
                 FIBRE_LOG(W) << "error in output";
             }
         } else {
@@ -572,8 +572,8 @@ public:
     CallFunctionWhenClosed(TDecoder decoder, TFunc func) 
         : decoder_(decoder), func_(func) {}
 
-    status_t process_bytes(cbufptr_t& buffer) final {
-        status_t status = decoder_.process_bytes(buffer);
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
+        StreamStatus status = decoder_.process_bytes(buffer);
         auto val = decoder_.get();
         if (val) {
             std::apply(func_, *val);

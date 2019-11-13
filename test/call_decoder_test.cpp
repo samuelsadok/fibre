@@ -37,7 +37,7 @@ int main(int argc, const char** argv) {
     TEST_NOT_NULL(stream);
     uint8_t encoded[] = {0x04, 0x61, 0x72, 0x67, 0x31, 0x01, 0x04, 0x61, 0x72, 0x67, 0x32, 0x02};
     size_t processed_bytes = 0;
-    TEST_EQUAL(stream->process_bytes_({encoded, sizeof(encoded)}, &processed_bytes), StreamSink::kClosed);
+    TEST_EQUAL(stream->process_bytes_({encoded, sizeof(encoded)}, &processed_bytes), kStreamClosed);
     TEST_EQUAL(called_functions, (uint32_t)1); // ensure function was called
     fn1_endpoint.close(stream);
 

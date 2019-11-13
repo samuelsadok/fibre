@@ -59,17 +59,18 @@ struct generic_bufptr_t {
 using cbufptr_t = generic_bufptr_t<const uint8_t>;
 using bufptr_t = generic_bufptr_t<uint8_t>;
 
+enum StreamStatus {
+    kStreamOk,
+    kStreamBusy,
+    kStreamClosed,
+    kStreamError
+};
+
 /**
  * @brief Represents a class that can process a continuous stream of bytes.
  */
 class StreamSink {
 public:
-    enum status_t {
-        kOk,
-        kBusy,
-        kClosed,
-        kError
-    };
     virtual ~StreamSink() {}
 
     /**
@@ -84,25 +85,25 @@ public:
      * @param buffer The buffer that should be processed. The buffer will be
      *        advanced by the number of bytes that were processed during the
      *        function call.
-     *        For status kError the increment may not properly reflect the true
+     *        For status kStreamError the increment may not properly reflect the true
      *        number of processed bytes.
      * 
-     * @retval kOk      Some of the given data was processed successfully and
+     * @retval kStreamOk    Some of the given data was processed successfully and
      *                  the stream might potentially immediately accept more
      *                  data after this.
      *                  If `length` is non-zero, the stream MUST process a non-
      *                  zero number of bytes. This is so that the caller can
      *                  ensure progress.
-     * @retval kBusy    Zero or more of the given bytes were processed and the
+     * @retval kStreamBusy  Zero or more of the given bytes were processed and the
      *                  stream is now temporarily busy or full, but not yet
      *                  closed.
      *                  How to "unclog" the stream or how to detect that the
      *                  stream is writable again is implementation defined.
-     * @retval kClosed  Zero or more of the given data was processed successfully
+     * @retval kStreamClosed  Zero or more of the given data was processed successfully
      *                  and the stream is now closed. Subsequent calls to this
-     *                  function shall also return kClosed, unless the stream is
+     *                  function shall also return kStreamClosed, unless the stream is
      *                  reset in some way.
-     * @retval kError   Something went wrong.
+     * @retval kStreamError   Something went wrong.
      *                  *processed_bytes will still be incremented gracefully,
      *                  i.e. by at least zero and at most `length`.
      *                  Whether this error is permanent or temporary is
@@ -112,7 +113,7 @@ public:
      * 
      * TODO: the definition of this function was changed - check if implementations still comply.
      */
-    virtual status_t process_bytes(cbufptr_t& buffer) = 0;
+    virtual StreamStatus process_bytes(cbufptr_t& buffer) = 0;
 
     /**
      * @brief Processes as much of the given data as possible.
@@ -120,24 +121,24 @@ public:
      * @param buffer The buffer that should be processed. The buffer will be
      *        advanced by the number of bytes that were processed during the
      *        function call.
-     *        For status kOk the buffer will be empty after the call.
-     *        For status kError the increment may not properly reflect the true
+     *        For status kStreamOk the buffer will be empty after the call.
+     *        For status kStreamError the increment may not properly reflect the true
      *        number of processed bytes.
      * 
-     * @retval kOk      All of the given data was processed successfully and
+     * @retval kStreamOk      All of the given data was processed successfully and
      *                  the stream might potentially immediately accept more
      *                  data after this.
      *                  *processed_bytes will be incremented by `length`.
-     * @retval kBusy    Zero or more of the given bytes were processed and the
+     * @retval kStreamBusy    Zero or more of the given bytes were processed and the
      *                  stream is now temporarily busy or full, but not yet
      *                  closed.
      *                  How to "unclog" the stream or how to detect that the
      *                  stream is writable again is implementation defined.
-     * @retval kClosed  Zero or more of the given data was processed successfully
+     * @retval kStreamClosed  Zero or more of the given data was processed successfully
      *                  and the stream is now closed. Subsequent calls to this
-     *                  function shall also return kClosed, unless the stream is
+     *                  function shall also return kStreamClosed, unless the stream is
      *                  reset in some way.
-     * @retval kError   Something went wrong.
+     * @retval kStreamError   Something went wrong.
      *                  `buffer` will still be advanced gracefully,
      *                  i.e. by at least zero and at most `length`.
      *                  Whether this error is permanent or temporary is
@@ -145,28 +146,28 @@ public:
      *                  In any case, subsequent calls to this function must be
      *                  handled gracefully.
      */
-    status_t process_all_bytes(cbufptr_t& buffer) {
-        status_t status;
+    StreamStatus process_all_bytes(cbufptr_t& buffer) {
+        StreamStatus status;
         // Note that we call the process_bytes function even if `length` is zero.
         // This is necessary to return the correct status.
         do {
             size_t old_length = buffer.length;
-            if ((status = process_bytes(buffer)) != kOk) {
+            if ((status = process_bytes(buffer)) != kStreamOk) {
                 return status;
             }
             if (buffer.length && (old_length <= buffer.length)) {
                 // This is a violation of the specs of `process_bytes`.
                 FIBRE_LOG(E) << "no progress in loop: old length " << old_length << ", new length " << buffer.length;
-                return kError;
+                return kStreamError;
             }
         } while (buffer.length);
 
-        return kOk;
+        return kStreamOk;
     }
 
-    status_t process_bytes_(cbufptr_t buffer, size_t* processed_bytes) {
+    StreamStatus process_bytes_(cbufptr_t buffer, size_t* processed_bytes) {
         size_t old_length = buffer.length;
-        status_t status = process_bytes(buffer);
+        StreamStatus status = process_bytes(buffer);
         if (processed_bytes)
             (*processed_bytes) += old_length - buffer.length;
         return status;
@@ -188,7 +189,7 @@ public:
      *  delay 1 second
      *  process 1 bytes
      * 
-     * After the process_bytes returned kError or kClosed, the behavior
+     * After the process_bytes returned kStreamError or kStreamClosed, the behavior
      * of this function is undefined.
      */
     virtual size_t get_min_useful_bytes() const { return 1; }
@@ -199,7 +200,7 @@ public:
      * 
      * If the stream never blocks, this function may return SIZE_MAX.
      * 
-     * After the process_bytes returned kError or kClosed, the behavior
+     * After the process_bytes returned kStreamError or kStreamClosed, the behavior
      * of this function is undefined.
      */
     virtual size_t get_min_non_blocking_bytes() const { return 0; }
@@ -229,14 +230,6 @@ public:
 
 class StreamSource {
 public:
-    typedef enum {
-        kOk,
-        // temporary errors
-        kBusy,
-        // permanent stati
-        kClosed,
-        kError
-    } status_t;
 
     // @brief Generate a chunk of bytes that are part of a continuous stream.
     // The blocking behavior shall depend on the thread-local deadline_ms variable.
@@ -258,31 +251,31 @@ public:
      *        If this output is not needed, the pointer can be NULL.
      * 
      * TODO: specify what happens if less than requested bytes were returned. Can probably be used to indicate "no more data immediately available"
-     * TODO: spefify if on kError some data may be lost
+     * TODO: spefify if on kStreamError some data may be lost
      * 
      * @returns:
-     *  kOk: The request succeeded.
-     *  kClosed: The request succeeded and the stream is now permanently closed.
+     *  kStreamOk: The request succeeded.
+     *  kStreamClosed: The request succeeded and the stream is now permanently closed.
      *          If the stream was already closed before, zero bytes shall be returned.
-     *  kError: The request failed and the buffer and *generated_bytes were not
+     *  kStreamError: The request failed and the buffer and *generated_bytes were not
      *         modified. Whether the stream is subsequently closed or still open
      *         is undefined.
      * 
-     * @retval kOk      Some of the output buffer was filled successfully and
+     * @retval kStreamOk      Some of the output buffer was filled successfully and
      *                  the stream might potentially immediately generate more
      *                  data after this.
      *                  If `length` is non-zero, the stream MUST return a non-
      *                  zero number of bytes. This is so that the caller can
      *                  ensure progress.
-     * @retval kBusy    Zero or more of bytes were returned and the stream is
+     * @retval kStreamBusy    Zero or more of bytes were returned and the stream is
      *                  now temporarily busy or empty, but not yet closed.
      *                  How to "unclog" the stream or how to detect that the
      *                  stream is readable again is implementation defined.
-     * @retval kClosed  Zero or more bytes were generated successfully and the
+     * @retval kStreamClosed  Zero or more bytes were generated successfully and the
      *                  stream is now closed. Subsequent calls to this function
-     *                  shall also return kClosed, unless the stream is reset in
+     *                  shall also return kStreamClosed, unless the stream is reset in
      *                  some way.
-     * @retval kError   Something went wrong.
+     * @retval kStreamError   Something went wrong.
      *                  buffer will still be advanced gracefully,
      *                  i.e. by at least zero and at most `length`.
      *                  Whether this error is permanent or temporary is
@@ -290,25 +283,25 @@ public:
      *                  In any case, subsequent calls to this function must be
      *                  handled gracefully.
      */
-    virtual status_t get_bytes(bufptr_t& buffer) = 0;
+    virtual StreamStatus get_bytes(bufptr_t& buffer) = 0;
 
-    status_t get_all_bytes(bufptr_t& buffer) {
-        status_t status;
+    StreamStatus get_all_bytes(bufptr_t& buffer) {
+        StreamStatus status;
         // Note that we call the get_bytes function even if `length` is zero.
         // This is necessary to return the correct status.
         do {
             size_t old_length = buffer.length;
-            if ((status = get_bytes(buffer)) != kOk) {
+            if ((status = get_bytes(buffer)) != kStreamOk) {
                 return status;
             }
             if (old_length <= buffer.length) {
                 // This is a violation of the specs of `get_bytes`.
                 FIBRE_LOG(E) << "no progress in loop: old length " << old_length << ", new length " << buffer.length;
-                return kError;
+                return kStreamError;
             }
         } while (buffer.length);
 
-        return kOk;
+        return kStreamOk;
     }
 
     // @brief Returns the number of bytes that can still be written to the stream.
@@ -316,9 +309,9 @@ public:
     // TODO: deprecate
     //virtual size_t get_free_space() = 0;
 
-    status_t get_bytes_(bufptr_t buffer, size_t* generated_bytes) {
+    StreamStatus get_bytes_(bufptr_t buffer, size_t* generated_bytes) {
         size_t old_length = buffer.length;
-        status_t status = get_bytes(buffer);
+        StreamStatus status = get_bytes(buffer);
         if (generated_bytes)
             (*generated_bytes) += old_length - buffer.length;
         return status;
@@ -347,11 +340,11 @@ public:
      *        If this output is not needed, the pointer can be NULL.
      * 
      * @returns:
-     *  kOk: The request could be handled or partially handled.
-     *  kError: The request could not be handled.
+     *  kStreamOk: The request could be handled or partially handled.
+     *  kStreamError: The request could not be handled.
      * TODO: update retvals based on StreamSource spec
      */
-    virtual status_t get_buffer(cbufptr_t* buf) = 0;
+    virtual StreamStatus get_buffer(cbufptr_t* buf) = 0;
 
     /**
      * @brief Shall advance the stream by the specified number of bytes.
@@ -359,16 +352,16 @@ public:
      * TODO: specify what happens if this is more than available or more than a chunk.
      * 
      * @returns:
-     *  kOk: The stream was advanced successfully.
-     *  kClosed: The request succeeded and the stream is now permanently closed.
-     *  kError: The request could not be handled.
+     *  kStreamOk: The stream was advanced successfully.
+     *  kStreamClosed: The request succeeded and the stream is now permanently closed.
+     *  kStreamError: The request could not be handled.
      */
-    virtual status_t consume(size_t length) = 0;
+    virtual StreamStatus consume(size_t length) = 0;
 
-    status_t get_bytes(bufptr_t& buffer) final {
+    StreamStatus get_bytes(bufptr_t& buffer) final {
         cbufptr_t internal_range = {nullptr, buffer.length};
-        if (get_buffer(&internal_range) != kOk) {
-            return kError;
+        if (get_buffer(&internal_range) != kStreamOk) {
+            return kStreamError;
         }
         if (internal_range.length > buffer.length) {
             // TODO: this is not a bug according to the StreamSource spec
@@ -403,11 +396,11 @@ public:
      *        If this output is not needed, the pointer can be NULL.
      * 
      * @returns:
-     *  kOk: The request could be handled or partially handled.
-     *  kError: The request could not be handled.
+     *  kStreamOk: The request could be handled or partially handled.
+     *  kStreamError: The request could not be handled.
      * TODO: update retvals based on StreamSink spec
      */
-    virtual status_t get_buffer(bufptr_t* buf) = 0;
+    virtual StreamStatus get_buffer(bufptr_t* buf) = 0;
 
     /**
      * @brief Shall advance the stream by the specified number of bytes.
@@ -415,16 +408,16 @@ public:
      * TODO: specify what happens if this is more than available or more than a chunk.
      * 
      * @returns:
-     *  kOk: The stream was advanced successfully.
-     *  kClosed: The request succeeded and the stream is now permanently closed.
-     *  kError: The request could not be handled.
+     *  kStreamOk: The stream was advanced successfully.
+     *  kStreamClosed: The request succeeded and the stream is now permanently closed.
+     *  kStreamError: The request could not be handled.
      */
-    virtual status_t commit(size_t length) = 0;
+    virtual StreamStatus commit(size_t length) = 0;
 
-    status_t process_bytes(cbufptr_t& buffer) final {
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
         bufptr_t internal_range = {nullptr, buffer.length};
-        if (get_buffer(&internal_range) != kOk) {
-            return kError;
+        if (get_buffer(&internal_range) != kStreamOk) {
+            return kStreamError;
         }
         if (internal_range.length > buffer.length) {
             FIBRE_LOG(E) << "got larger buffer than requested";
@@ -437,8 +430,8 @@ public:
 };
 
 struct stream_copy_result_t {
-    StreamSink::status_t dst_status;
-    StreamSource::status_t src_status;
+    StreamStatus dst_status;
+    StreamStatus src_status;
     //size_t copied_bytes = 0;
 };
 
@@ -453,7 +446,7 @@ stream_copy_result_t stream_copy_all(TDst* dst, TSrc* src) {
     stream_copy_result_t status;
     do {
         status = stream_copy(dst, src);
-    } while (status.src_status == StreamSource::kOk && status.dst_status == StreamSink::kOk);
+    } while (status.src_status == kStreamOk && status.dst_status == kStreamOk);
     return status;
 }
 
@@ -461,15 +454,15 @@ stream_copy_result_t stream_copy_all(TDst* dst, TSrc* src) {
 ///** @brief Returns true if the given status indicates that the stream is
 // * permanently closed, false otherwise */
 //__attribute__((unused))
-//bool is_permanent(StreamSource::status_t status) {
-//    return (status != kOk) && (status != kBusy) && (status != FULL);
+//bool is_permanent(StreamStatus status) {
+//    return (status != kStreamOk) && (status != kStreamBusy) && (status != FULL);
 //}
 //
 ///** @brief Returns true if the given status indicates that the stream is
 // * permanently closed, false otherwise */
 //__attribute__((unused))
-//bool is_permanent(StreamSink::status_t status) {
-//    return (status != kOk) && (status != kBusy);
+//bool is_permanent(StreamStatus status) {
+//    return (status != kStreamOk) && (status != kStreamBusy);
 //}
 
 //class StreamToPacketSegmenter : public StreamSink {
@@ -516,7 +509,7 @@ public:
     PacketBasedStreamSink(PacketSink& packet_sink) : _packet_sink(packet_sink) {}
     ~PacketBasedStreamSink() {}
 
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
+    StreamStatus process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
         // Loop to ensure all bytes get sent
         while (length) {
             size_t chunk = length; // < _packet_sink.get_mtu() ? length : _packet_sink.get_mtu();
@@ -548,21 +541,21 @@ public:
         buffer_(buffer),
         length_(length) {}
 
-    status_t get_buffer(bufptr_t* buf) final {
+    StreamStatus get_buffer(bufptr_t* buf) final {
         if (buf) {
             buf->ptr = buffer_;
             buf->length = std::min(buf->length, length_);
         }
-        return kOk;
+        return kStreamOk;
     }
 
-    status_t commit(size_t length) final {
+    StreamStatus commit(size_t length) final {
         if (length > length_) {
-            return kError;
+            return kStreamError;
         }
         buffer_ += length;
         length_ -= length;
-        return length_ ? kOk : kClosed;
+        return length_ ? kStreamOk : kStreamClosed;
     }
 
     size_t get_length() { return length_; }
@@ -584,21 +577,21 @@ public:
         buffer_(buffer),
         length_(length) {}
 
-    status_t get_buffer(cbufptr_t* buf) final {
+    StreamStatus get_buffer(cbufptr_t* buf) final {
         if (buf) {
             buf->ptr = buffer_;
             buf->length = std::min(buf->length, length_);
         }
-        return kOk;
+        return kStreamOk;
     }
 
-    status_t consume(size_t length) final {
+    StreamStatus consume(size_t length) final {
         if (length > length_) {
-            return kError;
+            return kStreamError;
         }
         buffer_ += length;
         length_ -= length;
-        return length_ ? kOk : kClosed;
+        return length_ ? kStreamOk : kStreamClosed;
     }
 
     size_t get_length() { return length_; }
@@ -620,11 +613,11 @@ class NullStreamSink : public StreamSink {
 public:
     NullStreamSink(size_t skip) : skip_(skip) {}
 
-    status_t process_bytes(cbufptr_t& buffer) override {
+    StreamStatus process_bytes(cbufptr_t& buffer) override {
         size_t chunk = std::min(buffer.length, skip_);
         skip_ -= chunk;
         buffer += chunk;
-        return skip_ ? kOk : kClosed;
+        return skip_ ? kStreamOk : kStreamClosed;
     }
 
     size_t get_min_non_blocking_bytes() const final { return skip_; }
@@ -653,20 +646,20 @@ public:
         //EXPECT_TYPE(TDecoder, StreamSink);
     }
 
-    status_t process_bytes(cbufptr_t& buffer) final {
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
         FIBRE_LOG(D) << "static stream chain: process " << buffer.length << " bytes";
         while (buffer.length) {
             StreamSink *stream = get_stream(current_stream_idx_);
             if (!stream)
-                return kClosed;
+                return kStreamClosed;
             size_t chunk = 0;
-            status_t result = stream->process_bytes(buffer);
+            StreamStatus result = stream->process_bytes(buffer);
             //LOG_FIBRE("StaticStreamChain: processed %zu bytes", chunk);
-            if (result != kClosed)
+            if (result != kStreamClosed)
                 return result;
             current_stream_idx_++;
         }
-        return current_stream_idx_ < sizeof...(TStreams) ? kOk : kClosed;
+        return current_stream_idx_ < sizeof...(TStreams) ? kStreamOk : kStreamClosed;
     }
 
     size_t get_min_useful_bytes() const final {
@@ -741,15 +734,15 @@ public:
             current_stream_->~StreamSink();
     }
 
-    status_t process_bytes(cbufptr_t& buffer) final {
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
         FIBRE_LOG(D) << "dynamic stream chain: process " << buffer.length << " bytes";
         while (current_stream_) {
-            status_t result = current_stream_->process_bytes(buffer);
-            if (result != kClosed)
+            StreamStatus result = current_stream_->process_bytes(buffer);
+            if (result != kStreamClosed)
                 return result;
             advance_state();
         }
-        return kClosed;
+        return kStreamClosed;
     }
 
     size_t get_min_useful_bytes() const final {
@@ -796,7 +789,7 @@ private:
      * This function should call set_stream().
      * To terminate the decoder chain, call set_stream(nullptr).
      */
-    virtual status_t advance_state() = 0;
+    virtual StreamStatus advance_state() = 0;
 
     size_t state_ = 0;
     uint8_t buffer_[BUFFER_SIZE]; // Subdecoders are constructed in-place in this buffer
@@ -807,23 +800,23 @@ private:
 template<typename TStreamSink>
 class StreamRepeater : public StreamSink {
 public:
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
+    StreamStatus process_bytes(const uint8_t* buffer, size_t length, size_t* processed_bytes) final {
         FIBRE_LOG(D) << "stream repeater: process " << length << " bytes";
         while (length && active_) {
             size_t chunk = 0;
-            status_t result = stream_sink_.process_bytes(buffer, length, &chunk);
+            StreamStatus result = stream_sink_.process_bytes(buffer, length, &chunk);
             buffer += chunk;
             length -= chunk;
             if (processed_bytes)
                 *processed_bytes += chunk;
-            if (result != kClosed)
+            if (result != kStreamClosed)
                 return result;
             active_ = advance_state();
             if (active_) {
                 stream_sink_ = TStreamSink(); // reset stream sink
             }
         }
-        return active_ ? kOk : kClosed;
+        return active_ ? kStreamOk : kStreamClosed;
     }
 
     size_t get_min_useful_bytes() const final {

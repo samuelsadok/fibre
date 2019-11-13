@@ -63,7 +63,7 @@ private:
  */
 class WindowsSocketRXChannel : public WindowsSocket, public StreamSource, public ActiveStreamSource<WindowsSocketWorker> {
 public:
-    using callback_t = Callback<StreamSource::status_t, cbufptr_t>;
+    using callback_t = Callback<StreamStatus, cbufptr_t>;
     int init(int, int, int) = delete;
     using WindowsSocket::init;
 
@@ -108,7 +108,7 @@ public:
     int subscribe(WindowsSocketWorker* worker, callback_t* callback) final;
     int unsubscribe() final;
 
-    status_t get_bytes(bufptr_t& buffer) final;
+    StreamStatus get_bytes(bufptr_t& buffer) final;
 
     /** @brief Returns the remote address of the most recently received data */
     struct sockaddr_storage get_remote_address() const { return remote_addr_; }
@@ -129,7 +129,7 @@ private:
  */
 class WindowsSocketTXChannel : public WindowsSocket, public StreamSink, public ActiveStreamSink<WindowsSocketWorker> {
 public:
-    using callback_t = Callback<StreamSink::status_t>;
+    using callback_t = Callback<StreamStatus>;
     int init(int, int, int) = delete;
     int init(int) = delete;
 
@@ -167,7 +167,7 @@ public:
     int subscribe(WindowsSocketWorker* worker, callback_t* callback) final;
     int unsubscribe() final;
 
-    status_t process_bytes(cbufptr_t& buffer) final;
+    StreamStatus process_bytes(cbufptr_t& buffer) final;
 
 private:
     void tx_handler(int, LPOVERLAPPED);

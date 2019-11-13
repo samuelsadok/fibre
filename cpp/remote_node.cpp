@@ -101,7 +101,7 @@ void RemoteNode::schedule() {
                 write_le<uint16_t>(length, buffer + 6, 2);
                 FIBRE_LOG(D) << "emitting pipe id " << pipe.get_id() << " chunk " << offset << " - " << offset + length - 1 << ", crc " << as_hex(crc_init);
                 size_t processed_bytes = 0;
-                if (channel->process_bytes(buffer, sizeof(buffer), &processed_bytes) != StreamSink::kOk) {
+                if (channel->process_bytes(buffer, sizeof(buffer), &processed_bytes) != kStreamOk) {
                     FIBRE_LOG(W) << "channel failed";
                     // TODO: remove channel
                     break;

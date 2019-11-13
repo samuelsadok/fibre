@@ -54,10 +54,10 @@ public:
             if (length > pipe_->buffer_pos_)
                 return false;
             size_t processed_bytes = 0;
-            status_t status = output->process_bytes(pipe_->buffer_, pipe_->buffer_pos_, &processed_bytes);
+            StreamStatus status = output->process_bytes(pipe_->buffer_, pipe_->buffer_pos_, &processed_bytes);
             if (processed_bytes != length)
                 return false;
-            return status != kError;
+            return status != kStreamError;
         }
     private:
         OutputPipe *pipe_;
@@ -84,7 +84,7 @@ public:
         OutputPipe *pipe_;
     };
 
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final;
+    StreamStatus process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final;
 
     //size_t get_n_due_bytes
     //void get_available_non_blocking_bytes(size_t* offset, size_t* length, uint16_t* crc) {
@@ -164,7 +164,7 @@ public:
     //operator TStream&() const { return output_stream_; }
     //StreamSink* get_stream_sink() { return output_stream_; }
     //const StreamSink* get_stream_sink() const { return output_stream_; }
-    status_t process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
+    StreamStatus process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) final {
         return output_stream_->process_bytes(buffer, length, processed_bytes);
     }
     size_t get_min_useful_bytes() const final {

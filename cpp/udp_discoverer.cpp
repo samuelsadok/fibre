@@ -94,7 +94,7 @@ int UDPDiscoverer::drop_effort_from_1() {
 }
 
 
-void UDPDiscoverer::rx_handler(StreamSource::status_t status, cbufptr_t bufptr) {
+void UDPDiscoverer::rx_handler(StreamStatus status, cbufptr_t bufptr) {
     FIBRE_LOG(E) << "UDP received something!";
     MemoryStreamSource src{bufptr.ptr, bufptr.length};
 

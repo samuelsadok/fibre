@@ -12,7 +12,7 @@ namespace fibre {
 template<typename TWorker>
 class ActiveStreamSource {
 public:
-    using callback_t = Callback<StreamSource::status_t, cbufptr_t>;
+    using callback_t = Callback<StreamStatus, cbufptr_t>;
 
     /**
      * @brief Registers a callback that will be invoked every time new data comes in.
@@ -32,7 +32,7 @@ public:
 template<typename TWorker>
 class ActiveStreamSink {
 public:
-    using callback_t = Callback<StreamSink::status_t>;
+    using callback_t = Callback<StreamStatus>;
 
     /**
      * @brief Registers a callback that will be invoked every time the
@@ -52,8 +52,8 @@ public:
 template<typename TWorker>
 class StreamPusher0 { // user-provided buffer
 public:
-    using get_buffer_callback_t = Callable<StreamSource::status_t, cbufptr_t>;
-    using commit_callback_t = Callable<StreamSource::status_t, cbufptr_t>;
+    using get_buffer_callback_t = Callable<StreamStatus, cbufptr_t>;
+    using commit_callback_t = Callable<StreamStatus, cbufptr_t>;
 
     /**
      * @brief Registers the callbacks that will invoked every time new data
@@ -94,7 +94,7 @@ protected:
 template<typename TWorker>
 class StreamPusher { // driver-provided buffer
 public:
-    using process_bytes_callback_t = Callable<StreamSink::status_t, cbufptr_t&>;
+    using process_bytes_callback_t = Callable<StreamStatus, cbufptr_t&>;
 
     /**
      * @brief Registers the callback that will invoked every time new data
@@ -134,8 +134,8 @@ class StreamPuller {
 public:
     ~StreamPuller() {}
 
-    using get_buffer_callback_t = Callable<StreamSource::status_t, cbufptr_t*>;
-    using consume_callback_t = Callable<StreamSource::status_t, size_t>;
+    using get_buffer_callback_t = Callable<StreamStatus, cbufptr_t*>;
+    using consume_callback_t = Callable<StreamStatus, size_t>;
 
     /**
      * @brief Registers the callbacks that will be invoked every time the

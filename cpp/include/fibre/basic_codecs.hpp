@@ -22,14 +22,14 @@ class VarintDecoder : public Decoder<T> {
 public:
     static constexpr T BIT_WIDTH = (CHAR_BIT * sizeof(T));
 
-    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
         while (buffer.length && !is_closed_) {
             uint8_t input_byte = *buffer;
             state_variable_ |= (static_cast<T>(input_byte & 0x7f) << bit_pos_);
             if (((state_variable_ >> bit_pos_) & 0x7f) != static_cast<T>(input_byte & 0x7f)) {
                 FIBRE_LOG(E) << "varint overflow: tried to add " << as_hex(input_byte) << " << " << bit_pos_;
                 bit_pos_ = BIT_WIDTH;
-                return StreamSink::kError; // overflow
+                return kStreamError; // overflow
             }
 
             buffer++;
@@ -38,9 +38,9 @@ public:
             if (!(input_byte & 0x80))
                 is_closed_ = true;
             else if (bit_pos_ >= BIT_WIDTH)
-                return StreamSink::kError;
+                return kStreamError;
         }
-        return is_closed_ ? StreamSink::kClosed : StreamSink::kOk;
+        return is_closed_ ? kStreamClosed : kStreamOk;
     }
 
     const T* get() final {
@@ -66,7 +66,7 @@ public:
         value_ = value;
     }
 
-    StreamSource::status_t get_bytes(bufptr_t& buffer) final {
+    StreamStatus get_bytes(bufptr_t& buffer) final {
         while (value_ && buffer.length) {
             if (bit_pos_ == 0)
                 FIBRE_LOG(D) << "start encoding varint, from pos " << bit_pos_;
@@ -80,7 +80,7 @@ public:
             }
             buffer++;
         }
-        return value_ ? StreamSource::kOk : StreamSource::kClosed;
+        return value_ ? kStreamOk : kStreamClosed;
     }
 
 private:
@@ -91,16 +91,16 @@ private:
 template<typename T, bool BigEndian>
 class FixedIntDecoder : public Decoder<T> {
 public:
-    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
         size_t chunk = std::min(serializer::BYTE_WIDTH - pos_, buffer.length);
         memcpy(buffer_ + pos_, buffer.ptr, chunk);
         buffer += chunk;
         pos_ += chunk;
         if (pos_ >= serializer::BYTE_WIDTH) {
             value_ = serializer::read(buffer_);
-            return StreamSink::kClosed;
+            return kStreamClosed;
         } else {
-            return StreamSink::kOk;
+            return kStreamOk;
         }
     }
 
@@ -134,15 +134,15 @@ public:
         }
     }
 
-    StreamSource::status_t get_bytes(bufptr_t& buffer) final {
+    StreamStatus get_bytes(bufptr_t& buffer) final {
         size_t chunk = std::min(serializer::BYTE_WIDTH - pos_, buffer.length);
         memcpy(buffer.ptr, buffer_ + pos_, chunk);
         buffer += chunk;
         pos_ += chunk;
         if (pos_ >= serializer::BYTE_WIDTH) {
-            return StreamSource::kClosed;
+            return kStreamClosed;
         } else {
-            return StreamSource::kOk;
+            return kStreamOk;
         }
     }
 
@@ -181,13 +181,13 @@ class UTF8Decoder<std::tuple<std::array<T, MAX_SIZE>, size_t>> : public Decoder<
 public:
     static constexpr T replacement_char = sizeof(T) * CHAR_BIT >= 16 ? 0xfffd : 0x3f;
 
-    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
-        StreamSink::status_t status;
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
+        StreamStatus status;
         std::array<T, MAX_SIZE>& received_buf = std::get<0>(value_);
         size_t& received_length = std::get<1>(value_);
 
         if (!length_decoder_.get()) {
-            if ((status = length_decoder_.process_bytes(buffer)) != StreamSink::kClosed) {
+            if ((status = length_decoder_.process_bytes(buffer)) != kStreamClosed) {
                 return status;
             }
             FIBRE_LOG(D) << "UTF-8: received length " << *length_decoder_.get();
@@ -195,7 +195,7 @@ public:
         if (length_decoder_.get()) {
             while (received_length < *length_decoder_.get()) {
                 if (!buffer.length) {
-                    return StreamSink::kOk;
+                    return kStreamOk;
                 }
 
                 uint8_t byte = *(buffer++);
@@ -227,7 +227,7 @@ public:
                 }
             }
         }
-        return StreamSink::kClosed;
+        return kStreamClosed;
     }
 
     const std::tuple<std::array<T, MAX_SIZE>, size_t>* get() final {
@@ -246,12 +246,12 @@ private:
 template<char... CHARS>
 class UTF8Decoder<sstring<CHARS...>> : public Decoder<sstring<CHARS...>> {
 public:
-    StreamSink::status_t process_bytes(cbufptr_t& buffer) final {
-        StreamSink::status_t status;
-        if ((status = impl_.process_bytes(buffer)) != StreamSink::kClosed) {
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
+        StreamStatus status;
+        if ((status = impl_.process_bytes(buffer)) != kStreamClosed) {
             return status;
         }
-        return get() ? StreamSink::kClosed : StreamSink::kError;
+        return get() ? kStreamClosed : kStreamError;
     }
 
     sstring<CHARS...>* get() final {
@@ -302,15 +302,15 @@ public:
         tmp_buf_len_ = 0;
     }
 
-    StreamSource::status_t get_bytes(bufptr_t& buffer) final {
+    StreamStatus get_bytes(bufptr_t& buffer) final {
         if (!value_)
-            return StreamSource::kClosed;
+            return kStreamClosed;
 
-        StreamSource::status_t status;
+        StreamStatus status;
         std::array<T, MAX_SIZE>& str_buf = std::get<0>(*value_);
         size_t& str_length = std::get<1>(*value_);
 
-        if ((status = length_encoder_.get_bytes(buffer)) != StreamSource::kClosed) {
+        if ((status = length_encoder_.get_bytes(buffer)) != kStreamClosed) {
             return status;
         }
 
@@ -347,7 +347,7 @@ public:
             *(buffer++) = tmp_buf_[4 - (tmp_buf_len_--)];
         }
         
-        return (tmp_buf_len_ || sent_length_ < str_length) ? StreamSource::kOk : StreamSource::kClosed;
+        return (tmp_buf_len_ || sent_length_ < str_length) ? kStreamOk : kStreamClosed;
     }
 
 private:
@@ -365,7 +365,7 @@ public:
         impl_.set(val ? &value_ : nullptr);
     }
 
-    StreamSource::status_t get_bytes(bufptr_t& buffer) final {
+    StreamStatus get_bytes(bufptr_t& buffer) final {
         return impl_.get_bytes(buffer);
     }
 

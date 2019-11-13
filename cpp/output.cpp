@@ -6,7 +6,7 @@ using namespace fibre;
 
 USE_LOG_TOPIC(OUTPUT);
 
-OutputPipe::status_t OutputPipe::process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) {
+OutputPipe::StreamStatus OutputPipe::process_bytes(const uint8_t* buffer, size_t length, size_t *processed_bytes) {
     FIBRE_LOG(D) << "processing " << length << " bytes";
     size_t chunk = std::min(length, sizeof(buffer_) - buffer_pos_);
     memcpy(buffer_ + buffer_pos_, buffer, chunk);
@@ -14,5 +14,5 @@ OutputPipe::status_t OutputPipe::process_bytes(const uint8_t* buffer, size_t len
     if (processed_bytes)
         *processed_bytes += chunk;
     remote_node_->notify_output_pipe_ready();
-    return chunk < length ? kBusy : kOk;
+    return chunk < length ? kStreamBusy : kStreamOk;
 }

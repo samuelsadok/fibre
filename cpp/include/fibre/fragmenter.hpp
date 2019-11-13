@@ -88,19 +88,19 @@ public:
         buffer += buffer.length;
     }
 
-    status_t get_buffer(cbufptr_t* buf) final {
+    StreamStatus get_buffer(cbufptr_t* buf) final {
         if (buf) {
             buf->ptr = buf_ + (read_ptr_ % I);
             buf->length = count_valid_table(1, read_ptr_ % I, std::min(buf->length, I - (read_ptr_ % I)));
         }
-        return kOk;
+        return kStreamOk;
     }
 
-    status_t consume(size_t length) final {
+    StreamStatus consume(size_t length) final {
         FIBRE_LOG(D) << "consume " << length << " bytes";
         clear_valid_table(read_ptr_ % I, length);
         read_ptr_ += length;
-        return count_valid_table(1, read_ptr_ % I, 1) ? kOk : kBusy;
+        return count_valid_table(1, read_ptr_ % I, 1) ? kStreamOk : kStreamBusy;
     }
 
 private:
@@ -195,19 +195,19 @@ public:
         clear_fresh_table(dst_offset, length);
     }
 
-    status_t get_buffer(bufptr_t* buf) final {
+    StreamStatus get_buffer(bufptr_t* buf) final {
         if (buf) {
             buf->ptr = buf_ + (write_ptr_ % I);
             buf->length = count_fresh_table(0, write_ptr_ % I, std::min(buf->length, I - (write_ptr_ % I)));
         }
-        return kOk;
+        return kStreamOk;
     }
 
-    status_t commit(size_t length) final {
+    StreamStatus commit(size_t length) final {
         FIBRE_LOG(D) << "commit " << length << " bytes";
         set_fresh_table(write_ptr_ % I, length);
         write_ptr_ += length;
-        return kOk;
+        return kStreamOk;
     }
 
 private:

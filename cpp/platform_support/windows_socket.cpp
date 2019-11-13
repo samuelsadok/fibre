@@ -263,13 +263,13 @@ int WindowsSocketRXChannel::unsubscribe() {
 void WindowsSocketRXChannel::rx_handler(int error_code, LPOVERLAPPED overlapped) {
     uint8_t internal_buffer[WINDOWS_SOCKET_RX_BUFFER_SIZE];
     bufptr_t bufptr = { .ptr = internal_buffer, .length = sizeof(bufptr_t) };
-    status_t status = get_bytes(bufptr);
+    StreamStatus status = get_bytes(bufptr);
     cbufptr_t cbufptr = { .ptr = internal_buffer, .length = sizeof(bufptr_t) - bufptr.length };
     if (callback_)
         (*callback_)(status, cbufptr);
 }
 
-StreamSource::status_t WindowsSocketRXChannel::get_bytes(bufptr_t& buffer) {
+StreamStatus WindowsSocketRXChannel::get_bytes(bufptr_t& buffer) {
     socklen_t slen = sizeof(remote_addr_);
     recv_buf_.buf = reinterpret_cast<char*>(buffer.ptr);
     recv_buf_.len = buffer.length;
@@ -284,23 +284,23 @@ StreamSource::status_t WindowsSocketRXChannel::get_bytes(bufptr_t& buffer) {
     if (rc != 0) {
         if (WSAGetLastError() == WSA_IO_PENDING /* for overlapped */ || WSAGetLastError() == WSAEWOULDBLOCK /* for non-overlapped */) {
             // An overlapped operation was initiated successfully.
-            return StreamSource::kBusy;
+            return kStreamBusy;
         } else {
             FIBRE_LOG(E) << "Socket read failed: " << sock_err();
-            return StreamSource::kError;
+            return kStreamError;
         }
     }
     
     // This is unexpected and would indicate a bug in the OS.
     if (n_received > buffer.length) {
         buffer += buffer.length;
-        return StreamSource::kError;
+        return kStreamError;
     }
 
     buffer += n_received;
 
     FIBRE_LOG(D) << "Received data from " << remote_addr_;
-    return StreamSource::kOk;
+    return kStreamOk;
 }
 
 
@@ -347,12 +347,12 @@ int WindowsSocketTXChannel::unsubscribe() {
 }
 
 void WindowsSocketTXChannel::tx_handler(int error_code, LPOVERLAPPED overlapped) {
-    // TODO: distinguish between error and closed (ERROR_NO_DATA == kClosed?).
+    // TODO: distinguish between error and closed (ERROR_NO_DATA == kStreamClosed?).
     if (callback_)
-        (*callback_)(error_code == ERROR_SUCCESS ? StreamSink::kOk : StreamSink::kError);
+        (*callback_)(error_code == ERROR_SUCCESS ? kStreamOk : kStreamError);
 }
 
-StreamSink::status_t WindowsSocketTXChannel::process_bytes(cbufptr_t& buffer) {
+StreamStatus WindowsSocketTXChannel::process_bytes(cbufptr_t& buffer) {
     // TODO: if the message is too large for the underlying protocol, sendto()
     // will return EMSGSIZE. This needs some testing if this correctly detects
     // the UDP message size.
@@ -373,21 +373,21 @@ StreamSink::status_t WindowsSocketTXChannel::process_bytes(cbufptr_t& buffer) {
         if (WSAGetLastError() == WSA_IO_PENDING) {
             // An overlapped operation was initiated successfully.
             buffer += buffer.length;
-            return StreamSink::kBusy;
+            return kStreamBusy;
         } else {
             FIBRE_LOG(E) << "Socket write failed: " << sock_err();
-            return StreamSink::kError;
+            return kStreamError;
         }
     }
     
     // This is unexpected and would indicate a bug in the OS.
     if (n_sent > buffer.length) {
         buffer += buffer.length;
-        return StreamSink::kError;
+        return kStreamError;
     }
 
     buffer += n_sent;
 
     FIBRE_LOG(D) << "Sent data to " << remote_addr_;
-    return StreamSink::kOk;
+    return kStreamOk;
 }

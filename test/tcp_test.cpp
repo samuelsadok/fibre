@@ -21,7 +21,7 @@ TestContext test_tx(StreamSink& sink, std::string str) {
     TestContext context;
 
     cbufptr_t cbufptr = { .ptr = (const uint8_t*)str.c_str(), .length = str.size() };
-    TEST_EQUAL(sink.process_all_bytes(cbufptr), StreamSink::kOk); // technically a return value of "kBusy" would also comply to the specs
+    TEST_EQUAL(sink.process_all_bytes(cbufptr), kStreamOk); // technically a return value of "kStreamBusy" would also comply to the specs
     TEST_ZERO(cbufptr.length);
 
     return context;
@@ -33,7 +33,7 @@ TestContext test_rx(StreamSource& source, std::string str) {
     uint8_t recv_buf[str.size() + 2];
     bufptr_t bufptr = { .ptr = recv_buf, .length = sizeof(recv_buf) };
     
-    TEST_EQUAL(source.get_all_bytes(bufptr), StreamSource::kBusy); // technically a return value of "kOk" would also comply to the specs
+    TEST_EQUAL(source.get_all_bytes(bufptr), kStreamBusy); // technically a return value of "kStreamOk" would also comply to the specs
     TEST_EQUAL(sizeof(recv_buf) - bufptr.length, str.size());
 
     TEST_EQUAL(std::string((const char *)recv_buf, str.size()), str);

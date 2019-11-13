@@ -103,7 +103,7 @@ int encode(T& val, bufptr_t& bufptr, Context* ctx) {
     Encoder<T>* encoder = alloc_encoder<T>(ctx);
     if (encoder) {
         encoder->set(&val);
-        result = (encoder->get_all_bytes(bufptr) == StreamSource::kClosed ? 0 : -1);
+        result = (encoder->get_all_bytes(bufptr) == kStreamClosed ? 0 : -1);
         dealloc_encoder(encoder);
     }
     return result;
@@ -114,7 +114,7 @@ int decode(cbufptr_t& bufptr, T* val, Context* ctx) {
     int result = -1;
     Decoder<T>* decoder = alloc_decoder<T>(ctx);
     if (decoder) {
-        result = (decoder->process_all_bytes(bufptr) == StreamSink::kClosed ? 0 : -1);
+        result = (decoder->process_all_bytes(bufptr) == kStreamClosed ? 0 : -1);
         if (!decoder->get()) {
             result = -1;
         } else if (val) {

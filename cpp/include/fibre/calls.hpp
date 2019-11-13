@@ -32,10 +32,10 @@ public:
         }*/
     }
 
-    status_t process_bytes(cbufptr_t& buffer) final {
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
         if (endpoint_id_decoder_) {
-            status_t status;
-            if ((status = endpoint_id_decoder_->process_bytes(buffer)) != kClosed) {
+            StreamStatus status;
+            if ((status = endpoint_id_decoder_->process_bytes(buffer)) != kStreamClosed) {
                 return status;
             }
             FIBRE_LOG(D) << "decoded endpoint ID: " << *endpoint_id_decoder_->get();
@@ -50,7 +50,7 @@ public:
         if (endpoint_ && decoder_) {
             return decoder_->process_bytes(buffer);
         } else {
-            return kError;
+            return kStreamError;
         }
     }
 
@@ -71,10 +71,10 @@ public:
         endpoint_id_encoder_->set(&remote_endpoint_id_);
     }
 
-    status_t get_bytes(bufptr_t& buffer) final {
-        StreamSource::status_t status;
+    StreamStatus get_bytes(bufptr_t& buffer) final {
+        StreamStatus status;
         if (endpoint_id_encoder_) {
-            if ((status = endpoint_id_encoder_->get_bytes(buffer)) != StreamSource::kClosed) {
+            if ((status = endpoint_id_encoder_->get_bytes(buffer)) != kStreamClosed) {
                 return status;
             }
             dealloc_encoder(endpoint_id_encoder_);
@@ -286,9 +286,9 @@ public:
 
             // Shovel data from the defragmenter to the actual handler
             stream_copy_result_t copy_result = stream_copy_all(&call->decoder, &call->fragment_sink);
-            if (copy_result.src_status == StreamSource::kError) {
+            if (copy_result.src_status == kStreamError) {
                 FIBRE_LOG(E) << "defragmenter failed";
-            } else if ((copy_result.dst_status == StreamSink::kError) || (copy_result.dst_status == StreamSink::kClosed)) {
+            } else if ((copy_result.dst_status == kStreamError) || (copy_result.dst_status == kStreamClosed)) {
                 end_call(call_id);
             }
 

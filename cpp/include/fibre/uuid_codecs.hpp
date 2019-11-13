@@ -14,7 +14,7 @@ namespace fibre {
 
 class BigEndianUuidDecoder : public Decoder<Uuid> {
 public:
-    status_t process_bytes(cbufptr_t& buffer) final {
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
         size_t chunk = std::min(buffer.length, sizeof(buf_) - pos_);
         memcpy(buf_ + pos_, buffer.ptr, chunk);
         buffer += chunk;
@@ -22,9 +22,9 @@ public:
         
         if (pos_ >= 16) {
             uuid_ = Uuid{buf_};
-            return StreamSink::kClosed;
+            return kStreamClosed;
         } else {
-            return StreamSink::kOk;
+            return kStreamOk;
         }
     }
 
@@ -45,9 +45,9 @@ public:
         pos_ = 0;
     }
 
-    status_t get_bytes(bufptr_t& buffer) final {
+    StreamStatus get_bytes(bufptr_t& buffer) final {
         if (!value_) {
-            return StreamSource::kClosed;
+            return kStreamClosed;
         }
         
         size_t chunk = std::min(buffer.length, 16 - pos_);
@@ -56,9 +56,9 @@ public:
         pos_ += chunk;
         
         if (pos_ >= 16) {
-            return StreamSource::kClosed;
+            return kStreamClosed;
         } else {
-            return StreamSource::kOk;
+            return kStreamOk;
         }
     }
 

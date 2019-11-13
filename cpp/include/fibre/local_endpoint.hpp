@@ -17,7 +17,7 @@ public:
      * 
      * To signify that no more data will be accepted (e.g. if all input
      * arguments of a function have been received), the stream sink shall return
-     * kClosed.
+     * kStreamClosed.
      * 
      * @param ctx: The context in which to execute the endpoint action. This
      *        shall for instance contain the tx_stream field, a stream that can

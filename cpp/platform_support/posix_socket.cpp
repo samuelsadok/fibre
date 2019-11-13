@@ -203,13 +203,13 @@ int PosixSocketRXChannel::unsubscribe() {
 void PosixSocketRXChannel::rx_handler(uint32_t) {
     uint8_t internal_buffer[POSIX_SOCKET_RX_BUFFER_SIZE];
     bufptr_t bufptr = { .ptr = internal_buffer, .length = sizeof(internal_buffer) };
-    status_t status = get_bytes(bufptr);
+    StreamStatus status = get_bytes(bufptr);
     cbufptr_t cbufptr = { .ptr = internal_buffer, .length = sizeof(internal_buffer) - bufptr.length };
     if (callback_)
         (*callback_)(status, cbufptr);
 }
 
-StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
+StreamStatus PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
     socklen_t slen = sizeof(remote_addr_);
     ssize_t n_received = recvfrom(get_socket_id(), buffer.ptr, buffer.length, 0,
             reinterpret_cast<struct sockaddr *>(&remote_addr_), &slen);
@@ -217,11 +217,11 @@ StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
     // If recvfrom returns -1, an errno is set to indicate the error.
     if (n_received < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return StreamSource::kBusy;
+            return kStreamBusy;
         } else {
             FIBRE_LOG(E) << "Socket read failed: " << sock_err();
             buffer += buffer.length; // the function might have written to the buffer
-            return StreamSource::kError;
+            return kStreamError;
         }
     }
     
@@ -235,20 +235,20 @@ StreamSource::status_t PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
         // by the peer. Therefore we know that it must be reason 1. or 3. above.
         // TODO: find a way to query if the socket was closed or not, so that
         // this works for a broader class of sockets.
-        return StreamSource::kOk;
+        return kStreamOk;
     }
 
     // This is unexpected and would indicate a bug in the OS
     // or does it just mean that the buffer was too small? Not sure.
     if (n_received > buffer.length) {
         buffer += buffer.length;
-        return StreamSource::kError;
+        return kStreamError;
     }
 
     FIBRE_LOG(D) << "Received " << n_received << " bytes from " << remote_addr_;
 
     buffer += n_received;
-    return StreamSource::kOk;
+    return kStreamOk;
 }
 
 
@@ -296,17 +296,17 @@ int PosixSocketTXChannel::unsubscribe() {
 
 void PosixSocketTXChannel::tx_handler(uint32_t) {
     // TODO: the uint32_t arg signifies if we were called because of a close event
-    // In this case we should pass on the kClosed (or kError?) status.
+    // In this case we should pass on the kStreamClosed (or kStreamError?) status.
     if (callback_)
-        (*callback_)(StreamSink::kOk);
+        (*callback_)(kStreamOk);
 }
 
-StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
+StreamStatus PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
     // TODO: if the message is too large for the underlying protocol, sendto()
     // will return EMSGSIZE. This needs some testing if this correctly detects
     // the UDP message size.
     //if (buffer.length > get_mtu()) {
-    //    return StreamSink::kError;
+    //    return kStreamError;
     //}
 
     // TODO: if the socket is already closed, the process will receive a SIGPIPE,
@@ -315,21 +315,21 @@ StreamSink::status_t PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {
     int n_sent = sendto(get_socket_id(), buffer.ptr, buffer.length, 0, reinterpret_cast<struct sockaddr*>(&remote_addr_), sizeof(remote_addr_));
     if (n_sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return StreamSink::kBusy;
+            return kStreamBusy;
         } else {
             FIBRE_LOG(E) << "Socket write failed: " << sock_err();
-            return StreamSink::kError;
+            return kStreamError;
         }
     }
     
     // This is unexpected and would indicate a bug in the OS.
     if (n_sent > buffer.length) {
         buffer += buffer.length;
-        return StreamSink::kError;
+        return kStreamError;
     }
 
     buffer += n_sent;
 
     FIBRE_LOG(D) << "Sent " << n_sent << " bytes to " << remote_addr_;
-    return StreamSink::kOk;
+    return kStreamOk;
 }
