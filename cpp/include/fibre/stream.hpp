@@ -146,7 +146,6 @@ public:
      *                  handled gracefully.
      */
     status_t process_all_bytes(cbufptr_t& buffer) {
-        size_t pos = 0;
         status_t status;
         // Note that we call the process_bytes function even if `length` is zero.
         // This is necessary to return the correct status.
@@ -294,7 +293,6 @@ public:
     virtual status_t get_bytes(bufptr_t& buffer) = 0;
 
     status_t get_all_bytes(bufptr_t& buffer) {
-        size_t pos = 0;
         status_t status;
         // Note that we call the get_bytes function even if `length` is zero.
         // This is necessary to return the correct status.
@@ -391,6 +389,7 @@ public:
  * interface as it can reduce copy operations.
  */
 class OpenStreamSink : public StreamSink {
+public:
     /**
      * @brief Shall return a writable range of the internal buffer.
      * 

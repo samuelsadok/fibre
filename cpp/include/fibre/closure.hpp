@@ -153,6 +153,12 @@ struct member_closure<TOut (TImpl::*)(TArgs...)> {
 template<typename TSignature>
 using member_closure_t = typename member_closure<TSignature>::type;
 
+template<typename TOut, typename TImpl, typename ... TArgs>
+auto make_member_closure(TOut (TImpl::*func)(TArgs...), TImpl* obj)
+    -> member_closure_t<decltype(func)>
+{
+    return member_closure_t<decltype(func)>{func, {obj}};
+}
 
 }
 #endif // __FIBRE_CLOSURE_HPP

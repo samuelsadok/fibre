@@ -58,11 +58,22 @@
 #include "cpp_utils.hpp"
 
 #include <iostream>
-#include <mutex>
 #include <string.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #include "windows.h"
+#endif
+
+#if defined(_WIN32) || defined(_WIN64) || defined(__linux__)
+#include <mutex>
+using TMutex = std::mutex;
+using TLock = std::unique_lock<TMutex>;
+#else
+using TMutex = int;
+struct TLock {
+    TLock() {}
+    TLock(TMutex) {}
+};
 #endif
 
 namespace fibre {
@@ -144,7 +155,7 @@ public:
     public:
         Entry() : base_stream_(null_stream), lock_() {}
 
-        Entry(std::ostream& base_stream, log_level_t level, const char* topic, const char* filename, size_t line_no, const char *funcname, std::mutex& mutex)
+        Entry(std::ostream& base_stream, log_level_t level, const char* topic, const char* filename, size_t line_no, const char *funcname, TMutex& mutex)
             : base_stream_(base_stream), lock_(mutex)
         {
             switch (level) {
@@ -167,10 +178,10 @@ public:
         NullBuffer null_buffer{};
         std::ostream null_stream{&null_buffer};
         std::ostream& base_stream_;
-        std::unique_lock<std::mutex> lock_;
+        TLock lock_;
     };
     
-    std::mutex mutex_;
+    TMutex mutex_;
 };
 
 
@@ -252,7 +263,7 @@ constexpr const char * get_file_name(TFilepath file_path) {
 struct sys_err {};
 
 namespace std {
-static std::ostream& operator<<(std::ostream& stream, const sys_err&) {
+static inline std::ostream& operator<<(std::ostream& stream, const sys_err&) {
 #if defined(_WIN32) || defined(_WIN64)
     auto error_code = GetLastError();
 #else
