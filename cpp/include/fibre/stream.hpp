@@ -319,13 +319,68 @@ public:
 };
 
 /**
+ * @brief Behaves like a StreamSink, but additionally grants access to the
+ * internal buffer of the StreamSink.
+ * 
+ * If feasible, an implementer should prefer this interface over the StreamSink
+ * interface as it can reduce copy operations.
+ */
+class StreamSinkIntBuffer : public StreamSink {
+public:
+    /**
+     * @brief Shall return a writable range of the internal buffer.
+     * 
+     * @param buf: The variable being pointed to by this pointer shall be set to
+     *        to the address and length of the next consecutive chunk of
+     *        uninitialized buffer space.
+     *        The caller can write to the memory area indicated by this output
+     *        variable and then commit the data by calling commit().
+     *        If the function returns anything other than success the value
+     *        shall not be modified.
+     *        If this output is not needed, the pointer can be NULL.
+     * 
+     * @returns:
+     *  kStreamOk: The request could be handled or partially handled.
+     *  kStreamError: The request could not be handled.
+     * TODO: update retvals based on StreamSink spec
+     */
+    virtual StreamStatus get_buffer(bufptr_t* buf) = 0;
+
+    /**
+     * @brief Shall advance the stream by the specified number of bytes.
+     * @param length: The number of bytes by which to advance the stream.
+     * TODO: specify what happens if this is more than available or more than a chunk.
+     * 
+     * @returns:
+     *  kStreamOk: The stream was advanced successfully.
+     *  kStreamClosed: The request succeeded and the stream is now permanently closed.
+     *  kStreamError: The request could not be handled.
+     */
+    virtual StreamStatus commit(size_t length) = 0;
+
+    StreamStatus process_bytes(cbufptr_t& buffer) final {
+        bufptr_t internal_range = {nullptr, buffer.length};
+        if (get_buffer(&internal_range) != kStreamOk) {
+            return kStreamError;
+        }
+        if (internal_range.length > buffer.length) {
+            FIBRE_LOG(E) << "got larger buffer than requested";
+            internal_range.length = buffer.length;
+        }
+        memcpy(internal_range.ptr, buffer.ptr, internal_range.length);
+        buffer += internal_range.length;
+        return commit(internal_range.length);
+    }
+};
+
+/**
  * @brief Behaves like a StreamSource, but additionally grants access to the
  * internal buffer of the StreamSource.
  * 
  * If feasible, an implementer should prefer this interface over the StreamSource
  * interface as it can reduce copy operations.
  */
-class OpenStreamSource : public StreamSource {
+class StreamSourceIntBuffer : public StreamSource {
 public:
     /**
      * @brief Shall return a readable range of the internal buffer.
@@ -374,61 +429,6 @@ public:
     }
 };
 
-/**
- * @brief Behaves like a StreamSink, but additionally grants access to the
- * internal buffer of the StreamSink.
- * 
- * If feasible, an implementer should prefer this interface over the StreamSink
- * interface as it can reduce copy operations.
- */
-class OpenStreamSink : public StreamSink {
-public:
-    /**
-     * @brief Shall return a writable range of the internal buffer.
-     * 
-     * @param buf: The variable being pointed to by this pointer shall be set to
-     *        to the address and length of the next consecutive chunk of
-     *        uninitialized buffer space.
-     *        The caller can write to the memory area indicated by this output
-     *        variable and then commit the data by calling commit().
-     *        If the function returns anything other than success the value
-     *        shall not be modified.
-     *        If this output is not needed, the pointer can be NULL.
-     * 
-     * @returns:
-     *  kStreamOk: The request could be handled or partially handled.
-     *  kStreamError: The request could not be handled.
-     * TODO: update retvals based on StreamSink spec
-     */
-    virtual StreamStatus get_buffer(bufptr_t* buf) = 0;
-
-    /**
-     * @brief Shall advance the stream by the specified number of bytes.
-     * @param length: The number of bytes by which to advance the stream.
-     * TODO: specify what happens if this is more than available or more than a chunk.
-     * 
-     * @returns:
-     *  kStreamOk: The stream was advanced successfully.
-     *  kStreamClosed: The request succeeded and the stream is now permanently closed.
-     *  kStreamError: The request could not be handled.
-     */
-    virtual StreamStatus commit(size_t length) = 0;
-
-    StreamStatus process_bytes(cbufptr_t& buffer) final {
-        bufptr_t internal_range = {nullptr, buffer.length};
-        if (get_buffer(&internal_range) != kStreamOk) {
-            return kStreamError;
-        }
-        if (internal_range.length > buffer.length) {
-            FIBRE_LOG(E) << "got larger buffer than requested";
-            internal_range.length = buffer.length;
-        }
-        memcpy(internal_range.ptr, buffer.ptr, internal_range.length);
-        buffer += internal_range.length;
-        return commit(internal_range.length);
-    }
-};
-
 struct stream_copy_result_t {
     StreamStatus dst_status;
     StreamStatus src_status;
@@ -436,12 +436,12 @@ struct stream_copy_result_t {
 };
 
 stream_copy_result_t stream_copy(StreamSink* dst, StreamSource* src);
-stream_copy_result_t stream_copy(StreamSink* dst, OpenStreamSource* src);
+stream_copy_result_t stream_copy(StreamSink* dst, StreamSourceIntBuffer* src);
 
 template<typename TDst, typename TSrc>
 stream_copy_result_t stream_copy_all(TDst* dst, TSrc* src) {
     static_assert(std::is_base_of<StreamSink, TDst>::value, "TDst must inherit from StreamSink");
-    static_assert(std::is_base_of<StreamSource, TSrc>::value, "TSrc must inherit from StreamSink");
+    static_assert(std::is_base_of<StreamSource, TSrc>::value, "TSrc must inherit from StreamSource");
 
     stream_copy_result_t status;
     do {
@@ -535,7 +535,7 @@ private:
  * fixed size memory buffer.
  * When the end of buffer is reached the stream closes.
  */
-class MemoryStreamSink : public OpenStreamSink {
+class MemoryStreamSink : public StreamSinkIntBuffer {
 public:
     MemoryStreamSink(uint8_t *buffer, size_t length) :
         buffer_(buffer),
@@ -560,7 +560,7 @@ public:
 
     size_t get_length() { return length_; }
 
-    size_t get_min_non_blocking_bytes() const final { return length_; }
+    /*size_t get_min_non_blocking_bytes() const final { return length_; }*/
 
 private:
     uint8_t * buffer_;
@@ -571,7 +571,7 @@ private:
  * @brief Implements a finite StreamSource by reading from a fixed size memory
  * buffer.
  */
-class MemoryStreamSource : public OpenStreamSource {
+class MemoryStreamSource : public StreamSourceIntBuffer {
 public:
     MemoryStreamSource(const uint8_t *buffer, size_t length) :
         buffer_(buffer),

@@ -27,7 +27,7 @@ stream_copy_result_t stream_copy(StreamSink* dst, StreamSource* src) {
     return status;
 }
 
-stream_copy_result_t stream_copy(StreamSink* dst, OpenStreamSource* src) {
+stream_copy_result_t stream_copy(StreamSink* dst, StreamSourceIntBuffer* src) {
     stream_copy_result_t status;
     
     cbufptr_t buf = { .ptr = nullptr, .length = SIZE_MAX };;

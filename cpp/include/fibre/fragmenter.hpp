@@ -48,7 +48,7 @@ public:
  * @brief Implements a very simple defragmenter with a fixed size internal buffer.
  */
 template<size_t I>
-class FixedBufferDefragmenter : public Defragmenter, public OpenStreamSource {
+class FixedBufferDefragmenter : public Defragmenter, public StreamSourceIntBuffer {
 public:
     void process_chunk(cbufptr_t& buffer, size_t offset) final {
         // prune start of chunk
@@ -145,7 +145,7 @@ private:
  * wasn't acknowledged yet.
  */
 template<size_t I>
-class FixedBufferFragmenter : public Fragmenter, public OpenStreamSink {
+class FixedBufferFragmenter : public Fragmenter, public StreamSinkIntBuffer {
 public:
     void get_chunk(cbufptr_t& buffer, size_t* offset) final {
         size_t read_ptr = write_ptr_ - I + count_fresh_table(0, write_ptr_ % I, I - (write_ptr_ % I));

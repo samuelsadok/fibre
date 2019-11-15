@@ -39,17 +39,18 @@ public:
         LinuxAutoResetEvent event = LinuxAutoResetEvent("run_sync");
         auto closure = make_lambda_closure([&lock, &functor](){
             functor();
+            // Release lock by assigning a new value to it.
             lock = std::unique_lock<std::mutex>{};
         });
         
         event.init();
         event.subscribe(this, &closure);
         event.set();
-        std::cout << "will wait";
         {
+            // Try to acquire the lock. This will block until it is released by
+            // the lambda function.
             std::unique_lock<std::mutex> lock(mutex);
         }
-        std::cout << "did wait";
         event.unsubscribe();
         event.deinit();
         return 0;

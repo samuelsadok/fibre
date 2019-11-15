@@ -10,7 +10,7 @@ namespace fibre {
  * The stream sink shall close itself once the object is fully decoded.
  */
 template<typename TVal>
-class Decoder : public StreamSink {
+class Decoder : public StreamSink /* TODO: not clear if internal or external buffer is better. Should provide both. */ {
 public:
     /**
      * @brief Shall return a pointer to the decoded value.

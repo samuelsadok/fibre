@@ -50,7 +50,7 @@ public:
 };
 
 template<typename TWorker>
-class StreamPusher0 { // user-provided buffer
+class StreamPusherExtBuffer { // user-provided buffer
 public:
     using get_buffer_callback_t = Callable<StreamStatus, cbufptr_t>;
     using commit_callback_t = Callable<StreamStatus, cbufptr_t>;
@@ -92,7 +92,7 @@ protected:
 };
 
 template<typename TWorker>
-class StreamPusher { // driver-provided buffer
+class StreamPusherIntBuffer : public StreamPusherExtBuffer<TWorker> { // driver-provided buffer
 public:
     using process_bytes_callback_t = Callable<StreamStatus, cbufptr_t&>;
 
@@ -115,6 +115,16 @@ public:
         return 0;
     }
 
+    virtual int subscribe(TWorker* worker, typename StreamPusherExtBuffer<TWorker>::get_buffer_callback_t* get_buffer, typename StreamPusherExtBuffer<TWorker>::commit_callback_t* commit) override {
+        if (StreamPusherExtBuffer<TWorker>::subscribe(worker, get_buffer, commit)) {
+            return -1;
+        } else if (subscribe(worker, process_bytes_obj)) {
+            StreamPusherExtBuffer<TWorker>::unsubscribe(worker, get_buffer, commit);
+            return -1;
+        }
+        return 0;
+    }
+
     virtual int unsubscribe() {
         int result = 0;
         if (!process_bytes_callback_) {
@@ -122,11 +132,33 @@ public:
             result = -1;
         }
         process_bytes_callback_ = nullptr;
+        if (StreamPusherExtBuffer<TWorker>::get_buffer_callback_ || StreamPusherExtBuffer<TWorker>::commit_callback_) {
+            if (!StreamPusherExtBuffer<TWorker>::unsubscribe()) {
+                result = -1;
+            }
+        }
         return result;
     }
 
 protected:
     process_bytes_callback_t* process_bytes_callback_ = nullptr;
+
+private:
+    StreamStatus process_bytes(cbufptr_t& buffer) {
+        bufptr_t internal_range = {nullptr, buffer.length};
+        if ((*StreamPusherExtBuffer<TWorker>::get_buffer_callback_)(&internal_range) != kStreamOk) {
+            return kStreamError;
+        }
+        if (internal_range.length > buffer.length) {
+            FIBRE_LOG(E) << "got larger buffer than requested";
+            internal_range.length = buffer.length;
+        }
+        memcpy(internal_range.ptr, buffer.ptr, internal_range.length);
+        buffer += internal_range.length;
+        return (*StreamPusherExtBuffer<TWorker>::commit_callback_)(internal_range.length);
+    }
+
+    member_closure_t<decltype(&StreamPusherIntBuffer::process_bytes)> process_bytes_obj{&StreamPusherIntBuffer::process_bytes, this};
 };
 
 template<typename TWorker>

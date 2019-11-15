@@ -160,9 +160,6 @@ struct outgoing_call_t {
 int start_or_get_call(Context* ctx, call_id_t call_id, incoming_call_t** call);
 int end_call(call_id_t call_id);
 
-int decode_fragment(Context* ctx, StreamSource* source);
-int encode_fragment(outgoing_call_t call, StreamSink* sink);
-
 
 class MultiFragmentEncoder {
 public:

@@ -10,7 +10,7 @@ namespace fibre {
  * The stream source shall close itself once the object is fully encoded.
  */
 template<typename TVal>
-class Encoder : public StreamSource {
+class Encoder : public StreamSource /* TODO: not clear if internal or external buffer is better. Should provide both. */ {
 public:
     /**
      * @brief Configures the encoder with the value pointed to by `val`.
