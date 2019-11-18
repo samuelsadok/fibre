@@ -49,7 +49,7 @@ int UDPDiscoverer::raise_effort_to_1() {
         FIBRE_LOG(E) << "failed to init UDP receiver";
         return -1;
     }
-    if (rx_channel_.subscribe(worker_, &rx_handler_obj)) {
+    if (rx_channel_.subscribe(worker_, &get_buffer_handler_obj, &commit_handler_obj, &completed_handler_obj)) {
         FIBRE_LOG(E) << "failed to init UDP receiver";
         goto fail;
     }
@@ -94,7 +94,25 @@ int UDPDiscoverer::drop_effort_from_1() {
 }
 
 
-void UDPDiscoverer::rx_handler(StreamStatus status, cbufptr_t bufptr) {
+StreamStatus UDPDiscoverer::get_buffer_handler(bufptr_t* bufptr) {
+    if (bufptr) {
+        bufptr->ptr = rx_buffer_;
+        bufptr->length = std::min(bufptr->length, sizeof(rx_buffer_));
+    }
+    return kStreamOk;
+}
+
+StreamStatus UDPDiscoverer::commit_handler(size_t length) {
+    cbufptr_t bufptr = {.ptr = rx_buffer_, .length = length};
+    return rx_handler(bufptr);
+}
+
+void UDPDiscoverer::completed_handler(StreamStatus status) {
+    FIBRE_LOG(E) << "UDP stream was closed";
+}
+
+
+StreamStatus UDPDiscoverer::rx_handler(cbufptr_t bufptr) {
     FIBRE_LOG(E) << "UDP received something!";
     MemoryStreamSource src{bufptr.ptr, bufptr.length};
 
@@ -123,10 +141,11 @@ void UDPDiscoverer::rx_handler(StreamStatus status, cbufptr_t bufptr) {
         CRCMultiFragmentDecoder::decode_fragments(bufptr, &ctx);
     }
 
-    return;
+    return kStreamOk;
 
 fail:
     delete tx_channel;
+    return kStreamError;
 }
 
 }

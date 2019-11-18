@@ -119,9 +119,10 @@ void WindowsIOCPWorker::event_loop() {
 
         uintptr_t completion_key;
         LPOVERLAPPED overlapped;
+        DWORD num_transferred;
         int error_code = ERROR_SUCCESS;
 
-        if (!GetQueuedCompletionStatus(h_completion_port_, NULL, &completion_key, &overlapped, INFINITE)) {
+        if (!GetQueuedCompletionStatus(h_completion_port_, &num_transferred, &completion_key, &overlapped, INFINITE)) {
             if (overlapped) {
                 error_code = GetLastError();
             } else {
@@ -132,7 +133,7 @@ void WindowsIOCPWorker::event_loop() {
 
         callback_t* callback = (callback_t*)completion_key;
         if (callback) {
-            (*callback)(error_code, overlapped);
+            (*callback)(error_code, overlapped, num_transferred);
         }
     }
 }

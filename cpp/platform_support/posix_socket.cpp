@@ -185,10 +185,12 @@ int PosixSocketRXChannel::deinit() {
     return PosixSocket::deinit();
 }
 
-int PosixSocketRXChannel::subscribe(PosixSocketWorker* worker, callback_t* callback) {
-    callback_ = callback;
+int PosixSocketRXChannel::subscribe(PosixSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, commit_callback_t* commit_callback, completed_callback_t* completed_callback) {
+    if (StreamPusher::subscribe(worker, get_buffer_callback, commit_callback, completed_callback)) {
+        return -1;
+    }
     if (PosixSocket::subscribe(worker, EPOLLIN, &rx_handler_obj)) {
-        callback_ = nullptr;
+        StreamPusher::unsubscribe();
         return -1;
     }
     return 0;
@@ -196,17 +198,34 @@ int PosixSocketRXChannel::subscribe(PosixSocketWorker* worker, callback_t* callb
 
 int PosixSocketRXChannel::unsubscribe() {
     int result = PosixSocket::unsubscribe();
-    callback_ = nullptr;
+    if (StreamPusher::unsubscribe()) {
+        result = -1;
+    }
     return result;
 }
 
 void PosixSocketRXChannel::rx_handler(uint32_t) {
-    uint8_t internal_buffer[POSIX_SOCKET_RX_BUFFER_SIZE];
-    bufptr_t bufptr = { .ptr = internal_buffer, .length = sizeof(internal_buffer) };
+    bufptr_t bufptr = {.ptr = nullptr, .length = SIZE_MAX};
+
+    // Request new buffer from the subscriber
+    if ((*get_buffer_callback_)(&bufptr) != StreamStatus::kStreamOk) {
+        // TODO: unsubscribe before the next event comes in
+        (*completed_callback_)(kStreamOk);
+        return;
+    }
+
+    size_t previous_length = bufptr.length;
     StreamStatus status = get_bytes(bufptr);
-    cbufptr_t cbufptr = { .ptr = internal_buffer, .length = sizeof(internal_buffer) - bufptr.length };
-    if (callback_)
-        (*callback_)(status, cbufptr);
+
+    StreamStatus commit_status = (*commit_callback_)(previous_length - bufptr.length);
+
+    if (status != kStreamOk) {
+        // TODO: unsubscribe before the next event comes in
+        (*completed_callback_)(kStreamError);
+    } else if (commit_status != kStreamOk) {
+        // TODO: unsubscribe before the next event comes in
+        (*completed_callback_)(kStreamOk);
+    }
 }
 
 StreamStatus PosixSocketRXChannel::get_bytes(bufptr_t& buffer) {
@@ -279,10 +298,12 @@ int PosixSocketTXChannel::deinit() {
     return PosixSocket::deinit();
 }
 
-int PosixSocketTXChannel::subscribe(PosixSocketWorker* worker, callback_t* callback) {
-    callback_ = callback;
+int PosixSocketTXChannel::subscribe(PosixSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, consume_callback_t* consume_callback, completed_callback_t* completed_callback) {
+    if (StreamPuller::subscribe(worker, get_buffer_callback, consume_callback, completed_callback)) {
+        return -1;
+    }
     if (PosixSocket::subscribe(worker, EPOLLOUT, &tx_handler_obj)) {
-        callback_ = nullptr;
+        StreamPuller::unsubscribe();
         return -1;
     }
     return 0;
@@ -290,15 +311,37 @@ int PosixSocketTXChannel::subscribe(PosixSocketWorker* worker, callback_t* callb
 
 int PosixSocketTXChannel::unsubscribe() {
     int result = PosixSocket::unsubscribe();
-    callback_ = nullptr;
+    if (StreamPuller::unsubscribe()) {
+        result = -1;
+    }
     return result;
 }
 
 void PosixSocketTXChannel::tx_handler(uint32_t) {
     // TODO: the uint32_t arg signifies if we were called because of a close event
     // In this case we should pass on the kStreamClosed (or kStreamError?) status.
-    if (callback_)
-        (*callback_)(kStreamOk);
+
+    cbufptr_t bufptr = {.ptr = nullptr, .length = SIZE_MAX};
+
+    // Request new buffer from the subscriber
+    if ((*get_buffer_callback_)(&bufptr) != StreamStatus::kStreamOk) {
+        // TODO: unsubscribe before the next event comes in
+        (*completed_callback_)(kStreamOk);
+        return;
+    }
+
+    size_t previous_length = bufptr.length;
+    StreamStatus status = process_bytes(bufptr);
+
+    StreamStatus consume_status = (*consume_callback_)(previous_length - bufptr.length);
+
+    if (status != kStreamOk) {
+        // TODO: unsubscribe before the next event comes in
+        (*completed_callback_)(kStreamError);
+    } else if (consume_status != kStreamOk) {
+        // TODO: unsubscribe before the next event comes in
+        (*completed_callback_)(kStreamOk);
+    }
 }
 
 StreamStatus PosixSocketTXChannel::process_bytes(cbufptr_t& buffer) {

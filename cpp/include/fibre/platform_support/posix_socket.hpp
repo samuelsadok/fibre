@@ -82,9 +82,8 @@ private:
  * 
  * Note: To make this work on Windows, a "poll"-based worker must be implemented.
  */
-class PosixSocketRXChannel : public PosixSocket, public StreamSource, public ActiveStreamSource<PosixSocketWorker> {
+class PosixSocketRXChannel : public PosixSocket, public StreamSource, public StreamPusher<PosixSocketWorker> {
 public:
-    using callback_t = Callback<StreamStatus, cbufptr_t>;
     int init(int, int, int) = delete;
     using PosixSocket::init;
 
@@ -126,7 +125,7 @@ public:
      */
     int deinit();
 
-    int subscribe(PosixSocketWorker* worker, callback_t* callback) final;
+    int subscribe(PosixSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, commit_callback_t* commit_callback, completed_callback_t* completed_callback) final;
     int unsubscribe() final;
 
     StreamStatus get_bytes(bufptr_t& buffer) final;
@@ -145,7 +144,6 @@ public:
 private:
     void rx_handler(uint32_t);
 
-    callback_t* callback_ = nullptr;
     struct sockaddr_storage remote_addr_ = {0}; // updated after each get_bytes() call
 
     member_closure_t<decltype(&PosixSocketRXChannel::rx_handler)> rx_handler_obj{&PosixSocketRXChannel::rx_handler, this};
@@ -156,9 +154,8 @@ private:
  * 
  * Note: To make this work on Windows, a "poll"-based worker must be implemented.
  */
-class PosixSocketTXChannel : public PosixSocket, public StreamSink, public ActiveStreamSink<PosixSocketWorker> {
+class PosixSocketTXChannel : public PosixSocket, public StreamSink, public StreamPuller<PosixSocketWorker> {
 public:
-    using callback_t = Callback<StreamStatus>;
     int init(int, int, int) = delete;
     int init(int) = delete;
 
@@ -193,7 +190,7 @@ public:
      */
     int deinit();
 
-    int subscribe(PosixSocketWorker* worker, callback_t* callback) final;
+    int subscribe(PosixSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, consume_callback_t* consume_callback, completed_callback_t* completed_callback) final;
     int unsubscribe() final;
 
     StreamStatus process_bytes(cbufptr_t& buffer) final;
@@ -201,7 +198,6 @@ public:
 private:
     void tx_handler(uint32_t);
 
-    callback_t* callback_ = nullptr;
     struct sockaddr_storage remote_addr_;
 
     member_closure_t<decltype(&PosixSocketTXChannel::tx_handler)> tx_handler_obj{&PosixSocketTXChannel::tx_handler, this};

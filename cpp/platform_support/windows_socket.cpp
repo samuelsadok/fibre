@@ -245,39 +245,85 @@ int WindowsSocketRXChannel::deinit() {
     return WindowsSocket::deinit();
 }
 
-int WindowsSocketRXChannel::subscribe(WindowsSocketWorker* worker, callback_t* callback) {
-    callback_ = callback;
-    if (WindowsSocket::subscribe(worker, &rx_handler_obj)) {
-        callback_ = nullptr;
+int WindowsSocketRXChannel::subscribe(WindowsSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, commit_callback_t* commit_callback, completed_callback_t* completed_callback) {
+    if (StreamPusher::subscribe(worker, get_buffer_callback, commit_callback, completed_callback)) {
         return -1;
     }
+    if (WindowsSocket::subscribe(worker, &rx_handler_obj)) {
+        StreamPusher::unsubscribe();
+        return -1;
+    }
+    start_overlapped_transfer();
     return 0;
 }
 
 int WindowsSocketRXChannel::unsubscribe() {
     int result = WindowsSocket::unsubscribe();
-    callback_ = nullptr;
+    if (StreamPusher::unsubscribe()) {
+        result = -1;
+    }
     return result;
 }
 
-void WindowsSocketRXChannel::rx_handler(int error_code, LPOVERLAPPED overlapped) {
-    uint8_t internal_buffer[WINDOWS_SOCKET_RX_BUFFER_SIZE];
-    bufptr_t bufptr = { .ptr = internal_buffer, .length = sizeof(bufptr_t) };
-    StreamStatus status = get_bytes(bufptr);
-    cbufptr_t cbufptr = { .ptr = internal_buffer, .length = sizeof(bufptr_t) - bufptr.length };
-    if (callback_)
-        (*callback_)(status, cbufptr);
+void WindowsSocketRXChannel::start_overlapped_transfer() {
+    bufptr_t bufptr = {.ptr = nullptr, .length = SIZE_MAX};
+
+    // Request new buffer from the subscriber
+    if ((*get_buffer_callback_)(&bufptr) != StreamStatus::kStreamOk) {
+        (*completed_callback_)(kStreamOk);
+        return;
+    }
+
+    WSABUF wsa_buf = {
+        .len = (u_long)std::min(bufptr.length, (size_t)ULONG_MAX),
+        .buf = reinterpret_cast<char*>(bufptr.ptr)
+    };
+    DWORD flags = 0;
+    remote_addr_len_ = sizeof(remote_addr_);
+
+    // Tell Windows to start async transfer
+    int rc = WSARecvFrom(
+        get_socket_id(), &wsa_buf, 1, NULL /* lpNumberOfBytesRecvd */, &flags /* dwFlags */,
+        reinterpret_cast<struct sockaddr *>(&remote_addr_), &remote_addr_len_,
+        &overlapped_, NULL);
+    
+    // If the transfer was not started successfully, call release application
+    // buffer and tell the application that the subscription has become stale.
+    if (rc != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+        (*commit_callback_)(0);
+        (*completed_callback_)(kStreamError); // TODO: decode error
+    }
+}
+
+void WindowsSocketRXChannel::rx_handler(int error_code, LPOVERLAPPED overlapped, DWORD num_transferred) {
+    StreamStatus status = kStreamOk;
+
+    if ((*commit_callback_)(error_code ? 0 : num_transferred) != StreamStatus::kStreamOk) {
+        (*completed_callback_)(kStreamOk);
+        return;
+    }
+
+    if (error_code) {
+        (*completed_callback_)(kStreamError); // TODO: decode error
+        return;
+    }
+
+    // Start next transfer
+    start_overlapped_transfer();
+    return;
 }
 
 StreamStatus WindowsSocketRXChannel::get_bytes(bufptr_t& buffer) {
     socklen_t slen = sizeof(remote_addr_);
-    recv_buf_.buf = reinterpret_cast<char*>(buffer.ptr);
-    recv_buf_.len = buffer.length;
+    WSABUF wsa_buf = {
+        .len = (u_long)std::min(buffer.length, (size_t)ULONG_MAX),
+        .buf = reinterpret_cast<char*>(buffer.ptr)
+    };
     unsigned long n_received = 0;
     DWORD flags = 0;
 
     int rc = WSARecvFrom(
-            get_socket_id(), &recv_buf_, 1, &n_received, &flags /* dwFlags */,
+            get_socket_id(), &wsa_buf, 1, &n_received, &flags /* dwFlags */,
             reinterpret_cast<struct sockaddr *>(&remote_addr_), &slen,
             NULL, NULL);
 
@@ -331,43 +377,94 @@ int WindowsSocketTXChannel::deinit() {
     return WindowsSocket::deinit();
 }
 
-int WindowsSocketTXChannel::subscribe(WindowsSocketWorker* worker, callback_t* callback) {
-    callback_ = callback;
-    if (WindowsSocket::subscribe(worker, &tx_handler_obj)) {
-        callback_ = nullptr;
+int WindowsSocketTXChannel::subscribe(WindowsSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, consume_callback_t* consume_callback, completed_callback_t* completed_callback) {
+    if (StreamPuller::subscribe(worker, get_buffer_callback, consume_callback, completed_callback)) {
         return -1;
     }
+    if (WindowsSocket::subscribe(worker, &tx_handler_obj)) {
+        StreamPuller::unsubscribe();
+        return -1;
+    }
+    start_overlapped_transfer();
     return 0;
 }
 
 int WindowsSocketTXChannel::unsubscribe() {
     int result = WindowsSocket::unsubscribe();
-    callback_ = nullptr;
+    if (StreamPuller::unsubscribe()) {
+        result = -1;
+    }
     return result;
 }
 
-void WindowsSocketTXChannel::tx_handler(int error_code, LPOVERLAPPED overlapped) {
-    // TODO: distinguish between error and closed (ERROR_NO_DATA == kStreamClosed?).
-    if (callback_)
-        (*callback_)(error_code == ERROR_SUCCESS ? kStreamOk : kStreamError);
+void WindowsSocketTXChannel::start_overlapped_transfer() {
+    cbufptr_t bufptr = {.ptr = nullptr, .length = SIZE_MAX};
+
+    // Request new buffer from the subscriber
+    if ((*get_buffer_callback_)(&bufptr) != StreamStatus::kStreamOk) {
+        (*completed_callback_)(kStreamOk);
+        return;
+    }
+
+    WSABUF wsa_buf = {
+        .len = (u_long)std::min(bufptr.length, (size_t)ULONG_MAX),
+        .buf = const_cast<char*>(reinterpret_cast<const char*>(bufptr.ptr))
+    };
+    DWORD flags = 0;
+
+    // Tell Windows to start async transfer
+    int rc = WSASendTo(
+        get_socket_id(), &wsa_buf, 1, NULL /* lpNumberOfBytesRecvd */, 0 /* dwFlags */,
+        reinterpret_cast<struct sockaddr *>(&remote_addr_), sizeof(remote_addr_),
+        &overlapped_, NULL);
+    
+    // If the transfer was not started successfully, call release application
+    // buffer and tell the application that the subscription has become stale.
+    if (rc != 0 && WSAGetLastError() != WSA_IO_PENDING) {
+        (*consume_callback_)(0);
+        (*completed_callback_)(kStreamError); // TODO: decode error
+    }
+}
+
+void WindowsSocketTXChannel::tx_handler(int error_code, LPOVERLAPPED overlapped, DWORD num_transferred) {
+    StreamStatus status = kStreamOk;
+
+    if ((*consume_callback_)(error_code ? 0 : num_transferred) != StreamStatus::kStreamOk) {
+        (*completed_callback_)(kStreamOk);
+        return;
+    }
+
+    if (error_code) {
+        (*completed_callback_)(kStreamError); // TODO: decode error (ERROR_NO_DATA == kStreamClosed?)
+        return;
+    }
+
+    // Start next transfer
+    start_overlapped_transfer();
+    return;
 }
 
 StreamStatus WindowsSocketTXChannel::process_bytes(cbufptr_t& buffer) {
     // TODO: if the message is too large for the underlying protocol, sendto()
     // will return EMSGSIZE. This needs some testing if this correctly detects
     // the UDP message size.
-    
+
     // WSASendTo takes a non-const pointer. Let's just cast away the const and
     // trust that it won't modify the buffer (the documentation seems to not 
     // explicitly promise that).
-    send_buf_.buf = const_cast<char*>(reinterpret_cast<const char *>(buffer.ptr));
-    send_buf_.len = buffer.length;
+
+    socklen_t slen = sizeof(remote_addr_);
+    WSABUF wsa_buf = {
+        .len = (u_long)std::min(buffer.length, (size_t)ULONG_MAX),
+        .buf = const_cast<char*>(reinterpret_cast<const char*>(buffer.ptr))
+    };
     unsigned long n_sent = 0;
+    DWORD flags = 0;
 
     int rc = WSASendTo(
-            get_socket_id(), &send_buf_, 1, &n_sent, 0 /* dwFlags */,
-            reinterpret_cast<struct sockaddr*>(&remote_addr_), sizeof(remote_addr_),
-            &overlapped_, NULL /* lpCompletionRoutine */);
+            get_socket_id(), &wsa_buf, 1, &n_sent, 0 /* dwFlags */,
+            reinterpret_cast<struct sockaddr *>(&remote_addr_), sizeof(remote_addr_),
+            NULL, NULL);
 
     if (rc != 0) {
         if (WSAGetLastError() == WSA_IO_PENDING) {

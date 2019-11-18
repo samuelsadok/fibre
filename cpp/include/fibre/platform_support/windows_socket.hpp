@@ -2,6 +2,7 @@
 #define __FIBRE_WINDOWS_SOCKET_HPP
 
 #include <winsock2.h> // should be included before windows.h
+#include <ws2tcpip.h>
 
 #include "windows_worker.hpp"
 #include <fibre/stream.hpp>
@@ -61,9 +62,8 @@ private:
 /**
  * @brief StreamSource based on a WinSock socket ID.
  */
-class WindowsSocketRXChannel : public WindowsSocket, public StreamSource, public ActiveStreamSource<WindowsSocketWorker> {
+class WindowsSocketRXChannel : public WindowsSocket, public StreamSource, public StreamPusher<WindowsSocketWorker> {
 public:
-    using callback_t = Callback<StreamStatus, cbufptr_t>;
     int init(int, int, int) = delete;
     using WindowsSocket::init;
 
@@ -105,7 +105,7 @@ public:
      */
     int deinit();
 
-    int subscribe(WindowsSocketWorker* worker, callback_t* callback) final;
+    int subscribe(WindowsSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, commit_callback_t* commit_callback, completed_callback_t* completed_callback) final;
     int unsubscribe() final;
 
     StreamStatus get_bytes(bufptr_t& buffer) final;
@@ -114,11 +114,11 @@ public:
     struct sockaddr_storage get_remote_address() const { return remote_addr_; }
 
 private:
-    void rx_handler(int, LPOVERLAPPED);
+    void start_overlapped_transfer();
+    void rx_handler(int, LPOVERLAPPED, DWORD);
 
-    callback_t* callback_ = nullptr;
     struct sockaddr_storage remote_addr_ = {0}; // updated after each get_bytes() call
-    WSABUF recv_buf_;
+    socklen_t remote_addr_len_ = 0;
     WSAOVERLAPPED overlapped_ = {0};
 
     member_closure_t<decltype(&WindowsSocketRXChannel::rx_handler)> rx_handler_obj{&WindowsSocketRXChannel::rx_handler, this};
@@ -127,9 +127,8 @@ private:
 /**
  * @brief StreamSink based on a WinSock socket ID.
  */
-class WindowsSocketTXChannel : public WindowsSocket, public StreamSink, public ActiveStreamSink<WindowsSocketWorker> {
+class WindowsSocketTXChannel : public WindowsSocket, public StreamSink, public StreamPuller<WindowsSocketWorker> {
 public:
-    using callback_t = Callback<StreamStatus>;
     int init(int, int, int) = delete;
     int init(int) = delete;
 
@@ -164,17 +163,16 @@ public:
      */
     int deinit();
 
-    int subscribe(WindowsSocketWorker* worker, callback_t* callback) final;
+    int subscribe(WindowsSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, consume_callback_t* consume_callback, completed_callback_t* completed_callback) final;
     int unsubscribe() final;
 
     StreamStatus process_bytes(cbufptr_t& buffer) final;
 
 private:
-    void tx_handler(int, LPOVERLAPPED);
+    void start_overlapped_transfer();
+    void tx_handler(int, LPOVERLAPPED, DWORD);
 
-    callback_t* callback_ = nullptr;
-    struct sockaddr_storage remote_addr_;
-    WSABUF send_buf_;
+    struct sockaddr_storage remote_addr_ = {0};
     WSAOVERLAPPED overlapped_ = {0};
 
     member_closure_t<decltype(&WindowsSocketTXChannel::tx_handler)> tx_handler_obj{&WindowsSocketTXChannel::tx_handler, this};

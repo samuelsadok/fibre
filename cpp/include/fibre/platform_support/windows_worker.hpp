@@ -22,7 +22,7 @@ namespace fibre {
  */
 class WindowsIOCPWorker {
 public:
-    using callback_t = Callback<int, LPOVERLAPPED>;
+    using callback_t = Callback<int, LPOVERLAPPED, DWORD>;
 
     int init();
     int deinit();
