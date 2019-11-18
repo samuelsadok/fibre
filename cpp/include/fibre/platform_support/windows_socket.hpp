@@ -62,7 +62,7 @@ private:
 /**
  * @brief StreamSource based on a WinSock socket ID.
  */
-class WindowsSocketRXChannel : public WindowsSocket, public StreamSource, public StreamPusher<WindowsSocketWorker> {
+class WindowsSocketRXChannel : public WindowsSocket, public StreamSource, public StreamPusher {
 public:
     int init(int, int, int) = delete;
     using WindowsSocket::init;
@@ -105,7 +105,8 @@ public:
      */
     int deinit();
 
-    int subscribe(WindowsSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, commit_callback_t* commit_callback, completed_callback_t* completed_callback) final;
+    int set_worker(WindowsSocketWorker* worker);
+    int subscribe(StreamSinkIntBuffer* sink, completed_callback_t* completed_callback) final;
     int unsubscribe() final;
 
     StreamStatus get_bytes(bufptr_t& buffer) final;
@@ -117,6 +118,7 @@ private:
     void start_overlapped_transfer();
     void rx_handler(int, LPOVERLAPPED, DWORD);
 
+    WindowsSocketWorker* worker_ = nullptr;
     struct sockaddr_storage remote_addr_ = {0}; // updated after each get_bytes() call
     socklen_t remote_addr_len_ = 0;
     WSAOVERLAPPED overlapped_ = {0};
@@ -127,7 +129,7 @@ private:
 /**
  * @brief StreamSink based on a WinSock socket ID.
  */
-class WindowsSocketTXChannel : public WindowsSocket, public StreamSink, public StreamPuller<WindowsSocketWorker> {
+class WindowsSocketTXChannel : public WindowsSocket, public StreamSink, public StreamPuller {
 public:
     int init(int, int, int) = delete;
     int init(int) = delete;
@@ -163,7 +165,8 @@ public:
      */
     int deinit();
 
-    int subscribe(WindowsSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, consume_callback_t* consume_callback, completed_callback_t* completed_callback) final;
+    int set_worker(WindowsSocketWorker* worker);
+    int subscribe(StreamSourceIntBuffer* source, completed_callback_t* completed_callback) final;
     int unsubscribe() final;
 
     StreamStatus process_bytes(cbufptr_t& buffer) final;
@@ -172,6 +175,7 @@ private:
     void start_overlapped_transfer();
     void tx_handler(int, LPOVERLAPPED, DWORD);
 
+    WindowsSocketWorker* worker_ = nullptr;
     struct sockaddr_storage remote_addr_ = {0};
     WSAOVERLAPPED overlapped_ = {0};
 

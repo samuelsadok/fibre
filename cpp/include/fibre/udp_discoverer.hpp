@@ -11,7 +11,7 @@
 
 namespace fibre {
 
-class UDPDiscoverer : public ChannelDiscoverer {
+class UDPDiscoverer : public ChannelDiscoverer, StreamSinkIntBuffer {
 public:
     int init(PosixSocketWorker* worker);
     int deinit();
@@ -26,8 +26,8 @@ private:
     // TODO: UDPDiscoverer could directly implement a forwarding StreamSink which forwards data to the inner layers
     StreamStatus rx_handler(cbufptr_t bufptr);
 
-    StreamStatus get_buffer_handler(bufptr_t* bufptr);
-    StreamStatus commit_handler(size_t length);
+    StreamStatus get_buffer(bufptr_t* bufptr);
+    StreamStatus commit(size_t length);
     void completed_handler(StreamStatus status);
     uint8_t rx_buffer_[65536]; // TODO: remove
 
@@ -38,8 +38,6 @@ private:
 
     CRCMultiFragmentEncoder tx_channel_encoder{{&tx_channel_, [](StreamSink*){}}, nullptr};
 
-    member_closure_t<decltype(&UDPDiscoverer::get_buffer_handler)> get_buffer_handler_obj{&UDPDiscoverer::get_buffer_handler, this};
-    member_closure_t<decltype(&UDPDiscoverer::commit_handler)> commit_handler_obj{&UDPDiscoverer::commit_handler, this};
     member_closure_t<decltype(&UDPDiscoverer::completed_handler)> completed_handler_obj{&UDPDiscoverer::completed_handler, this};
 };
 

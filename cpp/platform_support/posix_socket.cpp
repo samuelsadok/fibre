@@ -185,11 +185,20 @@ int PosixSocketRXChannel::deinit() {
     return PosixSocket::deinit();
 }
 
-int PosixSocketRXChannel::subscribe(PosixSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, commit_callback_t* commit_callback, completed_callback_t* completed_callback) {
-    if (StreamPusher::subscribe(worker, get_buffer_callback, commit_callback, completed_callback)) {
+int PosixSocketRXChannel::set_worker(PosixSocketWorker* worker) {
+    if (sink_) {
+        FIBRE_LOG(E) << "invalid operation while subscribed";
         return -1;
     }
-    if (PosixSocket::subscribe(worker, EPOLLIN, &rx_handler_obj)) {
+    worker_ = worker;
+    return 0;
+}
+
+int PosixSocketRXChannel::subscribe(StreamSinkIntBuffer* sink, completed_callback_t* completed_callback) {
+    if (StreamPusher::subscribe(sink, completed_callback)) {
+        return -1;
+    }
+    if (PosixSocket::subscribe(worker_, EPOLLIN, &rx_handler_obj)) {
         StreamPusher::unsubscribe();
         return -1;
     }
@@ -208,7 +217,7 @@ void PosixSocketRXChannel::rx_handler(uint32_t) {
     bufptr_t bufptr = {.ptr = nullptr, .length = SIZE_MAX};
 
     // Request new buffer from the subscriber
-    if ((*get_buffer_callback_)(&bufptr) != StreamStatus::kStreamOk) {
+    if (sink_->get_buffer(&bufptr) != StreamStatus::kStreamOk) {
         // TODO: unsubscribe before the next event comes in
         (*completed_callback_)(kStreamOk);
         return;
@@ -217,7 +226,7 @@ void PosixSocketRXChannel::rx_handler(uint32_t) {
     size_t previous_length = bufptr.length;
     StreamStatus status = get_bytes(bufptr);
 
-    StreamStatus commit_status = (*commit_callback_)(previous_length - bufptr.length);
+    StreamStatus commit_status = sink_->commit(previous_length - bufptr.length);
 
     if (status != kStreamOk) {
         // TODO: unsubscribe before the next event comes in
@@ -298,11 +307,20 @@ int PosixSocketTXChannel::deinit() {
     return PosixSocket::deinit();
 }
 
-int PosixSocketTXChannel::subscribe(PosixSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, consume_callback_t* consume_callback, completed_callback_t* completed_callback) {
-    if (StreamPuller::subscribe(worker, get_buffer_callback, consume_callback, completed_callback)) {
+int PosixSocketTXChannel::set_worker(PosixSocketWorker* worker) {
+    if (source_) {
+        FIBRE_LOG(E) << "invalid operation while subscribed";
         return -1;
     }
-    if (PosixSocket::subscribe(worker, EPOLLOUT, &tx_handler_obj)) {
+    worker_ = worker;
+    return 0;
+}
+
+int PosixSocketTXChannel::subscribe(StreamSourceIntBuffer* source, completed_callback_t* completed_callback) {
+    if (StreamPuller::subscribe(source, completed_callback)) {
+        return -1;
+    }
+    if (PosixSocket::subscribe(worker_, EPOLLOUT, &tx_handler_obj)) {
         StreamPuller::unsubscribe();
         return -1;
     }
@@ -324,7 +342,7 @@ void PosixSocketTXChannel::tx_handler(uint32_t) {
     cbufptr_t bufptr = {.ptr = nullptr, .length = SIZE_MAX};
 
     // Request new buffer from the subscriber
-    if ((*get_buffer_callback_)(&bufptr) != StreamStatus::kStreamOk) {
+    if (source_->get_buffer(&bufptr) != StreamStatus::kStreamOk) {
         // TODO: unsubscribe before the next event comes in
         (*completed_callback_)(kStreamOk);
         return;
@@ -333,7 +351,7 @@ void PosixSocketTXChannel::tx_handler(uint32_t) {
     size_t previous_length = bufptr.length;
     StreamStatus status = process_bytes(bufptr);
 
-    StreamStatus consume_status = (*consume_callback_)(previous_length - bufptr.length);
+    StreamStatus consume_status = source_->consume(previous_length - bufptr.length);
 
     if (status != kStreamOk) {
         // TODO: unsubscribe before the next event comes in

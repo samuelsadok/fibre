@@ -245,11 +245,20 @@ int WindowsSocketRXChannel::deinit() {
     return WindowsSocket::deinit();
 }
 
-int WindowsSocketRXChannel::subscribe(WindowsSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, commit_callback_t* commit_callback, completed_callback_t* completed_callback) {
-    if (StreamPusher::subscribe(worker, get_buffer_callback, commit_callback, completed_callback)) {
+int WindowsSocketRXChannel::set_worker(WindowsSocketWorker* worker) {
+    if (sink_) {
+        FIBRE_LOG(E) << "invalid operation while subscribed";
         return -1;
     }
-    if (WindowsSocket::subscribe(worker, &rx_handler_obj)) {
+    worker_ = worker;
+    return 0;
+}
+
+int WindowsSocketRXChannel::subscribe(StreamSinkIntBuffer* sink, completed_callback_t* completed_callback) {
+    if (StreamPusher::subscribe(sink, completed_callback)) {
+        return -1;
+    }
+    if (WindowsSocket::subscribe(worker_, &rx_handler_obj)) {
         StreamPusher::unsubscribe();
         return -1;
     }
@@ -269,7 +278,7 @@ void WindowsSocketRXChannel::start_overlapped_transfer() {
     bufptr_t bufptr = {.ptr = nullptr, .length = SIZE_MAX};
 
     // Request new buffer from the subscriber
-    if ((*get_buffer_callback_)(&bufptr) != StreamStatus::kStreamOk) {
+    if (sink_->get_buffer(&bufptr) != StreamStatus::kStreamOk) {
         (*completed_callback_)(kStreamOk);
         return;
     }
@@ -290,7 +299,7 @@ void WindowsSocketRXChannel::start_overlapped_transfer() {
     // If the transfer was not started successfully, call release application
     // buffer and tell the application that the subscription has become stale.
     if (rc != 0 && WSAGetLastError() != WSA_IO_PENDING) {
-        (*commit_callback_)(0);
+        sink_->commit(0);
         (*completed_callback_)(kStreamError); // TODO: decode error
     }
 }
@@ -298,7 +307,7 @@ void WindowsSocketRXChannel::start_overlapped_transfer() {
 void WindowsSocketRXChannel::rx_handler(int error_code, LPOVERLAPPED overlapped, DWORD num_transferred) {
     StreamStatus status = kStreamOk;
 
-    if ((*commit_callback_)(error_code ? 0 : num_transferred) != StreamStatus::kStreamOk) {
+    if (sink_->commit(error_code ? 0 : num_transferred) != StreamStatus::kStreamOk) {
         (*completed_callback_)(kStreamOk);
         return;
     }
@@ -377,11 +386,20 @@ int WindowsSocketTXChannel::deinit() {
     return WindowsSocket::deinit();
 }
 
-int WindowsSocketTXChannel::subscribe(WindowsSocketWorker* worker, get_buffer_callback_t* get_buffer_callback, consume_callback_t* consume_callback, completed_callback_t* completed_callback) {
-    if (StreamPuller::subscribe(worker, get_buffer_callback, consume_callback, completed_callback)) {
+int WindowsSocketTXChannel::set_worker(WindowsSocketWorker* worker) {
+    if (source_) {
+        FIBRE_LOG(E) << "invalid operation while subscribed";
         return -1;
     }
-    if (WindowsSocket::subscribe(worker, &tx_handler_obj)) {
+    worker_ = worker;
+    return 0;
+}
+
+int WindowsSocketTXChannel::subscribe(StreamSourceIntBuffer* source, completed_callback_t* completed_callback) {
+    if (StreamPuller::subscribe(source, completed_callback)) {
+        return -1;
+    }
+    if (WindowsSocket::subscribe(worker_, &tx_handler_obj)) {
         StreamPuller::unsubscribe();
         return -1;
     }
@@ -401,7 +419,7 @@ void WindowsSocketTXChannel::start_overlapped_transfer() {
     cbufptr_t bufptr = {.ptr = nullptr, .length = SIZE_MAX};
 
     // Request new buffer from the subscriber
-    if ((*get_buffer_callback_)(&bufptr) != StreamStatus::kStreamOk) {
+    if (source_->get_buffer(&bufptr) != StreamStatus::kStreamOk) {
         (*completed_callback_)(kStreamOk);
         return;
     }
@@ -421,7 +439,7 @@ void WindowsSocketTXChannel::start_overlapped_transfer() {
     // If the transfer was not started successfully, call release application
     // buffer and tell the application that the subscription has become stale.
     if (rc != 0 && WSAGetLastError() != WSA_IO_PENDING) {
-        (*consume_callback_)(0);
+        source_->consume(0);
         (*completed_callback_)(kStreamError); // TODO: decode error
     }
 }
@@ -429,7 +447,7 @@ void WindowsSocketTXChannel::start_overlapped_transfer() {
 void WindowsSocketTXChannel::tx_handler(int error_code, LPOVERLAPPED overlapped, DWORD num_transferred) {
     StreamStatus status = kStreamOk;
 
-    if ((*consume_callback_)(error_code ? 0 : num_transferred) != StreamStatus::kStreamOk) {
+    if (source_->consume(error_code ? 0 : num_transferred) != StreamStatus::kStreamOk) {
         (*completed_callback_)(kStreamOk);
         return;
     }

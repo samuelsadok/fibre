@@ -49,13 +49,19 @@ int UDPDiscoverer::raise_effort_to_1() {
         FIBRE_LOG(E) << "failed to init UDP receiver";
         return -1;
     }
-    if (rx_channel_.subscribe(worker_, &get_buffer_handler_obj, &commit_handler_obj, &completed_handler_obj)) {
+    if (rx_channel_.set_worker(worker_)) {
         FIBRE_LOG(E) << "failed to init UDP receiver";
-        goto fail;
+        goto fail1;
+    }
+    if (rx_channel_.subscribe(this, &completed_handler_obj)) {
+        FIBRE_LOG(E) << "failed to init UDP receiver";
+        goto fail2;
     }
     return 0;
 
-fail:
+fail2:
+    rx_channel_.set_worker(nullptr);
+fail1:
     rx_channel_.close();
     return -1;
 }
@@ -94,7 +100,7 @@ int UDPDiscoverer::drop_effort_from_1() {
 }
 
 
-StreamStatus UDPDiscoverer::get_buffer_handler(bufptr_t* bufptr) {
+StreamStatus UDPDiscoverer::get_buffer(bufptr_t* bufptr) {
     if (bufptr) {
         bufptr->ptr = rx_buffer_;
         bufptr->length = std::min(bufptr->length, sizeof(rx_buffer_));
@@ -102,7 +108,7 @@ StreamStatus UDPDiscoverer::get_buffer_handler(bufptr_t* bufptr) {
     return kStreamOk;
 }
 
-StreamStatus UDPDiscoverer::commit_handler(size_t length) {
+StreamStatus UDPDiscoverer::commit(size_t length) {
     cbufptr_t bufptr = {.ptr = rx_buffer_, .length = length};
     return rx_handler(bufptr);
 }
