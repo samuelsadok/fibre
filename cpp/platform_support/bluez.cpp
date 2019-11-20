@@ -76,14 +76,55 @@ void BluezLocalGattCharacteristic::Set(std::string interface, std::string name, 
 }
 
 std::vector<uint8_t> BluezLocalGattCharacteristic::ReadValue(std::unordered_map<std::string, dbus_variant> options) {
-    FIBRE_LOG(W) << "ReadValue called";
-    return {1, 2, 3};
+    // ReadValue is the low-performance version of getting data from the GATT
+    // client (peripheral) to the GATT server (central).
+    // The high performance version is the Notify/Indicate feature. Therefore
+    // we accept that we have to go through DBus for this.
+    FIBRE_LOG(D) << "ReadValue called";
+    unsigned short mtu = std::get<unsigned short>(options["mtu"]);
+
+    std::vector<uint8_t> result;
+    result.resize(mtu);
+
+    bufptr_t bufptr = {.ptr = result.data(), .length = mtu};
+    if (!source_ || (source_->get_bytes(bufptr) != kStreamOk)) {
+        FIBRE_LOG(E) << "characteristic write failed";
+        return {}; // TODO: return DBus error
+    }
+
+    result.resize(mtu - bufptr.length);
+    return result;
 }
 
 void BluezLocalGattCharacteristic::WriteValue(std::vector<uint8_t> value, std::unordered_map<std::string, dbus_variant> options) {
-    FIBRE_LOG(W) << "WriteValue called with " << value;
-    return;
+    FIBRE_LOG(D) << "WriteValue called with " << value.size() << " bytes";
+    cbufptr_t bufptr = {.ptr = value.data(), .length = value.size()};
+    if (!sink_ || (sink_->process_bytes(bufptr) != kStreamOk)) {
+        FIBRE_LOG(E) << "characteristic write failed";
+        throw; // TODO: return error via DBus
+    }
 }
+
+// TODO: implement pipe-based write and notify.
+//  - Does this approach still permit multiple simultaneous connections? Will a
+//    new pipe be opened for each connected client?
+//  - According to docs if connection is closed, the pipe is closed with HUP. That
+//    means we cannot directly expose this socket to a subscriber because we
+//    want the application to stay subscribed across connection events.
+/*std::tuple<int, uint16_t> BluezLocalGattCharacteristic::AcquireWrite(std::unordered_map<std::string, dbus_variant> options) {
+    unsigned short mtu = std::get<unsigned short>(options["mtu"]);
+
+    int fds[2];
+    if (pipe2(fds, O_DIRECT | O_NONBLOCK) != 0) {
+        FIBRE_LOG(E) << "failed to open pipe";
+    }
+
+    // Init write channel with the read end of the pipe
+    write_channel_.init(fds[0]);
+    close(fds[0]); // file descriptor is internally duplicated in above call
+
+    return {fds[1], mtu}; // hand over write end of the pipe
+}*/
 
 void BluezLocalGattCharacteristic::StartNotify(void) {
     FIBRE_LOG(W) << "StartNotify() called but not implemented";
@@ -193,7 +234,7 @@ int BluezPeripheralController::start_advertising(Ad_t advertisement, uintptr_t* 
     {
         std::unique_lock<std::mutex> lock{adapter_mutex_};
         for (auto& adapter : adapters_) {
-            FIBRE_LOG(D) << "register ad on " << *adapter;
+            FIBRE_LOG(D) << "register ad on " << adapter->base_;
             adapter->RegisterAdvertisement_async(internal_ad->get_dbus_obj_path(), {}, &handle_ad_registered_obj_, &handle_ad_register_failed_obj_);
         }
         ads_.push_back(internal_ad);
@@ -229,7 +270,7 @@ int BluezPeripheralController::stop_advertising(uintptr_t token) {
 
         ads_.erase(it);
         for (auto& adapter : adapters_) {
-            FIBRE_LOG(D) << "unregister ad on " << *adapter;
+            FIBRE_LOG(D) << "unregister ad on " << adapter->base_;
             adapter->UnregisterAdvertisement_async(internal_ad->get_dbus_obj_path(), &handle_ad_unregistered_obj_, &handle_ad_unregister_failed_obj_);
         }
     }
@@ -262,7 +303,6 @@ int BluezPeripheralController::register_service(BluezLocalGattService* service) 
         characteristics[i].properties_["Service"] = DBusObjectPath("/test_obj/" + service->get_dbus_obj_name());
 
         std::vector<std::string> flags;
-        flags.push_back("read");
         if (characteristics[i].source_) {
             flags.push_back("read");
             // TODO: investigate characteristic broadcast feature
@@ -272,6 +312,11 @@ int BluezPeripheralController::register_service(BluezLocalGattService* service) 
             flags.push_back("write-without-response");
         }
         // TODO: support indicate/notify
+
+        if (flags.size() == 0) {
+            FIBRE_LOG(E) << "Bluez does not support characteristics with no capabilities";
+            goto fail2;
+        }
 
         characteristics[i].properties_["Flags"] = flags;
 
@@ -290,7 +335,7 @@ int BluezPeripheralController::register_service(BluezLocalGattService* service) 
     // Register DBus object manager with Bluez adapters
     if (num_services_ == 0) {
         for (auto& adapter : adapters_) {
-            FIBRE_LOG(D) << "register application on " << adapter;
+            FIBRE_LOG(D) << "register application on " << adapter->base_;
             adapter->RegisterApplication_async(dbus_obj_mgr_.get_path(), {}, &handle_app_registered_obj_, &handle_app_register_failed_obj_);
         }
     }
@@ -330,7 +375,7 @@ int BluezPeripheralController::deregister_service(BluezLocalGattService* service
 
     if (num_services_ == 1) {
         for (auto& adapter : adapters_) {
-            //FIBRE_LOG(D) << "register application on " << *adapter->base_;
+            FIBRE_LOG(D) << "register application on " << adapter->base_;
             adapter->UnregisterApplication_async(dbus_obj_mgr_.get_path(), &handle_app_unregistered_obj_, &handle_app_unregister_failed_obj_);
         }
     }

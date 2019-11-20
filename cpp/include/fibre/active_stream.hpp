@@ -228,9 +228,13 @@ protected:
 };
 
 
-//void connect_streams(StreamPuller* src, StreamSourceIntBuffer* dst, completed_callback_t* completed_callback) {
-//    src->subscribe(dst, completed_callback);
-//}
+static inline int connect_streams(StreamPuller* dst, StreamSourceIntBuffer* src, completed_callback_t* completed_callback) {
+    return dst->subscribe(src, completed_callback);
+}
+
+static inline int connect_streams(StreamSink* dst, StreamPusherIntBuffer* src, completed_callback_t* completed_callback) {
+    return src->subscribe(dst, completed_callback);
+}
 
 
 }

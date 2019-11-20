@@ -3,6 +3,7 @@
 
 #include <fibre/platform_support/linux_worker.hpp>
 #include <fibre/platform_support/linux_timer.hpp>
+#include <fibre/platform_support/posix_socket.hpp>
 #include <fibre/platform_support/dbus.hpp>
 #include <fibre/bluetooth.hpp>
 #include <fibre/uuid.hpp>
@@ -104,6 +105,7 @@ public:
 
     std::vector<uint8_t> ReadValue(std::unordered_map<std::string, dbus_variant> options);
     void WriteValue(std::vector<uint8_t> value, std::unordered_map<std::string, dbus_variant> options);
+    //std::tuple<int, uint16_t> AcquireWrite(std::unordered_map<std::string, dbus_variant> options);
     void StartNotify(void);
     void StopNotify(void);
 

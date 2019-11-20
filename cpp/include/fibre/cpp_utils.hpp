@@ -435,6 +435,12 @@ std::tuple_element_t<I, std::tuple<Ts...>>& get(std::variant<Ts...>& val) {
     return *((T*)val.content_);
 }
 
+template<typename T, typename ... Ts>
+T& get(std::variant<Ts...>& val) {
+    constexpr size_t index = std::index_of<T, Ts...>::value;
+    return std::get<index>(val);
+}
+
 } // namespace std
 
 #endif

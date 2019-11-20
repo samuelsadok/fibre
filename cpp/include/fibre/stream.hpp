@@ -364,7 +364,7 @@ public:
             return kStreamError;
         }
         if (internal_range.length > buffer.length) {
-            FIBRE_LOG(E) << "got larger buffer than requested";
+            FIBRE_LOG(E) << "got larger buffer than requested (" << internal_range.length << " > " << buffer.length << ")";
             internal_range.length = buffer.length;
         }
         memcpy(internal_range.ptr, buffer.ptr, internal_range.length);
@@ -420,7 +420,7 @@ public:
         }
         if (internal_range.length > buffer.length) {
             // TODO: this is not a bug according to the StreamSource spec
-            FIBRE_LOG(E) << "got larger buffer than requested";
+            FIBRE_LOG(E) << "got larger buffer than requested (" << internal_range.length << " > " << buffer.length << ")";
             internal_range.length = buffer.length;
         }
         memcpy(buffer.ptr, internal_range.ptr, internal_range.length);
