@@ -148,6 +148,7 @@ TestContext test_remote_object(DBusRemoteObject<io_fibre_TestInterface>& obj) {
     TestContext context;
 
     volatile uint32_t completed_functions = 0;
+    volatile uint32_t failed_functions = 0;
 
     static auto fn1_callback = make_lambda_closure(
         [](volatile uint32_t& completed_functions, io_fibre_TestInterface*) {
@@ -208,23 +209,30 @@ TestContext test_remote_object(DBusRemoteObject<io_fibre_TestInterface>& obj) {
                 completed_functions ^= 0x100;
         }
     ).bind(completed_functions);
+    static auto failed_callback = make_lambda_closure(
+        [&failed_functions](io_fibre_TestInterface*) {
+            std::cout << "failed callback called\n";
+            failed_functions++;
+        }
+    );
 
     obj.Signal1 += &sig1_callback;
     obj.Signal2 += &sig2_callback;
     obj.Signal3 += &sig3_callback;
 
     // Send method calls over DBus
-    TEST_ZERO(obj.Func1_async(&fn1_callback));
-    TEST_ZERO(obj.Func2_async(1234, &fn2_callback));
-    TEST_ZERO(obj.Func3_async(5678, "orange", &fn3_callback));
-    TEST_ZERO(obj.Func4_async(&fn4_callback));
-    TEST_ZERO(obj.Func5_async(&fn5_callback));
-    TEST_ZERO(obj.Func6_async(4321, "blue", &fn6_callback));
+    TEST_ZERO(obj.Func1_async(&fn1_callback, &failed_callback));
+    TEST_ZERO(obj.Func2_async(1234, &fn2_callback, &failed_callback));
+    TEST_ZERO(obj.Func3_async(5678, "orange", &fn3_callback, &failed_callback));
+    TEST_ZERO(obj.Func4_async(&fn4_callback, &failed_callback));
+    TEST_ZERO(obj.Func5_async(&fn5_callback, &failed_callback));
+    TEST_ZERO(obj.Func6_async(4321, "blue", &fn6_callback, &failed_callback));
 
     // Check if all 
     printf("waiting method calls to finish and signals to trigger...\n");
     usleep(1000000);
     TEST_EQUAL(completed_functions, (uint32_t)0x1ff);
+    TEST_ZERO(failed_functions);
     printf("done waiting\n");
 
     obj.Signal1 -= &sig1_callback;
@@ -235,6 +243,7 @@ TestContext test_remote_object(DBusRemoteObject<io_fibre_TestInterface>& obj) {
 }
 
 DBusRemoteObject<io_fibre_TestInterface>* discovered_remote_obj = nullptr;
+bool scan_failed = false;
 
 static auto found_obj_callback = make_lambda_closure(
     [](DBusRemoteObject<io_fibre_TestInterface>* obj){
@@ -245,6 +254,11 @@ static auto found_obj_callback = make_lambda_closure(
 static auto lost_obj_callback = make_lambda_closure(
     [](DBusRemoteObject<io_fibre_TestInterface>* obj){
         discovered_remote_obj = nullptr;
+    }
+);
+static auto scan_failed_callback = make_lambda_closure(
+    [](){
+        scan_failed = true;
     }
 );
 
@@ -280,9 +294,10 @@ int main(int argc, const char** argv) {
 
                     DBusDiscoverer<io_fibre_TestInterface> discoverer;
                     DBusRemoteObject<org_freedesktop_DBus_ObjectManager> remote_obj_mgr({&dbus_connection, own_dbus_name, "/obj_mgr"});
-                    if (TEST_ZERO(discoverer.start(&remote_obj_mgr, &found_obj_callback, &lost_obj_callback))) {
+                    if (TEST_ZERO(discoverer.start(&remote_obj_mgr, &found_obj_callback, &lost_obj_callback, &scan_failed_callback))) {
                         usleep(1000000);
                         if (TEST_NOT_NULL(discovered_remote_obj)) {
+                            TEST_ZERO(scan_failed);
                             TEST_EQUAL(discovered_remote_obj->base_.object_name_, std::string("/obj_mgr/TestObject1"));
 
                             // Instantiate a DBus proxy object for the object we just published
@@ -309,6 +324,7 @@ int main(int argc, const char** argv) {
             }
 
             TEST_ZERO(dbus_connection.deinit());
+            TEST_ZERO(dbus_connection.internal_errors_);
         }
 
         TEST_ZERO(worker.deinit());

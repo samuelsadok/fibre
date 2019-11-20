@@ -18,28 +18,28 @@ public:
     io_fibre_TestInterface& operator=(const io_fibre_TestInterface &) = delete;
 
 
-    int Func1_async(fibre::Callback<io_fibre_TestInterface*>* callback) {
-        return base_->method_call_async(this, "Func1", callback);
+    int Func1_async(fibre::Callback<io_fibre_TestInterface*>* callback, fibre::Callback<io_fibre_TestInterface*>* failed_callback) {
+        return base_->method_call_async(this, "Func1", callback, failed_callback);
     }
 
-    int Func2_async(int32_t in_arg1, fibre::Callback<io_fibre_TestInterface*>* callback) {
-        return base_->method_call_async(this, "Func2", callback, in_arg1);
+    int Func2_async(int32_t in_arg1, fibre::Callback<io_fibre_TestInterface*>* callback, fibre::Callback<io_fibre_TestInterface*>* failed_callback) {
+        return base_->method_call_async(this, "Func2", callback, failed_callback, in_arg1);
     }
 
-    int Func3_async(int32_t in_arg1, std::string in_arg2, fibre::Callback<io_fibre_TestInterface*>* callback) {
-        return base_->method_call_async(this, "Func3", callback, in_arg1, in_arg2);
+    int Func3_async(int32_t in_arg1, std::string in_arg2, fibre::Callback<io_fibre_TestInterface*>* callback, fibre::Callback<io_fibre_TestInterface*>* failed_callback) {
+        return base_->method_call_async(this, "Func3", callback, failed_callback, in_arg1, in_arg2);
     }
 
-    int Func4_async(fibre::Callback<io_fibre_TestInterface*, int32_t>* callback) {
-        return base_->method_call_async(this, "Func4", callback);
+    int Func4_async(fibre::Callback<io_fibre_TestInterface*, int32_t>* callback, fibre::Callback<io_fibre_TestInterface*>* failed_callback) {
+        return base_->method_call_async(this, "Func4", callback, failed_callback);
     }
 
-    int Func5_async(fibre::Callback<io_fibre_TestInterface*, int32_t, std::string>* callback) {
-        return base_->method_call_async(this, "Func5", callback);
+    int Func5_async(fibre::Callback<io_fibre_TestInterface*, int32_t, std::string>* callback, fibre::Callback<io_fibre_TestInterface*>* failed_callback) {
+        return base_->method_call_async(this, "Func5", callback, failed_callback);
     }
 
-    int Func6_async(int32_t in_arg1, std::string in_arg2, fibre::Callback<io_fibre_TestInterface*, std::string, uint32_t>* callback) {
-        return base_->method_call_async(this, "Func6", callback, in_arg1, in_arg2);
+    int Func6_async(int32_t in_arg1, std::string in_arg2, fibre::Callback<io_fibre_TestInterface*, std::string, uint32_t>* callback, fibre::Callback<io_fibre_TestInterface*>* failed_callback) {
+        return base_->method_call_async(this, "Func6", callback, failed_callback, in_arg1, in_arg2);
     }
 
     fibre::DBusRemoteSignal<io_fibre_TestInterface> Signal1{this, "Signal1"};

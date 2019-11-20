@@ -18,8 +18,8 @@ public:
     org_freedesktop_DBus_ObjectManager& operator=(const org_freedesktop_DBus_ObjectManager &) = delete;
 
 
-    int GetManagedObjects_async(fibre::Callback<org_freedesktop_DBus_ObjectManager*, std::unordered_map<fibre::DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>>* callback) {
-        return base_->method_call_async(this, "GetManagedObjects", callback);
+    int GetManagedObjects_async(fibre::Callback<org_freedesktop_DBus_ObjectManager*, std::unordered_map<fibre::DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>>* callback, fibre::Callback<org_freedesktop_DBus_ObjectManager*>* failed_callback) {
+        return base_->method_call_async(this, "GetManagedObjects", callback, failed_callback);
     }
 
     fibre::DBusRemoteSignal<org_freedesktop_DBus_ObjectManager, fibre::DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>> InterfacesAdded{this, "InterfacesAdded"};

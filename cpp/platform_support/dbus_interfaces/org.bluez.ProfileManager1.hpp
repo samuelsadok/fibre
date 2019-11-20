@@ -18,12 +18,12 @@ public:
     org_bluez_ProfileManager1& operator=(const org_bluez_ProfileManager1 &) = delete;
 
 
-    int RegisterProfile_async(fibre::DBusObjectPath profile, std::string UUID, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_ProfileManager1*>* callback) {
-        return base_->method_call_async(this, "RegisterProfile", callback, profile, UUID, options);
+    int RegisterProfile_async(fibre::DBusObjectPath profile, std::string UUID, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_ProfileManager1*>* callback, fibre::Callback<org_bluez_ProfileManager1*>* failed_callback) {
+        return base_->method_call_async(this, "RegisterProfile", callback, failed_callback, profile, UUID, options);
     }
 
-    int UnregisterProfile_async(fibre::DBusObjectPath profile, fibre::Callback<org_bluez_ProfileManager1*>* callback) {
-        return base_->method_call_async(this, "UnregisterProfile", callback, profile);
+    int UnregisterProfile_async(fibre::DBusObjectPath profile, fibre::Callback<org_bluez_ProfileManager1*>* callback, fibre::Callback<org_bluez_ProfileManager1*>* failed_callback) {
+        return base_->method_call_async(this, "UnregisterProfile", callback, failed_callback, profile);
     }
 
 

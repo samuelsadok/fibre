@@ -18,16 +18,16 @@ public:
     org_freedesktop_DBus_Properties& operator=(const org_freedesktop_DBus_Properties &) = delete;
 
 
-    int Get_async(std::string interface, std::string name, fibre::Callback<org_freedesktop_DBus_Properties*, fibre::dbus_variant>* callback) {
-        return base_->method_call_async(this, "Get", callback, interface, name);
+    int Get_async(std::string interface, std::string name, fibre::Callback<org_freedesktop_DBus_Properties*, fibre::dbus_variant>* callback, fibre::Callback<org_freedesktop_DBus_Properties*>* failed_callback) {
+        return base_->method_call_async(this, "Get", callback, failed_callback, interface, name);
     }
 
-    int Set_async(std::string interface, std::string name, fibre::dbus_variant value, fibre::Callback<org_freedesktop_DBus_Properties*>* callback) {
-        return base_->method_call_async(this, "Set", callback, interface, name, value);
+    int Set_async(std::string interface, std::string name, fibre::dbus_variant value, fibre::Callback<org_freedesktop_DBus_Properties*>* callback, fibre::Callback<org_freedesktop_DBus_Properties*>* failed_callback) {
+        return base_->method_call_async(this, "Set", callback, failed_callback, interface, name, value);
     }
 
-    int GetAll_async(std::string interface, fibre::Callback<org_freedesktop_DBus_Properties*, std::unordered_map<std::string, fibre::dbus_variant>>* callback) {
-        return base_->method_call_async(this, "GetAll", callback, interface);
+    int GetAll_async(std::string interface, fibre::Callback<org_freedesktop_DBus_Properties*, std::unordered_map<std::string, fibre::dbus_variant>>* callback, fibre::Callback<org_freedesktop_DBus_Properties*>* failed_callback) {
+        return base_->method_call_async(this, "GetAll", callback, failed_callback, interface);
     }
 
     fibre::DBusRemoteSignal<org_freedesktop_DBus_Properties, std::string, std::unordered_map<std::string, fibre::dbus_variant>, std::vector<std::string>> PropertiesChanged{this, "PropertiesChanged"};

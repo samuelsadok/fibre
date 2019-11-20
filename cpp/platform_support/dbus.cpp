@@ -138,11 +138,6 @@ int DBusConnectionWrapper::deinit() {
     dbus_connection_set_timeout_functions(conn_, nullptr, nullptr, nullptr, nullptr, nullptr);
     dbus_connection_set_dispatch_status_function(conn_, nullptr, nullptr, nullptr);
     dbus_connection_set_wakeup_main_function(conn_, nullptr, nullptr, nullptr);
-    
-    FIBRE_LOG(D) << "will close connection";
-    //dbus_connection_close(conn_);
-    dbus_connection_unref(conn_);
-    FIBRE_LOG(D) << "connection closed";
 
     if (dispatch_signal_.unsubscribe() != 0) {
         FIBRE_LOG(E) << "signal unsubscribe failed";
@@ -153,13 +148,18 @@ int DBusConnectionWrapper::deinit() {
         FIBRE_LOG(E) << "signal deinit failed";
         result = -1;
     }
+    
+    FIBRE_LOG(D) << "will close connection";
+    //dbus_connection_close(conn_);
+    dbus_connection_unref(conn_);
+    FIBRE_LOG(D) << "connection closed";
 
     dbus_error_free(&err_);
     return result;
 }
 
 int DBusConnectionWrapper::handle_add_watch(DBusWatch *watch) {
-    FIBRE_LOG(D) << "add watch";
+    FIBRE_LOG(D) << "add watch " << watch;
     /* TODO: The documentation says:
      * "dbus_watch_handle() cannot be called during the
      * DBusAddWatchFunction, as the connection will not be ready to
@@ -168,36 +168,48 @@ int DBusConnectionWrapper::handle_add_watch(DBusWatch *watch) {
      * Need to ask the developers if that's ok.
      */
 
+    int new_fd = dup(dbus_watch_get_unix_fd(watch));
+    if (new_fd < 0) {
+        FIBRE_LOG(E) << "dup() failed: " << sys_err();
+        return -1;
+    }
 
-    watch_ctx_t* ctx = new watch_ctx_t{&DBusConnectionWrapper::handle_watch, {this, watch}};
+    watch_ctx_t* ctx = new watch_ctx_t{
+        new_fd /* fd */,
+        {&DBusConnectionWrapper::handle_watch, {this, watch}} /* callback */
+    };
     dbus_watch_set_data(watch, ctx, nullptr);
 
     // If the watch is already supposed to be enabled, toggle it on now
     if (dbus_watch_get_enabled(watch)) {
-        return handle_toggle_watch(watch, true);
-    } else {
-        return 0;
+        handle_toggle_watch(watch, true);
     }
+    return 0;
 }
 
 void DBusConnectionWrapper::handle_remove_watch(DBusWatch *watch) {
-    FIBRE_LOG(D) << "remove watch";
+    FIBRE_LOG(D) << "remove watch " << watch;
     // If the watch was not already disabled, disable it now
     if (dbus_watch_get_enabled(watch)) {
         handle_toggle_watch(watch, false);
     }
     
     watch_ctx_t* ctx = (watch_ctx_t*)dbus_watch_get_data(watch);
+    if (close(ctx->fd) != 0) {
+        FIBRE_LOG(E) << "close() failed: " << sys_err();
+        internal_errors_++;
+    }
     dbus_watch_set_data(watch, nullptr, nullptr);
     delete ctx;
 }
 
-int DBusConnectionWrapper::handle_toggle_watch(DBusWatch *watch, bool enable) {
+void DBusConnectionWrapper::handle_toggle_watch(DBusWatch *watch, bool enable) {
+    FIBRE_LOG(D) << "toggle watch " << watch << ": " << enable;
     if (enable) {
         // DBusWatch was enabled - register it with the worker
-        int fd = dbus_watch_get_unix_fd(watch);
+        //int fd = dbus_watch_get_unix_fd(watch);
 
-        uint32_t events = 0;
+        uint32_t events = EPOLLHUP | EPOLLERR;
         unsigned int flags = dbus_watch_get_flags(watch);
         if (flags & DBUS_WATCH_READABLE)
             events |= EPOLLIN;
@@ -205,17 +217,23 @@ int DBusConnectionWrapper::handle_toggle_watch(DBusWatch *watch, bool enable) {
             events |= EPOLLOUT;
 
         watch_ctx_t* ctx = (watch_ctx_t*)dbus_watch_get_data(watch);
-        return worker_->register_event(fd, events, ctx);
+        if (worker_->register_event(ctx->fd, events, &ctx->callback)) {
+            FIBRE_LOG(E) << "failed to register watch event";
+            internal_errors_++;
+        }
 
     } else {
         // DBusWatch was disabled - remove it from the worker
-        int fd = dbus_watch_get_unix_fd(watch);
-        return worker_->deregister_event(fd);
+        watch_ctx_t* ctx = (watch_ctx_t*)dbus_watch_get_data(watch);
+        if (worker_->deregister_event(ctx->fd)) {
+            FIBRE_LOG(E) << "failed to deregister watch event";
+            internal_errors_++;
+        }
     }
 }
 
 void DBusConnectionWrapper::handle_watch(DBusWatch* watch, uint32_t events) {
-    FIBRE_LOG(D) << "handle watch";
+    FIBRE_LOG(D) << "handle watch " << watch;
     unsigned int flags = 0;
     if (events & EPOLLIN)
         flags |= DBUS_WATCH_READABLE;
@@ -225,6 +243,9 @@ void DBusConnectionWrapper::handle_watch(DBusWatch* watch, uint32_t events) {
         flags |= DBUS_WATCH_HANGUP;
     if (events & EPOLLERR)
         flags |= DBUS_WATCH_ERROR;
+    if (flags & ~(dbus_watch_get_flags(watch) | DBUS_WATCH_HANGUP | DBUS_WATCH_ERROR)) {
+        FIBRE_LOG(W) << "this watch should only handle " << as_hex(dbus_watch_get_flags(watch)) << " but got triggered for " << flags;
+    }
     if (!dbus_watch_handle(watch, flags)) {
         FIBRE_LOG(E) << "dbus_watch_handle() failed";
     }
@@ -234,7 +255,8 @@ void DBusConnectionWrapper::handle_watch(DBusWatch* watch, uint32_t events) {
 int DBusConnectionWrapper::handle_add_timeout(DBusTimeout* timeout) {
     FIBRE_LOG(D) << "add timeout";
     timeout_ctx_t* ctx = new timeout_ctx_t{
-        {} /* timer */, { &DBusConnectionWrapper::handle_timeout, {this, timeout}}
+        {} /* timer */,
+        { &DBusConnectionWrapper::handle_timeout, {this, timeout}} /* callback */
     };
 
     ctx->timer.init(worker_);
@@ -242,10 +264,9 @@ int DBusConnectionWrapper::handle_add_timeout(DBusTimeout* timeout) {
 
     // If the timeout is already supposed to be enabled, toggle it on now
     if (dbus_timeout_get_enabled(timeout)) {
-        return handle_toggle_timeout(timeout, true);
-    } else {
-        return 0;
+        handle_toggle_timeout(timeout, true);
     }
+    return 0;
 }
 
 void DBusConnectionWrapper::handle_remove_timeout(DBusTimeout* timeout) {
@@ -260,14 +281,20 @@ void DBusConnectionWrapper::handle_remove_timeout(DBusTimeout* timeout) {
     delete ctx;
 }
 
-int DBusConnectionWrapper::handle_toggle_timeout(DBusTimeout *timeout, bool enable) {
+void DBusConnectionWrapper::handle_toggle_timeout(DBusTimeout *timeout, bool enable) {
     timeout_ctx_t* ctx = (timeout_ctx_t*)dbus_timeout_get_data(timeout);
     if (enable) {
         // Timeout was enabled - start timer
         int interval_ms = dbus_timeout_get_interval(timeout);
-        return ctx->timer.start(interval_ms, true, &ctx->callback);
+        if (ctx->timer.start(interval_ms, true, &ctx->callback)) {
+            FIBRE_LOG(E) << "failed to start timer";
+            internal_errors_++;
+        }
     } else {
-        return ctx->timer.stop();
+        if (ctx->timer.stop()) {
+            FIBRE_LOG(E) << "failed to stop timer";
+            internal_errors_++;
+        }
     }
 }
 

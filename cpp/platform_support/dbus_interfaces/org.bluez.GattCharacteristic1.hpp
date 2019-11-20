@@ -18,20 +18,20 @@ public:
     org_bluez_GattCharacteristic1& operator=(const org_bluez_GattCharacteristic1 &) = delete;
 
 
-    int ReadValue_async(fibre::Callback<org_bluez_GattCharacteristic1*, std::vector<uint8_t>>* callback) {
-        return base_->method_call_async(this, "ReadValue", callback);
+    int ReadValue_async(std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_GattCharacteristic1*, std::vector<uint8_t>>* callback, fibre::Callback<org_bluez_GattCharacteristic1*>* failed_callback) {
+        return base_->method_call_async(this, "ReadValue", callback, failed_callback, options);
     }
 
-    int WriteValue_async(std::vector<uint8_t> value, fibre::Callback<org_bluez_GattCharacteristic1*>* callback) {
-        return base_->method_call_async(this, "WriteValue", callback, value);
+    int WriteValue_async(std::vector<uint8_t> value, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_GattCharacteristic1*>* callback, fibre::Callback<org_bluez_GattCharacteristic1*>* failed_callback) {
+        return base_->method_call_async(this, "WriteValue", callback, failed_callback, value, options);
     }
 
-    int StartNotify_async(fibre::Callback<org_bluez_GattCharacteristic1*>* callback) {
-        return base_->method_call_async(this, "StartNotify", callback);
+    int StartNotify_async(fibre::Callback<org_bluez_GattCharacteristic1*>* callback, fibre::Callback<org_bluez_GattCharacteristic1*>* failed_callback) {
+        return base_->method_call_async(this, "StartNotify", callback, failed_callback);
     }
 
-    int StopNotify_async(fibre::Callback<org_bluez_GattCharacteristic1*>* callback) {
-        return base_->method_call_async(this, "StopNotify", callback);
+    int StopNotify_async(fibre::Callback<org_bluez_GattCharacteristic1*>* callback, fibre::Callback<org_bluez_GattCharacteristic1*>* failed_callback) {
+        return base_->method_call_async(this, "StopNotify", callback, failed_callback);
     }
 
     // DBusProperty<std::string> UUID;

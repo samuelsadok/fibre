@@ -4,6 +4,7 @@
 #include <fibre/platform_support/linux_worker.hpp>
 #include <fibre/platform_support/linux_timer.hpp>
 #include <fibre/platform_support/dbus.hpp>
+#include <fibre/bluetooth.hpp>
 #include <fibre/uuid.hpp>
 //#include "../../../platform_support/dbus_interfaces/org.freedesktop.DBus.ObjectManager.hpp"
 #include "../../../platform_support/dbus_interfaces/org.bluez.LEAdvertisingManager1.hpp"
@@ -11,56 +12,19 @@
 
 namespace fibre {
 
-class LocalGattDescriptor;
+class BluezLocalGattCharacteristic;
+class BluezLocalGattService;
+class BluezPeripheralController;
 
-
-// TODO: implement
-class LocalGattCharacteristic {
-public:
-    LocalGattCharacteristic(Uuid uuid) : uuid_(uuid) {}
-    Uuid get_uuid() { return uuid_; };
-
-    int get_descriptors(LocalGattDescriptor** array, size_t* length);
-
-    // TODO: make mutable
-
-private:
-    Uuid uuid_;
-};
-
-// Corresponds roughly to CBPeripheralManagerDelegate
-// TODO: implement
-class LocalGattService {
-public:
-    LocalGattService(Uuid uuid) : uuid_(uuid) {}
-    Uuid get_uuid() { return uuid_; };
-
-    int get_characteristics(LocalGattCharacteristic** array, size_t* length);
-
-    // TODO: make mutable
-    //CallbackList<LocalGattCharacteristic*> DidAddCharacteristic;
-    //CallbackList<LocalGattCharacteristic*> WillRemoveCharacteristic;
-
-private:
-    Uuid uuid_;
-};
-
-class BluetoothPeripheralController {
-public:
-    struct Ad_t {
-        bool is_connectable = true;
-        bool include_tx_power = true;
-        std::string local_name = "Hello World";
-        Uuid service_uuid = "57155f13-33ec-456f-b9da-d2c876e2ecdc"; // TODO: allow more than 1 UUID
-    };
-
-    // TODO: find a good way to associate advertisements in "update/stop" calls
-    virtual int start_advertising(Ad_t advertisement, void** token) = 0;
-    virtual int update_advertisement(void*) = 0;
-    virtual int stop_advertising(void*) = 0;
-
-    virtual int register_service(LocalGattService* service) = 0;
-    virtual int deregister_service(LocalGattService* service) = 0;
+struct BluezBluetoothTypes {
+    struct dummy {};
+    using TWorker = int; // placeholder
+    using TLocalGattCharacteristic = BluezLocalGattCharacteristic;
+    using TLocalGattService = BluezLocalGattService;
+    using TPeripheralController = BluezPeripheralController;
+    using TLocalGattCharacteristicReadAspect = StreamPuller;
+    using TLocalGattCharacteristicWriteAspect = StreamPusherIntBuffer;
+    using TLocalGattCharacteristicNotifyAspect = dummy; // placeholder
 };
 
 /**
@@ -69,7 +33,7 @@ public:
  */
 class BluezAd {
 public:
-    BluezAd(BluetoothPeripheralController::Ad_t ad) {
+    BluezAd(BluetoothPeripheralController<BluezBluetoothTypes>::Ad_t ad) {
         auto includes = std::vector<std::string>{};
         if (ad.include_tx_power)
             includes.push_back("tx-power");
@@ -95,16 +59,16 @@ private:
     std::unordered_map<std::string, fibre::dbus_variant> properties_;
 };
 
-
 /**
  * @brief For internal use only.
  * Implements the Bluez DBus org.bluez.GattService1 interface.
  */
-class BluezService {
+class BluezLocalGattService : public LocalGattService<BluezBluetoothTypes> {
 public:
-    BluezService(LocalGattService* service) {
+    BluezLocalGattService(Uuid uuid, BluezLocalGattCharacteristic* characteristics, size_t n_characteristics)
+        : LocalGattService(uuid, characteristics, n_characteristics) {
         properties_ = {
-            {"UUID", std::string{"57155f13-33ec-456f-b9da-d2c876e2ecdc"}},
+            {"UUID", uuid.to_string()},
             {"Primary", true}
         };
     }
@@ -119,30 +83,66 @@ public:
 
 private:
     std::unordered_map<std::string, fibre::dbus_variant> properties_;
+
+    friend class BluezPeripheralController;
+};
+
+class BluezLocalGattCharacteristic : public LocalGattCharacteristic<BluezBluetoothTypes> {
+public:
+    BluezLocalGattCharacteristic(Uuid uuid)
+        : LocalGattCharacteristic(uuid) {
+        properties_ = {
+            {"UUID", uuid.to_string()}
+        };
+    }
+
+    dbus_variant Get(std::string interface, std::string name);
+    std::unordered_map<std::string, fibre::dbus_variant> GetAll(std::string interface);
+    void Set(std::string interface, std::string name, dbus_variant val);
+
+    CallbackList<std::string, std::unordered_map<std::string, fibre::dbus_variant>, std::vector<std::string>> PropertiesChanged;
+
+    std::vector<uint8_t> ReadValue(std::unordered_map<std::string, dbus_variant> options);
+    void WriteValue(std::vector<uint8_t> value, std::unordered_map<std::string, dbus_variant> options);
+    void StartNotify(void);
+    void StopNotify(void);
+
+    std::string get_dbus_obj_name() { return (parent_ ? parent_->get_dbus_obj_name() : "???") + "/char_" + std::to_string(reinterpret_cast<intptr_t>(this)); }
+
+private:
+    BluezLocalGattService* parent_ = nullptr;
+    std::unordered_map<std::string, fibre::dbus_variant> properties_;
+
+    friend class BluezPeripheralController;
 };
 
 
-class BluezPeripheralController : public BluetoothPeripheralController {
+class BluezPeripheralController : public BluetoothPeripheralController<BluezBluetoothTypes> {
 public:
     int init(LinuxWorker* worker, DBusConnectionWrapper* dbus);
     int deinit();
 
-    int start_advertising(Ad_t advertisement, void** token) final;
-    int update_advertisement(void*) final;
-    int stop_advertising(void*) final;
+    int start_advertising(Ad_t advertisement, uintptr_t* handle) final;
+    int update_advertisement(uintptr_t handle) final;
+    int stop_advertising(uintptr_t handle) final;
 
-    int register_service(LocalGattService* service) final;
-    int deregister_service(LocalGattService* service) final;
+    int register_service(BluezLocalGattService* service) final;
+    int deregister_service(BluezLocalGattService* service) final;
 
 private:
     using adapter_t = DBusRemoteObject<org_bluez_LEAdvertisingManager1, org_bluez_GattManager1>;
 
     void handle_adapter_found(adapter_t* adapter);
     void handle_adapter_lost(adapter_t* adapter);
+    void handle_adapter_search_stopped();
     void handle_ad_registered(org_bluez_LEAdvertisingManager1* mgr);
+    void handle_ad_register_failed(org_bluez_LEAdvertisingManager1* mgr);
     void handle_ad_unregistered(org_bluez_LEAdvertisingManager1* mgr);
+    void handle_ad_unregister_failed(org_bluez_LEAdvertisingManager1* mgr);
     void handle_app_registered(org_bluez_GattManager1* mgr);
+    void handle_app_register_failed(org_bluez_GattManager1* mgr);
     void handle_app_unregistered(org_bluez_GattManager1* mgr);
+    void handle_app_unregister_failed(org_bluez_GattManager1* mgr);
 
     LinuxWorker* worker_ = nullptr;
     DBusConnectionWrapper* dbus_ = nullptr;
@@ -152,16 +152,21 @@ private:
 
     std::mutex adapter_mutex_; // Any access to the adapter list or the ad list must be protected by this mutex
 
-    std::vector<org_bluez_LEAdvertisingManager1*> adapters_;
+    std::vector<adapter_t*> adapters_;
     std::vector<BluezAd*> ads_;
-    std::unordered_map<LocalGattService*, BluezService*> srvs_; // TODO: implement
+    size_t num_services_ = 0;
 
     member_closure_t<decltype(&BluezPeripheralController::handle_adapter_found)> handle_adapter_found_obj_{&BluezPeripheralController::handle_adapter_found, this};
     member_closure_t<decltype(&BluezPeripheralController::handle_adapter_lost)> handle_adapter_lost_obj_{&BluezPeripheralController::handle_adapter_lost, this};
+    member_closure_t<decltype(&BluezPeripheralController::handle_adapter_search_stopped)> handle_adapter_search_stopped_obj_{&BluezPeripheralController::handle_adapter_search_stopped, this};
     member_closure_t<decltype(&BluezPeripheralController::handle_ad_registered)> handle_ad_registered_obj_{&BluezPeripheralController::handle_ad_registered, this};
+    member_closure_t<decltype(&BluezPeripheralController::handle_ad_register_failed)> handle_ad_register_failed_obj_{&BluezPeripheralController::handle_ad_register_failed, this};
     member_closure_t<decltype(&BluezPeripheralController::handle_ad_unregistered)> handle_ad_unregistered_obj_{&BluezPeripheralController::handle_ad_unregistered, this};
+    member_closure_t<decltype(&BluezPeripheralController::handle_ad_unregister_failed)> handle_ad_unregister_failed_obj_{&BluezPeripheralController::handle_ad_unregister_failed, this};
     member_closure_t<decltype(&BluezPeripheralController::handle_app_registered)> handle_app_registered_obj_{&BluezPeripheralController::handle_app_registered, this};
+    member_closure_t<decltype(&BluezPeripheralController::handle_app_register_failed)> handle_app_register_failed_obj_{&BluezPeripheralController::handle_app_register_failed, this};
     member_closure_t<decltype(&BluezPeripheralController::handle_app_unregistered)> handle_app_unregistered_obj_{&BluezPeripheralController::handle_app_unregistered, this};
+    member_closure_t<decltype(&BluezPeripheralController::handle_app_unregister_failed)> handle_app_unregister_failed_obj_{&BluezPeripheralController::handle_app_unregister_failed, this};
 };
 
 }

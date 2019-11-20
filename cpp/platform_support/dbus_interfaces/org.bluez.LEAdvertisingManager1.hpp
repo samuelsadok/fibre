@@ -18,12 +18,12 @@ public:
     org_bluez_LEAdvertisingManager1& operator=(const org_bluez_LEAdvertisingManager1 &) = delete;
 
 
-    int RegisterAdvertisement_async(fibre::DBusObjectPath advertisement, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_LEAdvertisingManager1*>* callback) {
-        return base_->method_call_async(this, "RegisterAdvertisement", callback, advertisement, options);
+    int RegisterAdvertisement_async(fibre::DBusObjectPath advertisement, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_LEAdvertisingManager1*>* callback, fibre::Callback<org_bluez_LEAdvertisingManager1*>* failed_callback) {
+        return base_->method_call_async(this, "RegisterAdvertisement", callback, failed_callback, advertisement, options);
     }
 
-    int UnregisterAdvertisement_async(fibre::DBusObjectPath service, fibre::Callback<org_bluez_LEAdvertisingManager1*>* callback) {
-        return base_->method_call_async(this, "UnregisterAdvertisement", callback, service);
+    int UnregisterAdvertisement_async(fibre::DBusObjectPath service, fibre::Callback<org_bluez_LEAdvertisingManager1*>* callback, fibre::Callback<org_bluez_LEAdvertisingManager1*>* failed_callback) {
+        return base_->method_call_async(this, "UnregisterAdvertisement", callback, failed_callback, service);
     }
 
     // DBusProperty<uint8_t> ActiveInstances;

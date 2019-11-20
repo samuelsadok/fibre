@@ -18,28 +18,28 @@ public:
     org_bluez_Device1& operator=(const org_bluez_Device1 &) = delete;
 
 
-    int Disconnect_async(fibre::Callback<org_bluez_Device1*>* callback) {
-        return base_->method_call_async(this, "Disconnect", callback);
+    int Disconnect_async(fibre::Callback<org_bluez_Device1*>* callback, fibre::Callback<org_bluez_Device1*>* failed_callback) {
+        return base_->method_call_async(this, "Disconnect", callback, failed_callback);
     }
 
-    int Connect_async(fibre::Callback<org_bluez_Device1*>* callback) {
-        return base_->method_call_async(this, "Connect", callback);
+    int Connect_async(fibre::Callback<org_bluez_Device1*>* callback, fibre::Callback<org_bluez_Device1*>* failed_callback) {
+        return base_->method_call_async(this, "Connect", callback, failed_callback);
     }
 
-    int ConnectProfile_async(std::string UUID, fibre::Callback<org_bluez_Device1*>* callback) {
-        return base_->method_call_async(this, "ConnectProfile", callback, UUID);
+    int ConnectProfile_async(std::string UUID, fibre::Callback<org_bluez_Device1*>* callback, fibre::Callback<org_bluez_Device1*>* failed_callback) {
+        return base_->method_call_async(this, "ConnectProfile", callback, failed_callback, UUID);
     }
 
-    int DisconnectProfile_async(std::string UUID, fibre::Callback<org_bluez_Device1*>* callback) {
-        return base_->method_call_async(this, "DisconnectProfile", callback, UUID);
+    int DisconnectProfile_async(std::string UUID, fibre::Callback<org_bluez_Device1*>* callback, fibre::Callback<org_bluez_Device1*>* failed_callback) {
+        return base_->method_call_async(this, "DisconnectProfile", callback, failed_callback, UUID);
     }
 
-    int Pair_async(fibre::Callback<org_bluez_Device1*>* callback) {
-        return base_->method_call_async(this, "Pair", callback);
+    int Pair_async(fibre::Callback<org_bluez_Device1*>* callback, fibre::Callback<org_bluez_Device1*>* failed_callback) {
+        return base_->method_call_async(this, "Pair", callback, failed_callback);
     }
 
-    int CancelPairing_async(fibre::Callback<org_bluez_Device1*>* callback) {
-        return base_->method_call_async(this, "CancelPairing", callback);
+    int CancelPairing_async(fibre::Callback<org_bluez_Device1*>* callback, fibre::Callback<org_bluez_Device1*>* failed_callback) {
+        return base_->method_call_async(this, "CancelPairing", callback, failed_callback);
     }
 
     // DBusProperty<std::string> Address;

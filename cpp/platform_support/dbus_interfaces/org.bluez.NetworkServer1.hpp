@@ -18,12 +18,12 @@ public:
     org_bluez_NetworkServer1& operator=(const org_bluez_NetworkServer1 &) = delete;
 
 
-    int Register_async(std::string uuid, std::string bridge, fibre::Callback<org_bluez_NetworkServer1*>* callback) {
-        return base_->method_call_async(this, "Register", callback, uuid, bridge);
+    int Register_async(std::string uuid, std::string bridge, fibre::Callback<org_bluez_NetworkServer1*>* callback, fibre::Callback<org_bluez_NetworkServer1*>* failed_callback) {
+        return base_->method_call_async(this, "Register", callback, failed_callback, uuid, bridge);
     }
 
-    int Unregister_async(std::string uuid, fibre::Callback<org_bluez_NetworkServer1*>* callback) {
-        return base_->method_call_async(this, "Unregister", callback, uuid);
+    int Unregister_async(std::string uuid, fibre::Callback<org_bluez_NetworkServer1*>* callback, fibre::Callback<org_bluez_NetworkServer1*>* failed_callback) {
+        return base_->method_call_async(this, "Unregister", callback, failed_callback, uuid);
     }
 
 

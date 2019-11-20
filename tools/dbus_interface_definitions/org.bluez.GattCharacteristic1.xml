@@ -3,10 +3,12 @@
 <node>
   <interface name="org.bluez.GattCharacteristic1">
     <method name="ReadValue">
+      <arg name="options" type="a{sv}" direction="in"/>
       <arg name="value" type="ay" direction="out"/>
     </method>
     <method name="WriteValue">
       <arg name="value" type="ay" direction="in"/>
+      <arg name="options" type="a{sv}" direction="in"/>
     </method>
     <method name="StartNotify"></method>
     <method name="StopNotify"></method>

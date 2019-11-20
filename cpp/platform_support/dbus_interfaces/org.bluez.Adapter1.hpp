@@ -18,24 +18,24 @@ public:
     org_bluez_Adapter1& operator=(const org_bluez_Adapter1 &) = delete;
 
 
-    int StartDiscovery_async(fibre::Callback<org_bluez_Adapter1*>* callback) {
-        return base_->method_call_async(this, "StartDiscovery", callback);
+    int StartDiscovery_async(fibre::Callback<org_bluez_Adapter1*>* callback, fibre::Callback<org_bluez_Adapter1*>* failed_callback) {
+        return base_->method_call_async(this, "StartDiscovery", callback, failed_callback);
     }
 
-    int SetDiscoveryFilter_async(std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Adapter1*>* callback) {
-        return base_->method_call_async(this, "SetDiscoveryFilter", callback, properties);
+    int SetDiscoveryFilter_async(std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Adapter1*>* callback, fibre::Callback<org_bluez_Adapter1*>* failed_callback) {
+        return base_->method_call_async(this, "SetDiscoveryFilter", callback, failed_callback, properties);
     }
 
-    int StopDiscovery_async(fibre::Callback<org_bluez_Adapter1*>* callback) {
-        return base_->method_call_async(this, "StopDiscovery", callback);
+    int StopDiscovery_async(fibre::Callback<org_bluez_Adapter1*>* callback, fibre::Callback<org_bluez_Adapter1*>* failed_callback) {
+        return base_->method_call_async(this, "StopDiscovery", callback, failed_callback);
     }
 
-    int RemoveDevice_async(fibre::DBusObjectPath device, fibre::Callback<org_bluez_Adapter1*>* callback) {
-        return base_->method_call_async(this, "RemoveDevice", callback, device);
+    int RemoveDevice_async(fibre::DBusObjectPath device, fibre::Callback<org_bluez_Adapter1*>* callback, fibre::Callback<org_bluez_Adapter1*>* failed_callback) {
+        return base_->method_call_async(this, "RemoveDevice", callback, failed_callback, device);
     }
 
-    int GetDiscoveryFilters_async(fibre::Callback<org_bluez_Adapter1*, std::vector<std::string>>* callback) {
-        return base_->method_call_async(this, "GetDiscoveryFilters", callback);
+    int GetDiscoveryFilters_async(fibre::Callback<org_bluez_Adapter1*, std::vector<std::string>>* callback, fibre::Callback<org_bluez_Adapter1*>* failed_callback) {
+        return base_->method_call_async(this, "GetDiscoveryFilters", callback, failed_callback);
     }
 
     // DBusProperty<std::string> Address;

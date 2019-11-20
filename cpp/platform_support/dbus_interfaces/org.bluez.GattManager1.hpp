@@ -18,12 +18,12 @@ public:
     org_bluez_GattManager1& operator=(const org_bluez_GattManager1 &) = delete;
 
 
-    int RegisterApplication_async(fibre::DBusObjectPath application, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_GattManager1*>* callback) {
-        return base_->method_call_async(this, "RegisterApplication", callback, application, options);
+    int RegisterApplication_async(fibre::DBusObjectPath application, std::unordered_map<std::string, fibre::dbus_variant> options, fibre::Callback<org_bluez_GattManager1*>* callback, fibre::Callback<org_bluez_GattManager1*>* failed_callback) {
+        return base_->method_call_async(this, "RegisterApplication", callback, failed_callback, application, options);
     }
 
-    int UnregisterApplication_async(fibre::DBusObjectPath application, fibre::Callback<org_bluez_GattManager1*>* callback) {
-        return base_->method_call_async(this, "UnregisterApplication", callback, application);
+    int UnregisterApplication_async(fibre::DBusObjectPath application, fibre::Callback<org_bluez_GattManager1*>* callback, fibre::Callback<org_bluez_GattManager1*>* failed_callback) {
+        return base_->method_call_async(this, "UnregisterApplication", callback, failed_callback, application);
     }
 
 

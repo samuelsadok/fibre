@@ -49,8 +49,8 @@ public:
     {{interface_name}}& operator=(const {{interface_name}} &) = delete;
 
 {% for method in interface.methods %}
-    int {{method.name}}_async({{arg_list_tnc(method.inputs)}}fibre::Callback<{{interface_name}}*{{arg_list_ct(method.outputs)}}>* callback) {
-        return base_->method_call_async(this, "{{method.name}}", callback{{arg_list_cn(method.inputs)}});
+    int {{method.name}}_async({{arg_list_tnc(method.inputs)}}fibre::Callback<{{interface_name}}*{{arg_list_ct(method.outputs)}}>* callback, fibre::Callback<{{interface_name}}*>* failed_callback) {
+        return base_->method_call_async(this, "{{method.name}}", callback, failed_callback{{arg_list_cn(method.inputs)}});
     }
 {% endfor %}
 

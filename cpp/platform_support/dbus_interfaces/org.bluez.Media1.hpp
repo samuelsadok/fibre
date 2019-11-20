@@ -18,20 +18,20 @@ public:
     org_bluez_Media1& operator=(const org_bluez_Media1 &) = delete;
 
 
-    int RegisterEndpoint_async(fibre::DBusObjectPath endpoint, std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Media1*>* callback) {
-        return base_->method_call_async(this, "RegisterEndpoint", callback, endpoint, properties);
+    int RegisterEndpoint_async(fibre::DBusObjectPath endpoint, std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Media1*>* callback, fibre::Callback<org_bluez_Media1*>* failed_callback) {
+        return base_->method_call_async(this, "RegisterEndpoint", callback, failed_callback, endpoint, properties);
     }
 
-    int UnregisterEndpoint_async(fibre::DBusObjectPath endpoint, fibre::Callback<org_bluez_Media1*>* callback) {
-        return base_->method_call_async(this, "UnregisterEndpoint", callback, endpoint);
+    int UnregisterEndpoint_async(fibre::DBusObjectPath endpoint, fibre::Callback<org_bluez_Media1*>* callback, fibre::Callback<org_bluez_Media1*>* failed_callback) {
+        return base_->method_call_async(this, "UnregisterEndpoint", callback, failed_callback, endpoint);
     }
 
-    int RegisterPlayer_async(fibre::DBusObjectPath player, std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Media1*>* callback) {
-        return base_->method_call_async(this, "RegisterPlayer", callback, player, properties);
+    int RegisterPlayer_async(fibre::DBusObjectPath player, std::unordered_map<std::string, fibre::dbus_variant> properties, fibre::Callback<org_bluez_Media1*>* callback, fibre::Callback<org_bluez_Media1*>* failed_callback) {
+        return base_->method_call_async(this, "RegisterPlayer", callback, failed_callback, player, properties);
     }
 
-    int UnregisterPlayer_async(fibre::DBusObjectPath player, fibre::Callback<org_bluez_Media1*>* callback) {
-        return base_->method_call_async(this, "UnregisterPlayer", callback, player);
+    int UnregisterPlayer_async(fibre::DBusObjectPath player, fibre::Callback<org_bluez_Media1*>* callback, fibre::Callback<org_bluez_Media1*>* failed_callback) {
+        return base_->method_call_async(this, "UnregisterPlayer", callback, failed_callback, player);
     }
 
 

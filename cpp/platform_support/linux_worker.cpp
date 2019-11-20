@@ -126,10 +126,12 @@ int LinuxWorker::register_event(int event_fd, uint32_t events, callback_t* callb
     };
 
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, event_fd, &ev) != 0) {
-        FIBRE_LOG(E) << "epoll_ctl() failed: " << sys_err();
+        FIBRE_LOG(E) << "epoll_ctl(" << event_fd << "...) failed: " << sys_err();
         n_events_--;
         return -1;
     }
+
+    FIBRE_LOG(D) << "registered epoll event " << event_fd;
 
     return 0;
 }

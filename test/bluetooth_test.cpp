@@ -12,9 +12,7 @@
 
 using namespace fibre;
 
-//class MyService : public LocalGattService {
-//    MyService() : LocalGattService()
-//};
+using TBluetoothTypes = BluezBluetoothTypes;
 
 
 int main(int argc, const char** argv) {
@@ -29,20 +27,32 @@ int main(int argc, const char** argv) {
     BluezPeripheralController peripheral;
     TEST_ZERO(peripheral.init(&worker, &dbus_connection));
 
-    BluetoothPeripheralController::Ad_t my_ad = {
-        /*.is_connectable = true,
+    BluetoothPeripheralController<TBluetoothTypes>::Ad_t my_ad = {
+        .is_connectable = true,
         .include_tx_power = true,
+        .service_uuid = "57155f13-33ec-456f-b9da-d2c876e2ecdc",
         .local_name = "Hello World",
-        .service_uuid = "57155f13-33ec-456f-b9da-d2c876e2ecdc"*/
     };
 
-    LocalGattService my_service{"57155f13-33ec-456f-b9da-d2c876e2ecdc"};
-    //my_service.add_characteristic(); // TODO: add characteristics
+    TBluetoothTypes::TLocalGattCharacteristic my_characteristics[] = {
+        {"57150001-33ec-456f-b9da-d2c876e2ecdc"},
+        //{"57150002-33ec-456f-b9da-d2c876e2ecdc"}
+    };
+    
+    int terminated_called = 0;
+    auto terminated_callback = make_lambda_closure([&terminated_called](StreamStatus){
+        terminated_called++;
+    });
+
+    //connect_streams((TBluetoothTypes::TLocalGattCharacteristicReadAspect*)&my_characteristics[0], &ch0, &terminated_callback);
+    //connect_streams(&ch0, (TBluetoothTypes::TLocalGattCharacteristicWriteAspect*)&my_characteristics[0], &terminated_callback);
+
+    TBluetoothTypes::TLocalGattService my_service{"57155f13-33ec-456f-b9da-d2c876e2ecdc", my_characteristics, sizeof(my_characteristics) / sizeof(my_characteristics[0])};
 
     printf("press [ENTER] to register service and start advertising\n");
     getchar(); // TODO: make stdin unbuffered
 
-    void* token;
+    uintptr_t token;
     TEST_ZERO(peripheral.register_service(&my_service));
     TEST_ZERO(peripheral.start_advertising(my_ad, &token));
     

@@ -96,7 +96,9 @@ using dbus_variant_base = std::variant<
     /* int8_t (char on most platforms) is not supported by DBus */
     short, int, long, long long,
     unsigned char, unsigned short, unsigned int, unsigned long, unsigned long long,
-    std::vector<std::string>
+    std::vector<std::string>,
+    std::vector<DBusObjectPath>,
+    std::vector<std::uint8_t>
 >;
 
 struct dbus_variant : dbus_variant_base {
@@ -215,12 +217,15 @@ int unpack_message(DBusMessage* message, std::tuple<Ts...>& tuple, int expected_
 }
 
 template<typename TInterface, typename ... TOutputs>
-void handle_reply_message(DBusMessage* msg, TInterface* obj, Callback<TInterface*, TOutputs...>* callback) {
+void handle_reply_message(DBusMessage* msg, TInterface* obj, Callback<TInterface*, TOutputs...>* callback, Callback<TInterface*>* failed_callback) {
     std::tuple<TOutputs...> values;
 
     if (unpack_message(msg, values, DBUS_MESSAGE_TYPE_METHOD_RETURN) != 0) {
-        FIBRE_LOG(E) << "Failed to unpack reply. Will not invoke callback.";
+        FIBRE_LOG(E) << "Failed to unpack reply.";
         // TODO: invoke error callback
+        if (failed_callback) {
+            (*failed_callback)(obj);
+        }
         return;
     }
 
@@ -393,16 +398,18 @@ public:
         return;
     }
 
+    unsigned int internal_errors_ = 0;
+
 private:
 
     int handle_add_watch(DBusWatch *watch);
     void handle_remove_watch(DBusWatch *watch);
-    int handle_toggle_watch(DBusWatch *watch, bool enable);
+    void handle_toggle_watch(DBusWatch *watch, bool enable);
     void handle_watch(DBusWatch *watch, uint32_t events);
 
     int handle_add_timeout(DBusTimeout* timeout);
     void handle_remove_timeout(DBusTimeout* timeout);
-    int handle_toggle_timeout(DBusTimeout *timeout, bool enable);
+    void handle_toggle_timeout(DBusTimeout *timeout, bool enable);
     void handle_timeout(DBusTimeout *timeout);
 
     void handle_dispatch();
@@ -449,7 +456,10 @@ private:
         return 0;
     }
 
-    using watch_ctx_t = bind_result_t<member_closure_t<decltype(&DBusConnectionWrapper::handle_watch)>, DBusWatch*>;
+    struct watch_ctx_t {
+        int fd;
+        bind_result_t<member_closure_t<decltype(&DBusConnectionWrapper::handle_watch)>, DBusWatch*> callback;
+    };
 
     struct timeout_ctx_t {
         LinuxTimer timer;
@@ -488,17 +498,17 @@ public:
     }
 
     template<typename TInterface, typename ... TInputs, typename ... TOutputs>
-    int method_call_async(TInterface* obj, const char* method_name, Callback<TInterface*, TOutputs...>* callback, TInputs ... inputs) {
+    int method_call_async(TInterface* obj, const char* method_name, Callback<TInterface*, TOutputs...>* callback, Callback<TInterface*>* failed_callback, TInputs ... inputs) {
         DBusMessage* msg;
         DBusMessageIter args;
         DBusPendingCall* pending;
         dbus_bool_t status;
 
-        using pending_call_ctx_t = struct { TInterface* obj; Callback<TInterface*, TOutputs...>* callback; };
+        using pending_call_ctx_t = struct { TInterface* obj; Callback<TInterface*, TOutputs...>* callback; Callback<TInterface*>* failed_callback; };
         auto pending_call_handler = [](DBusPendingCall* pending, void* ctx_unsafe){
             pending_call_ctx_t* ctx = reinterpret_cast<pending_call_ctx_t*>(ctx_unsafe);
             DBusMessage* msg = dbus_pending_call_steal_reply(pending);
-            handle_reply_message(msg, ctx->obj, ctx->callback);
+            handle_reply_message(msg, ctx->obj, ctx->callback, ctx->failed_callback);
             dbus_pending_call_unref(pending); // this will deallocate the memory being pointed to by ctx
             dbus_message_unref(msg);
         };
@@ -538,7 +548,7 @@ public:
         FIBRE_LOG(D) << "dispatched method call message";
 
         status = dbus_pending_call_set_notify(pending, pending_call_handler,
-                new pending_call_ctx_t{obj, callback},
+                new pending_call_ctx_t{obj, callback, failed_callback},
                 [](void* ctx){ delete (pending_call_ctx_t*)ctx; });
         if (!status) {
             FIBRE_LOG(E) << "failed to set pending call callback";
@@ -549,7 +559,7 @@ public:
         msg = dbus_pending_call_steal_reply(pending);
         if (msg) {
             dbus_pending_call_unref(pending);
-            handle_reply_message(msg, obj, callback);
+            handle_reply_message(msg, obj, callback, failed_callback);
             dbus_message_unref(msg);
         }
 
@@ -1028,15 +1038,16 @@ class DBusDiscoverer {
 public:
     using proxy_t = DBusRemoteObject<TInterfaces...>;
 
-    int start(org_freedesktop_DBus_ObjectManager* obj_manager, Callback<proxy_t*>* on_object_found, Callback<proxy_t*>* on_object_lost) {
+    int start(org_freedesktop_DBus_ObjectManager* obj_manager, Callback<proxy_t*>* on_object_found, Callback<proxy_t*>* on_object_lost, Callback<>* on_stopped) {
         obj_manager_ = obj_manager; // TODO: check if already started
         on_object_found_ = on_object_found;
         on_object_lost_ = on_object_lost;
+        on_stopped_ = on_stopped;
         
         scan_completed_ = false;
         obj_manager_->InterfacesAdded += &handle_interfaces_added_obj;
         obj_manager_->InterfacesRemoved += &handle_interfaces_removed_obj;
-        obj_manager_->GetManagedObjects_async(&handle_scan_complete_obj);
+        obj_manager_->GetManagedObjects_async(&handle_scan_complete_obj, &handle_scan_failed_obj);
         return 0;
     }
 
@@ -1154,16 +1165,25 @@ private:
         }
     }
 
+    void handle_scan_failed(org_freedesktop_DBus_ObjectManager* obj_mgr) {
+        scan_completed_ = true;
+        FIBRE_LOG(E) << "scan failed";
+        if (on_stopped_)
+            (*on_stopped_)();
+    }
+
     const char * interface_names_[sizeof...(TInterfaces)] = { TInterfaces::get_interface_name()... };
     org_freedesktop_DBus_ObjectManager* obj_manager_ = nullptr;
     Callback<proxy_t*>* on_object_found_ = nullptr;
     Callback<proxy_t*>* on_object_lost_ = nullptr;
+    Callback<>* on_stopped_ = nullptr;
     std::unordered_map<DBusObjectPath, impl_table_t> implementation_matrix_{};
     bool scan_completed_ = false;
 
     member_closure_t<decltype(&DBusDiscoverer::handle_interfaces_added)> handle_interfaces_added_obj{&DBusDiscoverer::handle_interfaces_added, this};
     member_closure_t<decltype(&DBusDiscoverer::handle_interfaces_removed)> handle_interfaces_removed_obj{&DBusDiscoverer::handle_interfaces_removed, this};
     member_closure_t<decltype(&DBusDiscoverer::handle_scan_complete)> handle_scan_complete_obj{&DBusDiscoverer::handle_scan_complete, this};
+    member_closure_t<decltype(&DBusDiscoverer::handle_scan_failed)> handle_scan_failed_obj{&DBusDiscoverer::handle_scan_failed, this};
 };
 
 class DBusLocalObjectManager {
@@ -1212,12 +1232,12 @@ fail1:
 
     using managed_object_dict_t = std::unordered_map<fibre::DBusObjectPath, std::unordered_map<std::string, std::unordered_map<std::string, fibre::dbus_variant>>>;
     managed_object_dict_t GetManagedObjects() {
-        FIBRE_LOG(D) << "GetManagedObjects() got called on " << name_;
-
         managed_object_dict_t result{};
         for (auto obj_it : obj_table) {
             result[obj_it.first] = get_interface_dict(obj_it.second, obj_it.second.interfaces);
         }
+
+        FIBRE_LOG(D) << "GetManagedObjects() got called on " << name_ << ". Reply with " << result;
         return result;
     }
     

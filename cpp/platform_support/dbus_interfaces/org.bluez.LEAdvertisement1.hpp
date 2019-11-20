@@ -18,8 +18,8 @@ public:
     org_bluez_LEAdvertisement1& operator=(const org_bluez_LEAdvertisement1 &) = delete;
 
 
-    int Release_async(fibre::Callback<org_bluez_LEAdvertisement1*>* callback) {
-        return base_->method_call_async(this, "Release", callback);
+    int Release_async(fibre::Callback<org_bluez_LEAdvertisement1*>* callback, fibre::Callback<org_bluez_LEAdvertisement1*>* failed_callback) {
+        return base_->method_call_async(this, "Release", callback, failed_callback);
     }
 
     // DBusProperty<std::string> Type;

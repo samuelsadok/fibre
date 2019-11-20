@@ -18,16 +18,16 @@ public:
     org_bluez_AgentManager1& operator=(const org_bluez_AgentManager1 &) = delete;
 
 
-    int RegisterAgent_async(fibre::DBusObjectPath agent, std::string capability, fibre::Callback<org_bluez_AgentManager1*>* callback) {
-        return base_->method_call_async(this, "RegisterAgent", callback, agent, capability);
+    int RegisterAgent_async(fibre::DBusObjectPath agent, std::string capability, fibre::Callback<org_bluez_AgentManager1*>* callback, fibre::Callback<org_bluez_AgentManager1*>* failed_callback) {
+        return base_->method_call_async(this, "RegisterAgent", callback, failed_callback, agent, capability);
     }
 
-    int UnregisterAgent_async(fibre::DBusObjectPath agent, fibre::Callback<org_bluez_AgentManager1*>* callback) {
-        return base_->method_call_async(this, "UnregisterAgent", callback, agent);
+    int UnregisterAgent_async(fibre::DBusObjectPath agent, fibre::Callback<org_bluez_AgentManager1*>* callback, fibre::Callback<org_bluez_AgentManager1*>* failed_callback) {
+        return base_->method_call_async(this, "UnregisterAgent", callback, failed_callback, agent);
     }
 
-    int RequestDefaultAgent_async(fibre::DBusObjectPath agent, fibre::Callback<org_bluez_AgentManager1*>* callback) {
-        return base_->method_call_async(this, "RequestDefaultAgent", callback, agent);
+    int RequestDefaultAgent_async(fibre::DBusObjectPath agent, fibre::Callback<org_bluez_AgentManager1*>* callback, fibre::Callback<org_bluez_AgentManager1*>* failed_callback) {
+        return base_->method_call_async(this, "RequestDefaultAgent", callback, failed_callback, agent);
     }
 
 

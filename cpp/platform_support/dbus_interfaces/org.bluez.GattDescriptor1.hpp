@@ -18,12 +18,12 @@ public:
     org_bluez_GattDescriptor1& operator=(const org_bluez_GattDescriptor1 &) = delete;
 
 
-    int ReadValue_async(fibre::Callback<org_bluez_GattDescriptor1*, std::vector<uint8_t>>* callback) {
-        return base_->method_call_async(this, "ReadValue", callback);
+    int ReadValue_async(fibre::Callback<org_bluez_GattDescriptor1*, std::vector<uint8_t>>* callback, fibre::Callback<org_bluez_GattDescriptor1*>* failed_callback) {
+        return base_->method_call_async(this, "ReadValue", callback, failed_callback);
     }
 
-    int WriteValue_async(std::vector<uint8_t> value, fibre::Callback<org_bluez_GattDescriptor1*>* callback) {
-        return base_->method_call_async(this, "WriteValue", callback, value);
+    int WriteValue_async(std::vector<uint8_t> value, fibre::Callback<org_bluez_GattDescriptor1*>* callback, fibre::Callback<org_bluez_GattDescriptor1*>* failed_callback) {
+        return base_->method_call_async(this, "WriteValue", callback, failed_callback, value);
     }
 
     // DBusProperty<std::string> UUID;

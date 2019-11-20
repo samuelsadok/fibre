@@ -18,8 +18,8 @@ public:
     org_freedesktop_DBus_Introspectable& operator=(const org_freedesktop_DBus_Introspectable &) = delete;
 
 
-    int Introspect_async(fibre::Callback<org_freedesktop_DBus_Introspectable*, std::string>* callback) {
-        return base_->method_call_async(this, "Introspect", callback);
+    int Introspect_async(fibre::Callback<org_freedesktop_DBus_Introspectable*, std::string>* callback, fibre::Callback<org_freedesktop_DBus_Introspectable*>* failed_callback) {
+        return base_->method_call_async(this, "Introspect", callback, failed_callback);
     }
 
 
