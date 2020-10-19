@@ -41,7 +41,9 @@ parser.add_argument("--no-ipython", action="store_true",
 parser.add_argument("-v", "--verbose", action="store_true",
                     help="print debug information")
 
-parser.set_defaults(path="usb,tcp:localhost:9910")
+# TODO: specify how Fibre-compatible devices should present themselves on USB.
+# The current default here just matches ODrives.
+parser.set_defaults(path="usb:idVendor=0x1209,idProduct=0x0D32,bInterfaceClass=0,bInterfaceSubClass=1,bInterfaceProtocol=0;tcp:localhost:9910")
 args = parser.parse_args()
 
 logger = Logger(verbose=args.verbose)
@@ -54,4 +56,6 @@ def print_help(args, have_devices):
     pass
 
 import fibre
-fibre.launch_shell(args, {}, print_banner, print_help, logger, app_shutdown_token)
+async def filter(x):
+    return True
+fibre.launch_shell(args, filter, {}, print_banner, print_help, logger, app_shutdown_token)
