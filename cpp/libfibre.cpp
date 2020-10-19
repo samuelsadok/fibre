@@ -1,14 +1,18 @@
 
 #include <fibre/libfibre.h>
-#include "platform_support/libusb_transport.hpp"
 #include "logging.hpp"
 #include "print_utils.hpp"
 #include "legacy_protocol.hpp"
 #include "legacy_object_client.hpp"
-#include "stdio.h" // TODO: remove
+#include "event_loop.hpp"
+#include "channel_discoverer.hpp"
 #include "string.h"
 #include <algorithm>
 #include "fibre/simple_serdes.hpp"
+
+#ifdef FIBRE_ENABLE_LIBUSB
+#include "platform_support/libusb_transport.hpp"
+#endif
 
 DEFINE_LOG_TOPIC(LIBFIBRE);
 USE_LOG_TOPIC(LIBFIBRE);
@@ -61,8 +65,11 @@ struct FIBRE_PRIVATE LibFibreCtx {
     construct_object_cb_t on_construct_object;
     destroy_object_cb_t on_destroy_object;
     void* cb_ctx;
-    fibre::LibusbDiscoverer libusb_discoverer;
     size_t n_discoveries = 0;
+
+#ifdef FIBRE_ENABLE_LIBUSB
+    fibre::LibusbDiscoverer libusb_discoverer;
+#endif
 };
 
 struct FIBRE_PRIVATE LibFibreDiscoveryCtx :
@@ -76,7 +83,10 @@ struct FIBRE_PRIVATE LibFibreDiscoveryCtx :
     void complete(fibre::LegacyObjectClient* obj_client) final;
     void complete(fibre::LegacyProtocolPacketBased* protocol, fibre::StreamStatus status) final;
 
+#ifdef FIBRE_ENABLE_LIBUSB
     fibre::LibusbDiscoverer::ChannelDiscoveryContext* libusb_discovery_ctx = nullptr;
+#endif
+
     on_found_object_cb_t on_found_object;
     void* cb_ctx;
     LibFibreCtx* ctx;
@@ -188,11 +198,13 @@ LibFibreCtx* libfibre_open(
     ctx->on_destroy_object = destroy_object;
     ctx->cb_ctx = cb_ctx;
 
+#ifdef FIBRE_ENABLE_LIBUSB
     if (ctx->libusb_discoverer.init(ctx->event_loop) != 0) {
         delete ctx;
         FIBRE_LOG(E) << "failed to init libusb transport layer";
         return nullptr;
     }
+#endif
 
     FIBRE_LOG(D) << "opened (" << fibre::as_hex((uintptr_t)ctx) << ")";
     return ctx;
@@ -203,7 +215,10 @@ void libfibre_close(LibFibreCtx* ctx) {
         FIBRE_LOG(W) << "there are still discovery processes ongoing";
     }
 
+#ifdef FIBRE_ENABLE_LIBUSB
     ctx->libusb_discoverer.deinit();
+#endif
+
     delete ctx->event_loop;
     delete ctx;
 
@@ -237,10 +252,13 @@ void libfibre_start_discovery(LibFibreCtx* ctx, const char* specs, size_t specs_
         const char* next_delim = std::find(prev_delim, specs + specs_len, ';');
         const char* colon = std::find(prev_delim, next_delim, ':');
         const char* colon_end = std::min(colon + 1, next_delim);
-        
-        if ((colon - prev_delim) == strlen("usb") && std::equal(prev_delim, colon, "usb")) {
+
+        if (false) {
+#ifdef FIBRE_ENABLE_LIBUSB
+        } else if ((colon - prev_delim) == strlen("usb") && std::equal(prev_delim, colon, "usb")) {
             ctx->libusb_discoverer.start_channel_discovery(colon_end, next_delim - colon_end,
                     &discovery_ctx->libusb_discovery_ctx, *discovery_ctx);
+#endif
         } else {
             FIBRE_LOG(W) << "transport layer \"" << std::string(prev_delim, colon - prev_delim) << "\" not implemented";
         }
@@ -258,10 +276,12 @@ void libfibre_stop_discovery(LibFibreCtx* ctx, LibFibreDiscoveryCtx* discovery_c
         ctx->n_discoveries--;
     }
 
+#ifdef FIBRE_ENABLE_LIBUSB
     if (discovery_ctx->libusb_discovery_ctx) {
         // TODO: implement "stopped" callback
         ctx->libusb_discoverer.stop_channel_discovery(discovery_ctx->libusb_discovery_ctx);
     }
+#endif
 
     if (--discovery_ctx->use_count == 0) {
         FIBRE_LOG(D) << "deleting discovery context";

@@ -3,7 +3,7 @@
 
 #include "../event_loop.hpp"
 #include "../async_stream.hpp"
-#include <fibre/libfibre.h>
+#include "../channel_discoverer.hpp"
 
 #include <libusb.h>
 #include <thread>
@@ -14,12 +14,6 @@ namespace fibre {
 
 class LibusbBulkInEndpoint;
 class LibusbBulkOutEndpoint;
-
-struct ChannelDiscoveryResult {
-    FibreStatus status;
-    AsyncStreamSource* rx_channel;
-    AsyncStreamSink* tx_channel;
-};
 
 template<typename TRes> class FIBRE_PRIVATE LibusbBulkEndpoint;
 
