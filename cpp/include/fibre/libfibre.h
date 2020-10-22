@@ -40,7 +40,9 @@
 #endif
 
 #ifdef FIBRE_COMPILE
-#   define FIBRE_PUBLIC DLL_EXPORT
+#   ifndef FIBRE_PUBLIC
+#       define FIBRE_PUBLIC DLL_EXPORT
+#   endif
 #   define FIBRE_PRIVATE DLL_LOCAL
 #else
 #   define FIBRE_PUBLIC DLL_IMPORT
@@ -165,7 +167,7 @@ typedef void (*on_rx_completed_cb_t)(void* ctx, LibFibreRxStream* rx_stream, Fib
  * Even if breaking changes are introduced, we promise to keep this function
  * backwards compatible.
  */
-const struct LibFibreVersion* libfibre_get_version();
+FIBRE_PUBLIC const struct LibFibreVersion* libfibre_get_version();
 
 /**
  * @brief Opens and initializes a Fibre context.

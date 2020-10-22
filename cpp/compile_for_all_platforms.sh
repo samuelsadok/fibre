@@ -147,6 +147,19 @@ CONFIG_LDFLAGS="./third_party/libusb-1.0.23/build-macos-amd64/libusb/.libs/libus
 CONFIG_USE_PKGCONF=false
 EOF
 
+# Uncomment this to generate the WebAssembly build target. If you do this you
+# have to finish a compile without tup before tup works. This is because
+# emscripten generates some cache files which tup is unhappy about.
+#mkdir -p build-wasm
+#cat <<EOF > build-wasm/tup.config
+#CONFIG_DEBUG=true
+#CONFIG_CC=/usr/lib/emscripten/em++
+#CONFIG_CFLAGS="-include emscripten.h -DFIBRE_PUBLIC=EMSCRIPTEN_KEEPALIVE"
+#CONFIG_USE_PKGCONF=false
+#CONFIG_ENABLE_LIBUSB=false
+#CONFIG_ENABLE_LOGGING=false
+#EOF
+
 mkdir -p build-local
 echo "" > build-local/tup.config
 

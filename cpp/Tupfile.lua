@@ -69,6 +69,10 @@ elseif string.find(machine, "x86_64.*-mingw.*") then
 elseif string.find(machine, "x86_64.*-apple-.*") then
     outname = 'libfibre-macos-x86.dylib'
     STRIP = false
+elseif string.find(machine, "wasm.*") then
+    outname = 'libfibre-wasm.js'
+    STRIP = false
+    BUILD_TYPE = ''
 else
     error('unknown machine identifier '..machine)
 end
@@ -111,10 +115,16 @@ else
     compile_outname=outname..'.fat'
 end
 
+if tup.ext(outname) == 'js' then
+    extra_outputs = {tup.base(compile_outname)..'.wasm'}
+else
+    extra_outputs = {}
+end
+
 tup.frule{
     inputs=object_files,
     command=LINKER..' %f '..tostring(CFLAGS)..' '..tostring(LDFLAGS)..' -o %o',
-    outputs={compile_outname, extra_outputs=tup.base(compile_outname)..'.wasm'}
+    outputs={compile_outname, extra_outputs=extra_outputs}
 }
 
 if STRIP then
