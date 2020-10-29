@@ -17,7 +17,7 @@ class LibusbBulkOutEndpoint;
 
 template<typename TRes> class FIBRE_PRIVATE LibusbBulkEndpoint;
 
-class FIBRE_PRIVATE LibusbDiscoverer {
+class FIBRE_PRIVATE LibusbDiscoverer : public ChannelDiscoverer {
 public:
 
     struct InterfaceSpecs {
@@ -30,15 +30,17 @@ public:
         int interface_protocol = -1; // -1 to ignore
     };
 
-    struct ChannelDiscoveryContext {
+    struct MyChannelDiscoveryContext : ChannelDiscoveryContext {
         InterfaceSpecs interface_specs;
         Completer<ChannelDiscoveryResult>* on_found_channels;
     };
 
+    ~LibusbDiscoverer() { deinit(); }
+
     int init(EventLoop* event_loop);
     int deinit() { return deinit(INT_MAX); }
-    void start_channel_discovery(const char* specs, size_t specs_len, ChannelDiscoveryContext** handle, Completer<ChannelDiscoveryResult>& on_found_channels);
-    int stop_channel_discovery(ChannelDiscoveryContext* handle);
+    void start_channel_discovery(const char* specs, size_t specs_len, ChannelDiscoveryContext** handle, Completer<ChannelDiscoveryResult>& on_found_channels) final;
+    int stop_channel_discovery(ChannelDiscoveryContext* handle) final;
 
 private:
     friend class LibusbBulkEndpoint<ReadResult>;
@@ -58,7 +60,7 @@ private:
     void on_remove_pollfd(int fd);
     int on_hotplug(struct libusb_device *dev, libusb_hotplug_event event);
     void poll_devices_now();
-    void consider_device(struct libusb_device *device, ChannelDiscoveryContext* subscription);
+    void consider_device(struct libusb_device *device, MyChannelDiscoveryContext* subscription);
 
     EventLoop* event_loop_ = nullptr;
     bool using_sparate_libusb_thread_; // true on Windows. Initialized in init()
@@ -69,7 +71,7 @@ private:
     EventLoopTimer* device_polling_timer_;
     EventLoopTimer* event_loop_timer_ = nullptr;
     std::unordered_map<uint16_t, Device> known_devices_; // key: bus_number << 8 | dev_number
-    std::vector<ChannelDiscoveryContext*> subscriptions_;
+    std::vector<MyChannelDiscoveryContext*> subscriptions_;
 };
 
 template<typename TRes>

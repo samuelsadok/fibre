@@ -749,7 +749,7 @@ class LibFibre():
             setattr(intf, "_" + name + "_property", RemoteAttribute(self, attr, subintf, subintf_name, False, False))
 
     def _on_attribute_removed(self, ctx, attr):
-        print("attribute removed")
+        print("attribute removed") # TODO
 
     def _on_function_added(self, ctx, func, name, name_length, input_names, input_codecs, output_names, output_codecs):
         name = string_at(name, name_length).decode('utf-8')
@@ -759,7 +759,7 @@ class LibFibre():
         setattr(intf, name, RemoteFunction(self, func, inputs, outputs))
 
     def _on_function_removed(self, ctx, func):
-        print("function removed")
+        print("function removed") # TODO
 
     def start_discovery(self, path, on_obj_discovered, cancellation_token):
         buf = path.encode('ascii')

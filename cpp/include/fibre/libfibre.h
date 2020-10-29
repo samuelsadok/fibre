@@ -56,6 +56,7 @@ extern "C" {
 #endif
 
 struct LibFibreCtx;
+struct LibFibreChannelDiscoveryCtx;
 struct LibFibreDiscoveryCtx;
 struct LibFibreCallContext;
 struct LibFibreObject;
@@ -98,18 +99,54 @@ typedef int (*cancel_timer_cb_t)(struct EventLoopTimer* timer);
  *        previous object.
  *        The interface handle is valid until the last object that implements it
  *        is destroyed.
- * @param intf_name: The ASCII-encoded name of the interface. Can be NULL be for
+ * @param intf_name: The ASCII-encoded name of the interface. Can be NULL for
  *        anonymous interfaces. If not NULL, it is only valid for the duration
  *        of the callback and must not be freed by the application.
  */
 typedef void (*construct_object_cb_t)(void* ctx, LibFibreObject* obj, LibFibreInterface* intf, const char* intf_name, size_t intf_name_length);
-
 typedef void (*destroy_object_cb_t)(void* ctx, LibFibreObject* obj);
+
+/**
+ * @brief on_start_discovery callback type for libfibre_register_discoverer().
+ * 
+ * For every channel pair that the application finds that matches the filter of
+ * this discoverer the application should call libfibre_add_channels().
+ * 
+ * @param discovery_handle: An opaque handle that libfibre will pass to the
+ *        corresponding on_stop_discovery callback to stop the discovery.
+ * @param specs, specs_length: The specs string that specifies discoverer-specific
+ *        filter parameters.
+ */
+typedef void (*on_start_discovery_cb_t)(void* ctx, LibFibreChannelDiscoveryCtx* discovery_ctx, const char* specs, size_t specs_length);
+typedef void (*on_stop_discovery_cb_t)(void* ctx, LibFibreChannelDiscoveryCtx* discovery_ctx);
+
 typedef void (*on_found_object_cb_t)(void*, LibFibreObject*);
 typedef void (*on_stopped_cb_t)(void*, FibreStatus);
+
 typedef void (*on_attribute_added_cb_t)(void*, LibFibreAttribute*, const char* name, size_t name_length, LibFibreInterface*, const char* intf_name, size_t intf_name_length);
 typedef void (*on_attribute_removed_cb_t)(void*, LibFibreAttribute*);
-typedef void (*on_function_added_cb_t)(void*, LibFibreFunction*, const char* name, size_t name_length, const char** input_names, const char** input_codecs, const char** output_names, const char** output_codecs);
+
+/**
+ * @brief on_function_added callback type for libfibre_subscribe_to_interface().
+ * 
+ * @param ctx: The user data that was passed to libfibre_subscribe_to_interface().
+ * @param func: A handle for the function. Remains valid until the corresponding
+ *        call to on_function_removed().
+ * @param name: The ASCII-encoded name of the function.
+ * @param name_length: Length in bytes of the name.
+ * @param input_names: A null-terminated list of null-terminated ASCII-encoded
+ *        strings. Each string corresponds to the name of one input argument.
+ *        The list and the string buffers are only valid for the duration of the
+ *        callback. They must not be freed by the application.
+ * @param input_codecs: A null-terminated list of null-terminated ASCII-encoded
+ *        strings. Each string names the codec of one input argument.
+ *        The list and the string buffers are only valid for the duration of the
+ *        callback. They must not be freed by the application.
+ * @param output_names: Analogous to input_names.
+ * @param output_codecs: Analogous to output names.
+ */
+typedef void (*on_function_added_cb_t)(void* ctx, LibFibreFunction* func, const char* name, size_t name_length, const char** input_names, const char** input_codecs, const char** output_names, const char** output_codecs);
+
 typedef void (*on_function_removed_cb_t)(void*, LibFibreFunction*);
 typedef void (*on_call_completed_cb_t)(void*, FibreStatus);
 
@@ -221,6 +258,24 @@ FIBRE_PUBLIC struct LibFibreCtx* libfibre_open(
 FIBRE_PUBLIC void libfibre_close(struct LibFibreCtx* ctx);
 
 /**
+ * @brief Registers an external channel discovery provider.
+ * 
+ * Libfibre starts and stops the discoverer on demand as a result of calls
+ * to libfibre_start_discovery() and libfibre_stop_discovery().
+ * This can be used by applications to implement transport providers which are
+ * not supported natively in libfibre.
+ */
+FIBRE_PUBLIC void libfibre_register_discoverer(LibFibreCtx* ctx, const char* name, size_t name_length, on_start_discovery_cb_t on_start_discovery, on_stop_discovery_cb_t on_stop_discovery, void* cb_ctx);
+
+/**
+ * @brief Registers new TX and RX channels as part of an ongoing discovery
+ * operation.
+ * 
+ * The channels can be closed with libfibre_close_tx() and libfibre_close_rx().
+ */
+FIBRE_PUBLIC void libfibre_add_channels(LibFibreCtx* ctx, LibFibreChannelDiscoveryCtx* discovery_ctx, LibFibreRxStream** tx_channel, LibFibreTxStream** rx_channel, size_t mtu);
+
+/**
  * @brief Starts looking for Fibre objects that match the specifications.
  *
  * TODO: specify if specs needs to remain valid for the duration of discovery.
@@ -249,7 +304,8 @@ FIBRE_PUBLIC void libfibre_close(struct LibFibreCtx* ctx);
  * @param cb_ctx: Arbitrary user data passed to the callbacks.
  * @returns: An opaque handle which should be passed to libfibre_stop_discovery().
  */
-FIBRE_PUBLIC void libfibre_start_discovery(LibFibreCtx* ctx, const char* specs, size_t specs_len, struct LibFibreDiscoveryCtx** handle,
+FIBRE_PUBLIC void libfibre_start_discovery(LibFibreCtx* ctx,
+    const char* specs, size_t specs_len, LibFibreDiscoveryCtx** handle,
     on_found_object_cb_t on_found_object,
     on_stopped_cb_t on_stopped, void* cb_ctx);
 
@@ -273,10 +329,7 @@ FIBRE_PUBLIC void libfibre_stop_discovery(LibFibreCtx* ctx, LibFibreDiscoveryCtx
  * @param interface: An interface handle that was obtained in the callback of
  *        libfibre_start_discovery().
  * @param on_attribute_added: Invoked when an attribute is added to the
- *        interface. The name and intf_name buffers are only valid for the
- *        duration of the callback and must not be freed by the application.
- *        The attribute handle remains valid until the corresponding call to
- *        on_attribute_removed().
+ *        interface.
  * @param on_attribute_removed: Invoked when an attribute is removed from the
  *        interface, including when the interface is being torn down. This is
  *        called exactly once for every call to on_attribute_added().
@@ -401,7 +454,7 @@ FIBRE_PUBLIC void libfibre_end_call(LibFibreCallContext* handle);
  *        or not.
  * @param ctx: Arbitrary user data passed to the on_completed callback.
  */
-void libfibre_start_tx(LibFibreTxStream* tx_stream, const uint8_t* tx_buf, size_t tx_len, on_tx_completed_cb_t on_completed, void* ctx);
+FIBRE_PUBLIC void libfibre_start_tx(LibFibreTxStream* tx_stream, const uint8_t* tx_buf, size_t tx_len, on_tx_completed_cb_t on_completed, void* ctx);
 
 /**
  * @brief Cancels an ongoing TX operation.
@@ -416,7 +469,14 @@ void libfibre_start_tx(LibFibreTxStream* tx_stream, const uint8_t* tx_buf, size_
  * 
  * @param tx_stream: The TX stream on which to cancel the ongoing TX operation.
  */
-void libfibre_cancel_tx(LibFibreTxStream* tx_stream);
+FIBRE_PUBLIC void libfibre_cancel_tx(LibFibreTxStream* tx_stream);
+
+/**
+ * @brief Permanently close TX stream.
+ * 
+ * Must not be called while a transfer is ongoing.
+ */
+FIBRE_PUBLIC void libfibre_close_tx(LibFibreTxStream* tx_stream, FibreStatus status);
 
 /**
  * @brief Starts receiving data on the specified RX stream.
@@ -434,7 +494,7 @@ void libfibre_cancel_tx(LibFibreTxStream* tx_stream);
  *        or not.
  * @param ctx: Arbitrary user data passed to the on_completed callback.
  */
-void libfibre_start_rx(LibFibreRxStream* rx_stream, uint8_t* rx_buf, size_t rx_len, on_rx_completed_cb_t on_completed, void* ctx);
+FIBRE_PUBLIC void libfibre_start_rx(LibFibreRxStream* rx_stream, uint8_t* rx_buf, size_t rx_len, on_rx_completed_cb_t on_completed, void* ctx);
 
 /**
  * @brief Cancels an ongoing RX operation.
@@ -449,7 +509,14 @@ void libfibre_start_rx(LibFibreRxStream* rx_stream, uint8_t* rx_buf, size_t rx_l
  * 
  * @param rx_stream: The RX stream on which to cancel the ongoing RX operation.
  */
-void libfibre_cancel_rx(LibFibreRxStream* rx_stream);
+FIBRE_PUBLIC void libfibre_cancel_rx(LibFibreRxStream* rx_stream);
+
+/**
+ * @brief Permanently close RX stream.
+ * 
+ * Must not be called while a transfer is ongoing.
+ */
+FIBRE_PUBLIC void libfibre_close_rx(LibFibreRxStream* rx_stream, FibreStatus status);
 
 #ifdef __cplusplus
 }

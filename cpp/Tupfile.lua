@@ -88,7 +88,7 @@ end
 function compile(src_file, obj_file)
     tup.frule{
         inputs={src_file},
-        command=CC..' -c %f '..tostring(CFLAGS)..' -o %o',
+        command='^co^ '..CC..' -c %f '..tostring(CFLAGS)..' -fdebug-prefix-map=/Data/Projects/fibre/cpp/build-local=/Data/Projects/fibre/cpp -o %o',
         outputs={obj_file}
     }
 end
@@ -123,7 +123,7 @@ end
 
 tup.frule{
     inputs=object_files,
-    command=LINKER..' %f '..tostring(CFLAGS)..' '..tostring(LDFLAGS)..' -o %o',
+    command='^c^ '..LINKER..' %f '..tostring(CFLAGS)..' '..tostring(LDFLAGS)..' -o %o',
     outputs={compile_outname, extra_outputs=extra_outputs}
 }
 

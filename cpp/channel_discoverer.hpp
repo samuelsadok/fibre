@@ -10,6 +10,18 @@ struct ChannelDiscoveryResult {
     FibreStatus status;
     AsyncStreamSource* rx_channel;
     AsyncStreamSink* tx_channel;
+    size_t mtu;
+};
+
+struct ChannelDiscoveryContext {};
+
+class ChannelDiscoverer {
+public:
+    virtual void start_channel_discovery(
+        const char* specs, size_t specs_len,
+        ChannelDiscoveryContext** handle,
+        Completer<ChannelDiscoveryResult>& on_found_channels) = 0;
+    virtual int stop_channel_discovery(ChannelDiscoveryContext* handle) = 0;
 };
 
 }
