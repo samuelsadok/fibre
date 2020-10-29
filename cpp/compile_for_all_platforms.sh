@@ -179,4 +179,4 @@ function copy_to() {
 }
 
 copy_to ../python/fibre/
-
+cp build-wasm/libfibre-* ../js/
