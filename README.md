@@ -1,4 +1,6 @@
-## Overview ##
+# Fibre
+
+## Overview
 
 The goal of Fibre is to provide a framework to make suckless distributed applications easier to program.
 
@@ -22,81 +24,27 @@ In particular:
    break anything. Sometimes you can get away with removing methods if they
    weren't used by other programs. **This is not implemented yet.**
 
-## Current Status ##
+## Platform Compatibility
 
-The project is in an early stage and the focus so far was to get a minimum working implementation.
+Fibre can be compiled for all kinds of platforms and use all kinds of transport providers. But to make life simple, `libfibre` already has built-in support for a couple of platforms and transport layers:
 
-* **C++**: Currently only supports the server side (i.e. publishing local objects). The C++ library comes with builtin support for TCP and UDP transport layers on Posix platforms. The library can easily be used with user provided transport layers.
+|     | Windows      | macOS [1]    | Linux        |
+|-----|--------------|--------------|--------------|
+| USB | yes (libusb) | yes (libusb) | yes (libusb) |
 
-* **Python**: Currently only supports the client side (i.e. using remote objects). The Python library comes with builtin support for TCP, UDP, USB and UART transport layers.
+ - [1] macOS 10.9 (Mavericks) or later
 
-Support for more languages (most importantly JavaScript) will be added once the protocol matures. Feel free to add your contribution.
+## Implementations
 
-## Show me some code
+ * **C/C++**: See [fibre-cpp](cpp/README.md).
+ * **Python**: See [PyFibre](python/README.md).
 
-Consider this program:
+Under the hood all language-specific implementations just bind to the C/C++ implementation which we provide as a precompiled library `libfibre`.
 
-```
-class TestClass {
-public:
-    float property1;
-    float property2;
-
-    float set_both(float arg1, float arg2) {
-        property1 = arg1;
-        property2 = arg2;
-        return property1 + property2;
-    }
-};
-
-
-int main() {
-    TestClass test_object = TestClass();
-
-    while (1) {
-        printf("test_object.property1: %f\n", test_object.property1);
-        usleep(1000000 / 5); // 5 Hz
-    }
-}
-```
-
-Say you want to publish `test_object` so that a remote Fibre node can use it.
-
-1. Add includes
-      ```C++
-      #include <fibre/protocol.hpp>
-      #include <fibre/posix_tcp.hpp>
-      ```
-1. Add Fibre export definitions to the exported class
-      ```C++
-      class TestClass {
-            [...]
-            FIBRE_EXPORTS(TestClass,
-                  make_fibre_property("property1", &property1),
-                  make_fibre_property("property2", &property2),
-                  make_fibre_function("set_both", *obj, &TestClass::set_both, "arg1", "arg2")
-            );
-      };
-      ```
-   Note: in the future this will be generated from a YAML file using automatic code generation.
-
-1. Publish the object on Fibre
-      ```C++
-      auto definitions = test_object.fibre_definitions;
-      fibre_publish(definitions);
-      ```
-   Note: currently you must publish all objects at once. This will be fixed in the future.
-
-1. Start the TCP server
-      ```C++
-      std::thread server_thread_tcp(serve_on_tcp, 9910);
-      ```
-      Note: this step will be replaced by a simple `fibre_start()` call in the future. All builtin transport layers then will be started automatically.
-
-## Adding Fibre to your project ##
+## Adding Fibre to your project
 
 We recommend Git subtrees if you want to include the Fibre source code in another project.
-Other contributors don't need to know anything about subtrees, to them the Fibre repo will be like any other normal directory.
+Other contributors don't need to know anything about subtrees. To them the Fibre repo will be like any other normal directory.
 
 #### Adding the repo
 ```
@@ -104,7 +52,8 @@ git remote add fibre-origin git@github.com:samuelsadok/fibre.git
 git fetch fibre-origin
 git subtree add --prefix=fibre --squash fibre-origin master
 ```
-Instead of using the upstream remote, you might want to use your own fork for greater flexibility.
+
+If you only need support for a specific programming language you can also just include the language-specific repository Instead of the whole main repository.
 
 #### Pulling updates from upstream
 ```
@@ -125,3 +74,7 @@ git subtree push --prefix=fibre fibre-origin master
 ## Contribute ##
 
 This project losely adheres to the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html).
+
+## Credits ##
+
+A significant portion of the code in this repository was written for and financed by [ODrive Robotics Inc](https://odriverobotics.com/).
