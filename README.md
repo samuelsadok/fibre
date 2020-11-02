@@ -33,13 +33,13 @@ Fibre can be compiled for all kinds of platforms and use all kinds of transport 
 | USB | yes (libusb) | yes (libusb) | yes (libusb) | yes (WebUSB) |
 
  - [1] macOS 10.9 (Mavericks) or later
- - [2] see [Fibre-JS](js/README.md)
+ - [2] see [fibre-js](js/README.md)
 
 ## Implementations
 
  * **C/C++**: See [fibre-cpp](cpp/README.md).
  * **Python**: See [PyFibre](python/README.md).
- * **JavaScript**: See [Fibre-JS](js/README.md).
+ * **JavaScript**: See [fibre-js](js/README.md).
 
 Under the hood all language-specific implementations just bind to the C/C++ implementation which we provide as a precompiled library `libfibre`.
 
