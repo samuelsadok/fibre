@@ -200,7 +200,7 @@ void PacketUnwrapper::complete(ReadResult result) {
  *        this function then the handle is not set later than invoking the
  *        completer.
  */
-void LegacyProtocolPacketBased::start_endpoint_operation(uint16_t endpoint_id, cbufptr_t tx_buf, bufptr_t rx_buf, EndpointOperationHandle* handle, Completer<EndpointOperationResult>& completer) {
+void LegacyProtocolPacketBased::start_endpoint_operation(uint16_t endpoint_id, cbufptr_t tx_buf, bufptr_t rx_buf, EndpointOperationHandle* handle, Callback<void, EndpointOperationResult> callback) {
     outbound_seq_no_ = ((outbound_seq_no_ + 1) & 0x7fff);
 
     EndpointOperation op = {
@@ -208,7 +208,7 @@ void LegacyProtocolPacketBased::start_endpoint_operation(uint16_t endpoint_id, c
         .endpoint_id = endpoint_id,
         .tx_buf = tx_buf,
         .rx_buf = rx_buf,
-        .completer = &completer
+        .callback = callback
     };
 
     if (handle) {
@@ -219,11 +219,11 @@ void LegacyProtocolPacketBased::start_endpoint_operation(uint16_t endpoint_id, c
         FIBRE_LOG(D) << "Endpoint operation already in progress. Enqueuing this one.";
 
         // A TX operation is already in progress
-        if (pending_operation_.completer) {
+        if (pending_operation_.has_value()) {
             // Previous endpoint operation was not yet sent. We don't support
             // enqueuing multiple endpoint operations while the first didn't send yet.
             FIBRE_LOG(E) << "previous endpoint operation still not sent";
-            completer.complete({kStreamError, tx_buf.begin(), rx_buf.begin()});
+            callback.invoke_and_clear({kStreamError, tx_buf.begin(), rx_buf.begin()});
         } else {
             // Control is returned to start_endpoint_operation once TX completes
             pending_operation_ = op;
@@ -262,21 +262,21 @@ void LegacyProtocolPacketBased::cancel_endpoint_operation(EndpointOperationHandl
 
     uint16_t seqno = static_cast<uint16_t>(handle & 0xffff);
 
-    Completer<EndpointOperationResult>* completer;
+    Callback<void, EndpointOperationResult> callback;
     const uint8_t* tx_end = nullptr;
     uint8_t* rx_end = nullptr;
 
-    if (pending_operation_.seqno == seqno) {
-        completer = pending_operation_.completer;
-        tx_end = pending_operation_.tx_buf.begin();
-        rx_end = pending_operation_.rx_buf.begin();
-        pending_operation_ = {};
+    if (pending_operation_.has_value() && pending_operation_->seqno == seqno) {
+        callback = pending_operation_->callback;
+        tx_end = pending_operation_->tx_buf.begin();
+        rx_end = pending_operation_->rx_buf.begin();
+        pending_operation_ = std::nullopt;
     }
 
     auto it = expected_acks_.find(handle);
 
     if (it != expected_acks_.end()) {
-        completer = it->second.completer;
+        callback = it->second.callback;
         tx_end = it->second.tx_buf.begin();
         rx_end = it->second.rx_buf.begin();
         expected_acks_.erase(it);
@@ -289,7 +289,7 @@ void LegacyProtocolPacketBased::cancel_endpoint_operation(EndpointOperationHandl
     } else {
         // Either we're waiting for an ack on this operation or it has not yet
         // been sent. In both cases we can just complete immediately.
-        safe_complete(completer, {kStreamCancelled, tx_end, rx_end});
+        callback.invoke_and_clear({kStreamCancelled, tx_end, rx_end});
     }
 }
 
@@ -342,11 +342,11 @@ void LegacyProtocolPacketBased::on_write_finished(WriteResult result) {
         // If the TX task was a remote endpoint operation but didn't succeed
         // we terminate that operation
         if (result.status != kStreamOk) {
-            auto completer = it->second.completer;
+            auto callback = it->second.callback;
             auto tx_end = it->second.tx_buf.begin();
             auto rx_end = it->second.rx_buf.begin();
             expected_acks_.erase(it);
-            safe_complete(completer, {result.status, result.end, rx_end});
+            callback.invoke_and_clear({result.status, result.end, rx_end});
         }
     }
 #endif
@@ -365,11 +365,11 @@ void LegacyProtocolPacketBased::on_write_finished(WriteResult result) {
 #endif
 
 #if FIBRE_ENABLE_CLIENT
-    if (pending_operation_.completer) {
+    if (pending_operation_.has_value()) {
         // There is a write operation pending from the client side (i.e. an
         // outgoing remote endpoint operation).
-        EndpointOperation op = pending_operation_;
-        pending_operation_ = {};
+        EndpointOperation op = *pending_operation_;
+        pending_operation_ = std::nullopt;
         start_endpoint_operation(op);
         return;
     }
@@ -417,9 +417,9 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
             memcpy(it->second.rx_buf.begin(), rx_buf.begin(), n_copy);
             const uint8_t* tx_end = it->second.tx_buf.begin();
             uint8_t* rx_end = it->second.rx_buf.begin() + n_copy;
-            auto completer = it->second.completer;
+            auto callback = it->second.callback;
             expected_acks_.erase(it);
-            safe_complete(completer, {kStreamOk, tx_end, rx_end});
+            callback.invoke_and_clear({kStreamOk, tx_end, rx_end});
         }
 
 #else
@@ -506,15 +506,15 @@ void LegacyProtocolPacketBased::on_rx_tx_closed(StreamStatus status) {
 
 #ifdef FIBRE_ENABLE_CLIENT
     // Cancel pending endpoint operation
-    if (pending_operation_.completer) {
-        pending_operation_.completer->complete({status, pending_operation_.tx_buf.begin(), pending_operation_.rx_buf.begin()});
-        pending_operation_ = {};
+    if (pending_operation_.has_value()) {
+        pending_operation_->callback.invoke_and_clear({status, pending_operation_->tx_buf.begin(), pending_operation_->rx_buf.begin()});
+        pending_operation_ = std::nullopt;
     }
 
     // Cancel all ongoing endpoint operations
     for (auto& item: expected_acks_) {
-        if (item.second.completer) {
-            (*item.second.completer).complete({status, item.second.tx_buf.begin(), item.second.rx_buf.begin()});
+        if (item.second.callback) {
+            item.second.callback.invoke_and_clear({status, item.second.tx_buf.begin(), item.second.rx_buf.begin()});
         }
     }
     expected_acks_.clear();

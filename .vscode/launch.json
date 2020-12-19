@@ -12,7 +12,7 @@
             "args": ["${workspaceFolder}/tools/fibre-shell"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "environment": [],
+            "environment": [{"name": "FIBRE_LOG", "value": "5"}],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [

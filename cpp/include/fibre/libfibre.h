@@ -68,10 +68,14 @@ struct LibFibreRxStream;
 
 enum FibreStatus {
     kFibreOk,
-    kFibreCancelled,
-    kFibreClosed,
-    kFibreInvalidArgument,
-    kFibreInternalError
+    kFibreBusy, //<! The request will complete asynchronously
+    kFibreCancelled, //!< The operation was cancelled due to a request by the application or the remote peer
+    kFibreClosed, //!< The operation has finished orderly or shall be finished orderly
+    kFibreInvalidArgument, //!< Bug in the application
+    kFibreInternalError, //!< Bug in the local fibre implementation
+    kFibreProtocolError, //!< A remote peer is misbehaving (indicates bug in the remote peer)
+    kFibreHostUnreachable, //!< The remote peer can no longer be reached
+    //kFibreInsufficientData, // maybe we will introduce this to tell the caller that the granularity of the data is too small
 };
 
 struct LibFibreVersion {
@@ -148,7 +152,46 @@ typedef void (*on_attribute_removed_cb_t)(void*, LibFibreAttribute*);
 typedef void (*on_function_added_cb_t)(void* ctx, LibFibreFunction* func, const char* name, size_t name_length, const char** input_names, const char** input_codecs, const char** output_names, const char** output_codecs);
 
 typedef void (*on_function_removed_cb_t)(void*, LibFibreFunction*);
-typedef void (*on_call_completed_cb_t)(void*, FibreStatus);
+
+/**
+ * @brief Callback type for libfibre_call().
+ * 
+ * For an overview of the coroutine call control flow see libfibre_call().
+ * 
+ * @param ctx: The context pointer that was passed to libfibre_call().
+ * @param tx_end: End of the range of data that was accepted by libfibre. This
+ *        is always in the interval [tx_buf, tx_buf + tx_len] where `tx_buf` and
+ *        `tx_len` are the arguments of the corresponding libfibre_call() call.
+ * @param tx_end: End of the range of data that was returned by libfibre. This
+ *        is always in the interval [rx_buf, rx_buf + rx_len] where `rx_buf` and
+ *        `rx_len` are the arguments of the corresponding libfibre_call() call.
+ * @param tx_buf: The application should set this to the next buffer to
+ *        transmit. The buffer must remain valid until the next callback
+ *        invokation.
+ * @param tx_len: The length of tx_buf. Must be zero if tx_buf is NULL.
+ * @param rx_buf: The application should set this to the buffer into which data
+ *        should be written. The buffer must remain allocated until the next
+ *        callback invokation.
+ * @param rx_len: The length of rx_buf. Must be zero if rx_buf is NULL.
+ * 
+ * @retval kFibreOk: The application set tx_buf and rx_buf to valid or empty
+ *         buffers and libfibre should invoke the callback again when it has
+ *         made progress.
+ * @retval kFibreBusy: The application cannot provide a new tx_buf or rx_buf at
+ *         the moment. The application will eventually call libfibre_call() for
+ *         this coroutine call again.
+ * @retval kFibreClosed: The application may have returned non-empty buffers and
+ *         if libfibre manages to fully handle these buffers it shall consider
+ *         the call ended.
+ * @retval kFibreCancelled: The application did not set valid tx and rx buffers
+ *         and libfibre should consider the call cancelled. Libfibre will not
+ *         invoke the callback anymore.
+ */
+typedef FibreStatus (*libfibre_call_cb_t)(void* ctx,
+        FibreStatus status,
+        const unsigned char* tx_end, unsigned char* rx_end,
+        const unsigned char** tx_buf, size_t* tx_len,
+        unsigned char** rx_buf, size_t* rx_len);
 
 /**
  * @brief TX completion callback type for libfibre_start_tx().
@@ -380,63 +423,92 @@ FIBRE_PUBLIC void libfibre_subscribe_to_interface(LibFibreInterface* interface,
 FIBRE_PUBLIC FibreStatus libfibre_get_attribute(LibFibreObject* parent_obj, LibFibreAttribute* attr, LibFibreObject** child_obj_ptr);
 
 /**
- * @brief Starts a remote procedure call.
+ * @brief Starts a remote coroutine call or continues or cancels an ongoing call.
  * 
- * This function returns a TX/RX pair of streams that can be used by the
- * application to send inputs to the remote procedure and receive outputs from
- * it.
+ * A remote coroutine call can be considered a continuous exchange of the
+ * following tuples:
  * 
- * libfibre is not required to send anything on the underlying transport
- * layer(s) until a TX operation is started on the call's tx_stream. This means
- * that for functions with no input the application must start a zero-length
- * operation for the call to be started.
+ *  Client Application  ===== (tx_buf, rx_buf, status) ====> libfibre
+ *  Client Application  <==== (tx_end, rx_end, status) ===== libfibre
  * 
- * The operation must be considered in progress until on_completed is invoked.
- * This usually happens directly after both the tx_stream and rx_stream are
- * closed (or failed), either by the server or due to a call to
- * libfibre_cancel_call().
+ * These tuples are exchanged through the input/output arguments of
+ * libfibre_call() or libfibre_call()'s callback.
  * 
- * @param obj: An object handle that was obtained in the callback of
- *        libfibre_start_discovery() or from a call to libfibre_get_attribute().
+ * If during an ongoing call either of the two parties is unable to respond
+ * immediately it responds with kFibreBusy and will thus get the responsibility
+ * to resume the call when able. kFibreCancelled can be issued by either party
+ * at any time.
+ * 
+ * Each party must make progress during every control transfer to the other
+ * party.
+ * 
+ * For the application this means for every call to libfibre_call() and every
+ * return from libfibre_call()'s callback the arguments passed from application
+ * to libfibre must satisfy at least one of the following:
+ * 
+ *  - The call handle is NULL
+ *  - tx_len is non-zero
+ *  - rx_len is non-zero
+ *  - The status is different from kFibreOk
+ * 
+ * For libfibre this means every for return from libfibre_call() and every
+ * call to libfibre_call()'s callback the arguments passed from libfibre to
+ * application satisfy at least one of the following:
+ * 
+ *  - tx_end is larger than the corresponding tx_buf
+ *  - rx_end is larger than the corresponding rx_buf
+ *  - The status is different from kFibreOk
+ * 
  * @param func: A function handle that was obtained in the on_function_added()
  *        callback of libfibre_subscribe_to_interface().
- * @param handle: The variable being pointed to by this argument is set to a
- *        handle that can be passed to libfibre_cancel_call() to cancel the
- *        started call. If on_complete() is invoked directly during
- *        libfibre_start_call() then the handle variable is not updated later
- *        than that invokation.
- * @param tx_stream: The variable being pointed to by this argument is set to
- *        a TX stream handle that can be used to send data on this call.
- *        This handle remains valid until the application calls
- *        libfibre_end_call().
- * @param rx_stream: The variable being pointed to by this argument is set to
- *        an RX stream handle that can be used to receive data on this call.
- *        This handle remains valid until the application calls
- *        libfibre_end_call().
- * @param on_completed: Called when the call completes, whether successful or
- *        not.
- * @param cb_ctx: An opaque handle which will be passed to on_completed().
+ * @param handle: The variable being pointed to by this argument identifies the
+ *        coroutine call. If the variable is NULL it will be set to a new opaque
+ *        handle. If the variable is not NULL the active function call is
+ *        continued or cancelled (depending on status).
+ * @param tx_buf: The buffer to transmit. If libfibre_call() returns kFibreBusy
+ *        then this buffer must remain valid until `callback` is invoked.
+ *        Otherwise it can be freed immediately after this call.
+ * @param tx_len: Length of tx_buf. Must be zero if tx_buf is NULL.
+ * @param rx_buf: The buffer into which the received data should be written. If
+ *        libfibre_call() returns kFibreBusy then this buffer must remain
+ *        allocated until `callback` is invoked. Otherwise it can be freed
+ *        immediately after this call.
+ * @param rx_len: Length of rx_buf. Must be zero if rx_buf is NULL.
+ * @param tx_end: End of the range of data that was accepted by libfibre. This
+ *        is always in the interval [tx_buf, tx_buf + tx_len] unless
+ *        libfibre_call() returns kFibreBusy, in which case this is NULL.
+ *        This value does not give any delivery guarantees.
+ * @param rx_end: End of the range of data that was returned by libfibre. This
+ *        is always in the interval [rx_buf, rx_buf + rx_len] unless
+ *        libfibre_call() returns kFibreBusy, in which case this is NULL.
+ * @param callback: Will be invoked eventually if and only if libfibre_call()
+ *        returns kFibreBusy. This callback is never invoked from inside
+ *        libfibre_call().
+ * @param cb_ctx: An opaque application-defined handle that gets passed to
+ *        `callback`.
+ * 
+ * @retval kFibreOk: libfibre accepted some or all of the tx_buf or filled some
+ *         or all of the rx_buf with data and can immediately accept more TX
+ *         data or provide more RX data.
+ * @retval kFibreBusy: libfibre will complete the request asynchronously by
+ *         calling `callback`. If this value is returned, then the application
+ *         must not invoke libfibre_call() on the same call handle again until
+ *         `callback` is invoked except for cancelling the call with a status
+ *         of `kFibreCancelled`.
+ * @retval kFibreClosed: the remote server completed the call and will not
+ *         accept or return any more data on this call. The application must not
+ *         pass the closed call context handle to libfibre_call() anymore.
+ * @retval kFibreCancelled: the application's cancellation request was honored
+ *         or the remote server cancelled the call. The application must not
+ *         pass the cancelled call context handle to libfibre_call() anymore.
  */
-FIBRE_PUBLIC void libfibre_start_call(LibFibreObject* obj, LibFibreFunction* func, LibFibreCallContext** handle, LibFibreTxStream** tx_stream, LibFibreRxStream** rx_stream, on_call_completed_cb_t on_completed, void* cb_ctx);
-
-/**
- * @brief Ends an ongoing function call.
- * 
- * Note that this does not request semantic cancellation (or reversal) of
- * actions triggered by this call.
- * 
- * The application must still wait for the on_complete callback to be called
- * before the call can be considered finished.
- * In the meantime if the TX and/or RX stream of this call is still open then
- * it is closed.
- * libfibre_end_call must not be called twice for the same call.
- * The completion callback may be called with kFibreCancelled or any other
- * status.
- * 
- * @param handle: The function call handle that was obtained by a call to
- *        libfibre_start_call().
- */
-FIBRE_PUBLIC void libfibre_end_call(LibFibreCallContext* handle);
+FIBRE_PUBLIC FibreStatus libfibre_call(LibFibreFunction* func, LibFibreCallContext** handle,
+        FibreStatus status,
+        const unsigned char* tx_buf, size_t tx_len,
+        unsigned char* rx_buf, size_t rx_len,
+        const unsigned char** tx_end,
+        unsigned char** rx_end,
+        libfibre_call_cb_t callback, void* cb_ctx);
 
 /**
  * @brief Starts sending data on the specified TX stream.

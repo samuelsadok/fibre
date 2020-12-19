@@ -11,6 +11,7 @@ import threading
 import time
 import platform
 from .utils import Logger, Event
+import sys
 
 # Enable this for better tracebacks in some cases
 #import tracemalloc
@@ -81,15 +82,18 @@ OnAttributeRemovedSignature = CFUNCTYPE(None, c_void_p, c_void_p)
 OnFunctionAddedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p, c_size_t, POINTER(c_char_p), POINTER(c_char_p), POINTER(c_char_p), POINTER(c_char_p))
 OnFunctionRemovedSignature = CFUNCTYPE(None, c_void_p, c_void_p)
 
-OnCallCompletedSignature = CFUNCTYPE(None, c_void_p, c_int)
+OnCallCompletedSignature = CFUNCTYPE(c_int, c_void_p, c_int, c_void_p, c_void_p, POINTER(c_void_p), POINTER(c_size_t), POINTER(c_void_p), POINTER(c_size_t))
 OnTxCompletedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_int, c_void_p)
 OnRxCompletedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_int, c_void_p)
 
 kFibreOk = 0
-kFibreCancelled = 1
-kFibreClosed = 2
-kFibreInvalidArgument = 3
-kFibreInternalError = 4
+kFibreBusy = 1
+kFibreCancelled = 2
+kFibreClosed = 3
+kFibreInvalidArgument = 4
+kFibreInternalError = 5
+kFibreProtocolError = 6
+kFibreHostUnreachable = 7
 
 class LibFibreVersion(Structure):
     _fields_ = [
@@ -133,13 +137,13 @@ libfibre_get_attribute = lib.libfibre_get_attribute
 libfibre_get_attribute.argtypes = [c_void_p, c_void_p, POINTER(c_void_p)]
 libfibre_get_attribute.restype = c_int
 
-libfibre_start_call = lib.libfibre_start_call
-libfibre_start_call.argtypes = [c_void_p, c_void_p, POINTER(c_void_p), POINTER(c_void_p), POINTER(c_void_p), OnCallCompletedSignature, c_void_p]
-libfibre_start_call.restype = None
+libfibre_call = lib.libfibre_call
+libfibre_call.argtypes = [c_void_p, POINTER(c_void_p), c_int, c_void_p, c_size_t, c_void_p, c_size_t, POINTER(c_void_p), POINTER(c_void_p), OnCallCompletedSignature, c_void_p]
+libfibre_call.restype = c_int
 
-libfibre_end_call = lib.libfibre_end_call
-libfibre_end_call.argtypes = [c_void_p]
-libfibre_end_call.restype = None
+#libfibre_end_call = lib.libfibre_end_call
+#libfibre_end_call.argtypes = [c_void_p]
+#libfibre_end_call.restype = None
 
 libfibre_start_tx = lib.libfibre_start_tx
 libfibre_start_tx.argtypes = [c_void_p, c_char_p, c_size_t, OnTxCompletedSignature, c_void_p]
@@ -175,6 +179,10 @@ def _get_exception(status):
         return ArgumentError()
     elif status == kFibreInternalError:
         return Exception("internal libfibre error")
+    elif status == kFibreProtocolError:
+        return Exception("peer misbehaving")
+    elif status == kFibreHostUnreachable:
+        return ObjectLostError()
     else:
         return Exception("unknown libfibre error {}".format(status))
 
@@ -408,6 +416,76 @@ class RxStream():
         return data
 
 
+class Call(object):
+    """
+    This call behaves as you would expect an async generator to behave. This is
+    used to provide compatibility down to Python 3.5.
+    """
+    def __init__(self, func):
+        self._func = func
+        self._call_handle = c_void_p(0)
+        self._is_started = False
+        self._should_close = False
+        self._is_closed = False
+        self._tx_buf = None
+
+    def __aiter__(self):
+        return self
+
+    async def asend(self, val):
+        assert(self._is_started == (not val is None))
+        if not val is None:
+            self._tx_buf, self._rx_len, self._should_close = val
+        return await self.__anext__()
+
+    async def __anext__(self):
+        if not self._is_started:
+            self._is_started = True
+            return None # This immitates the weird starting behavior of Python 3.6+ async generators iterators
+
+        if self._is_closed:
+            raise StopAsyncIteration
+
+        tx_end = c_void_p(0)
+        rx_end = c_void_p(0)
+
+        rx_buf = b'\0' * self._rx_len
+
+        call_id = insert_with_new_id(self._func._libfibre._calls, self)
+
+        status = libfibre_call(self._func._func_handle, byref(self._call_handle),
+                kFibreClosed if self._should_close else kFibreOk,
+                cast(self._tx_buf, c_char_p), len(self._tx_buf),
+                cast(rx_buf, c_char_p), len(rx_buf),
+                byref(tx_end), byref(rx_end), self._func._libfibre.c_on_call_completed, call_id)
+
+        if status == kFibreBusy:
+            self.ag_await = self._func._libfibre.loop.create_future()
+            status, tx_end, rx_end = await self.ag_await
+            self.ag_await = None
+
+        if status != kFibreOk and status != kFibreClosed:
+            raise _get_exception(status)
+
+        n_written = tx_end - cast(self._tx_buf, c_void_p).value
+        self._tx_buf = self._tx_buf[n_written:]
+        n_read = rx_end - cast(rx_buf, c_void_p).value
+        rx_buf = rx_buf[:n_read]
+
+        if status != kFibreOk:
+            self._is_closed = True
+        return self._tx_buf, rx_buf, self._is_closed
+
+    async def cancel():
+        # TODO: this doesn't follow the official Python async generator protocol. Should implement aclose() instead.
+        status = libfibre_call(self._func._func_handle, byref(self._call_handle), kFibreOk,
+                0, 0, 0, 0, 0, 0, self._func._libfibre.c_on_call_completed, call_id)
+
+    #async def aclose(self):
+    #    assert(self._is_started and not self._is_closed)
+    #    return self._tx_buf, rx_buf, self._is_closed
+
+
 class RemoteFunction(object):
     """
     Represents a callable function that maps to a function call on a remote object.
@@ -418,70 +496,33 @@ class RemoteFunction(object):
         self._inputs = inputs
         self._outputs = outputs
         self._rx_size = sum(codec.get_length() for _, _, codec in self._outputs)
-        self._calls = {}
-        self._c_on_call_completed = OnCallCompletedSignature(self._on_completed)
 
-    def _on_completed(self, ctx, status):
-        call = self._calls.pop(ctx)
-
-        if status != kFibreOk:
-            call.set_exception(_get_exception(status))
-        else:
-            call.set_result(None)
-
-    def start_call(self, instance, cancellation_token):
-        """
-        Starts invoking the function on the remote object.
-        Must be called from the Fibre thread.
-
-        cancellation_token: A future that starts cancellation of the function
-                            call when completed.
-        Returns: A tuple (tx_stream, rx_stream, future). The tx_stream can be
-                 used to send input arguments to the function. The rx_stream can
-                 be used to receive output arguments from the function. The
-                 future is completed once the function call is fully terminated.
-        """
-        assert(asyncio.get_event_loop() == instance._libfibre.loop)
-
-        future = instance._libfibre.loop.create_future()
-        call_id = insert_with_new_id(self._calls, future)
-
-        call_handle = c_void_p(0)
-        tx_stream_handle = c_void_p(0)
-        rx_stream_handle = c_void_p(0)
-
-        libfibre_start_call(instance._obj_handle, self._func_handle,
-            byref(call_handle), byref(tx_stream_handle), byref(rx_stream_handle),
-            self._c_on_call_completed, call_id)
-
-        if not cancellation_token is None:
-            on_cancel = lambda: libfibre_end_call(call_handle)
-            cancellation_token.add_done_callback(on_cancel)
-            future.add_done_callback(cancellation_token.remove_done_callback(on_cancel))
-
-        return TxStream(self._libfibre, tx_stream_handle), RxStream(self._libfibre, rx_stream_handle), future
-
-    async def async_call(self, instance, args, cancellation_token):
-        tx_stream, rx_stream, call_future = self.start_call(instance, cancellation_token)
-
+    async def async_call(self, args, cancellation_token):
+        #print("making call on " + hex(args[0]._obj_handle))
         tx_buf = bytes()
         for i, arg in enumerate(self._inputs):
             tx_buf += arg[2].serialize(self._libfibre, args[i])
+        rx_buf = bytes()
 
-        rx_length = sum(arg[2].get_length() for arg in self._outputs)
-
-        # Create task which will start the TX operation soon. This allows us to
-        # start an RX operation before the TX operation is actually started.
-        tx_future = asyncio.create_task(tx_stream.write_all(tx_buf))
+        agen = Call(self)
         
+        if not cancellation_token is None:
+            cancellation_token.add_done_callback(agen.cancel)
+
         try:
-            try:
-                rx_buf = await rx_stream.read_all(rx_length)
-            finally:
-                await tx_future
+            assert(await agen.asend(None) is None)
+
+            is_closed = False
+            while not is_closed:
+                tx_buf, rx_chunk, is_closed = await agen.asend((tx_buf, self._rx_size - len(rx_buf), True))
+                rx_buf += rx_chunk
+
         finally:
-            await call_future
-        
+            if not cancellation_token is None:
+                cancellation_token.remove_done_callback(agen.cancel)
+
+        assert(len(rx_buf) == self._rx_size)
+
         outputs = []
         for arg in self._outputs:
             arg_length = arg[2].get_length()
@@ -495,9 +536,10 @@ class RemoteFunction(object):
         else:
             return tuple(outputs)
 
-    def __call__(self, instance, *args, cancellation_token = None):
+    def __call__(self, *args, cancellation_token = None):
         """
-        Starts invoking the function on the remote object.
+        Starts invoking the remote function. The first argument is usually a
+        remote object.
         If this function is called from the Fibre thread then it is nonblocking
         and returns an asyncio.Future. If it is called from another thread then
         it blocks until the function completes and returns the result(s) of the 
@@ -505,13 +547,13 @@ class RemoteFunction(object):
         """
 
         if threading.current_thread() != libfibre_thread:
-            return run_coroutine_threadsafe(instance._libfibre.loop, lambda: self.__call__(instance, *args))
+            return run_coroutine_threadsafe(self._libfibre.loop, lambda: self.__call__(*args))
 
         if (len(self._inputs) != len(args)):
             raise TypeError("expected {} arguments but have {}".format(len(self._inputs), len(args)))
 
-        coro = self.async_call(instance, args, cancellation_token)
-        return asyncio.ensure_future(coro, loop=instance._libfibre.loop)
+        coro = self.async_call(args, cancellation_token)
+        return asyncio.ensure_future(coro, loop=self._libfibre.loop)
 
     def __get__(self, instance, owner):
         return MethodType(self, instance) if instance else self
@@ -656,12 +698,14 @@ class LibFibre():
         self.c_on_attribute_removed = OnAttributeRemovedSignature(self._on_attribute_removed)
         self.c_on_function_added = OnFunctionAddedSignature(self._on_function_added)
         self.c_on_function_removed = OnFunctionRemovedSignature(self._on_function_removed)
+        self.c_on_call_completed = OnCallCompletedSignature(self._on_call_completed)
         
         self.timer_map = {}
         self.eventfd_map = {}
         self.interfaces = {} # key: libfibre handle, value: python class
         self.discovery_processes = {} # key: ID, value: python dict
-        self._objects = {} # key: libfibre handle, value: pyhton class
+        self._objects = {} # key: libfibre handle, value: python class
+        self._calls = {} # key: libfibre handle, value: Call object
 
         self.ctx = c_void_p(libfibre_open(
             self.c_post,
@@ -760,6 +804,13 @@ class LibFibre():
 
     def _on_function_removed(self, ctx, func):
         print("function removed") # TODO
+
+    def _on_call_completed(self, ctx, status, tx_end, rx_end, tx_buf, tx_len, rx_buf, rx_len):
+        call = self._calls.pop(ctx)
+
+        call.ag_await.set_result((status, tx_end, rx_end))
+
+        return kFibreBusy
 
     def start_discovery(self, path, on_obj_discovered, cancellation_token):
         buf = path.encode('ascii')

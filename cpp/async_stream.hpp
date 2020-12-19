@@ -13,6 +13,7 @@ enum StreamStatus {
     kStreamError
 };
 
+// TODO: drop in favor of Callback<...>
 template<typename ... TResults>
 class Completer {
 public:

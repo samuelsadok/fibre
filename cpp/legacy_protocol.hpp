@@ -6,6 +6,7 @@
 #ifdef FIBRE_ENABLE_CLIENT
 #include "legacy_object_client.hpp"
 #include <unordered_map>
+#include <optional>
 #endif
 
 namespace fibre {
@@ -106,7 +107,7 @@ public:
     Completer<LegacyProtocolPacketBased*, StreamStatus>* on_stopped_ = nullptr;
 
 #ifdef FIBRE_ENABLE_CLIENT
-    void start_endpoint_operation(uint16_t endpoint_id, cbufptr_t tx_buf, bufptr_t rx_buf, EndpointOperationHandle* handle, Completer<EndpointOperationResult>& completer);
+    void start_endpoint_operation(uint16_t endpoint_id, cbufptr_t tx_buf, bufptr_t rx_buf, EndpointOperationHandle* handle, Callback<void, EndpointOperationResult> callback);
     void cancel_endpoint_operation(EndpointOperationHandle handle);
 
     LegacyObjectClient client_{this};
@@ -126,13 +127,13 @@ private:
         uint16_t endpoint_id;
         cbufptr_t tx_buf;
         bufptr_t rx_buf;
-        Completer<EndpointOperationResult>* completer;
+        Callback<void, EndpointOperationResult> callback;
     };
 
     void start_endpoint_operation(EndpointOperation op);
 
     uint16_t outbound_seq_no_ = 0;
-    EndpointOperation pending_operation_{.completer = nullptr}; // operation that is waiting for TX
+    std::optional<EndpointOperation> pending_operation_ = std::nullopt; // operation that is waiting for TX
     EndpointOperationHandle transmitting_op_ = 0; // operation that is in TX
     std::unordered_map<uint16_t, EndpointOperation> expected_acks_; // operations that are waiting for RX
 #endif
