@@ -74,6 +74,10 @@ public:
         return detail::get_default<TRet>::val();
     }
 
+    typedef TRet(*cb_t)(void*, TArgs...);
+    cb_t get_ptr() { return cb_; }
+    void* get_ctx() { return ctx_; }
+
 private:
     TRet(*cb_)(void*, TArgs...);
     void* ctx_;
@@ -112,7 +116,7 @@ typename MemCb::cb_t make_callback(typename TTraits::TObj* obj) {
 }
 
 #define MEMBER_CB(obj, func) \
-    make_callback< \
+    fibre::make_callback< \
         decltype(&std::remove_reference_t<decltype(*obj)>::func), \
         &std::remove_reference_t<decltype(*obj)>::func \
     >(obj)

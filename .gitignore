@@ -1,2 +1,10 @@
 __pycache__
 .Trash*
+
+# Test build files
+/test/autogen
+/test/build
+/test/test_server.elf
+
+# Tup database
+/.tup

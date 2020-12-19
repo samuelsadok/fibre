@@ -43,7 +43,7 @@ parser.add_argument("-v", "--verbose", action="store_true",
 
 # TODO: specify how Fibre-compatible devices should present themselves on USB.
 # The current default here just matches ODrives.
-parser.set_defaults(path="usb:idVendor=0x1209,idProduct=0x0D32,bInterfaceClass=0,bInterfaceSubClass=1,bInterfaceProtocol=0;tcp:localhost:9910")
+parser.set_defaults(path="usb:idVendor=0x1209,idProduct=0x0D32,bInterfaceClass=0,bInterfaceSubClass=1,bInterfaceProtocol=0;tcp-client:address=localhost,port=14220")
 args = parser.parse_args()
 
 logger = Logger(verbose=args.verbose)

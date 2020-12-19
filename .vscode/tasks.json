@@ -7,7 +7,7 @@
 			"command": "make",
 			"args": [],
 			"options": {
-				"cwd": "${workspaceFolder}/cpp"
+				"cwd": "${workspaceFolder}"
 			},
 			"problemMatcher": {
 				"base": "$gcc",

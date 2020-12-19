@@ -2,12 +2,13 @@
 #define __FIBRE_CHANNEL_DISCOVERER
 
 #include "async_stream.hpp"
-#include <fibre/libfibre.h>
+#include <fibre/callback.hpp>
+#include <fibre/status.hpp>
 
 namespace fibre {
 
 struct ChannelDiscoveryResult {
-    FibreStatus status;
+    Status status;
     AsyncStreamSource* rx_channel;
     AsyncStreamSink* tx_channel;
     size_t mtu;
@@ -20,8 +21,12 @@ public:
     virtual void start_channel_discovery(
         const char* specs, size_t specs_len,
         ChannelDiscoveryContext** handle,
-        Completer<ChannelDiscoveryResult>& on_found_channels) = 0;
+        Callback<void, ChannelDiscoveryResult> on_found_channels) = 0;
     virtual int stop_channel_discovery(ChannelDiscoveryContext* handle) = 0;
+
+protected:
+    bool try_parse_key(const char* begin, const char* end, const char* key, const char** val_begin, const char** val_end);
+    bool try_parse_key(const char* begin, const char* end, const char* key, int* val);
 };
 
 }

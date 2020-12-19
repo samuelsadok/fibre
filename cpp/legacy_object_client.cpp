@@ -231,10 +231,10 @@ std::vector<LegacyFibreArg> parse_arglist(const json_value& list_val) {
     return arglist;
 }
 
-void LegacyObjectClient::start(Completer<LegacyObjectClient*, std::shared_ptr<LegacyObject>>& on_found_root_object, Completer<LegacyObjectClient*>& on_lost_root_object) {
+void LegacyObjectClient::start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*> on_lost_root_object) {
     FIBRE_LOG(D) << "start";
-    on_found_root_object_ = &on_found_root_object;
-    on_lost_root_object_ = &on_lost_root_object;
+    on_found_root_object_ = on_found_root_object;
+    on_lost_root_object_ = on_lost_root_object;
     json_.clear();
     receive_more_json();
 }
@@ -392,7 +392,7 @@ void LegacyObjectClient::on_received_json(EndpointOperationResult result) {
         root_obj_ = load_object(val);
         json_crc_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(PROTOCOL_VERSION, json_.data(), json_.size());
         if (root_obj_) {
-            safe_complete(on_found_root_object_, this, root_obj_);
+            on_found_root_object_.invoke_and_clear(this, root_obj_);
         }
     }
 }

@@ -26,22 +26,65 @@ In particular:
 
 ## Platform Compatibility
 
-Fibre can be compiled for all kinds of platforms and use all kinds of transport providers. But to make life simple, `libfibre` already has built-in support for a couple of platforms and transport layers:
+Fibre can be compiled for many of platforms and work on many kinds of transport layers. But to make life simple Fibre already ships with built-in support for a couple of backends which can be enabled/disabled selectively. The [official precompiled binaries](https://github.com/samuelsadok/fibre/releases) (and by extension all language bindings) have all available backends enabled. These backends are available:
 
-|     | Windows      | macOS [1]    | Linux        | Web [2]      |
-|-----|--------------|--------------|--------------|--------------|
-| USB | yes (libusb) | yes (libusb) | yes (libusb) | yes (WebUSB) |
+|                           | Windows      | macOS [1]    | Linux        | Web [2]      |
+|---------------------------|--------------|--------------|--------------|--------------|
+| USB (`usb`)               | yes (libusb) | yes (libusb) | yes (libusb) | yes (WebUSB) |
+| TCP client (`tcp-server`) | no           | no           | yes          | no           |
+| TCP server (`tcp-client`) | no           | no           | yes          | no           |
 
  - [1] macOS 10.9 (Mavericks) or later
  - [2] see [fibre-js](js/README.md)
 
+## Channel Specs
+
+When discovering objects and publishing objects, the caller usually specifies which backends to discover/publish on. This is specified through a channel spec string.
+
+The channel spec string has the form `backend1:key1=val1,key2=val2;backend2:key1=val1,key2=val2;backend3`. The following sections describe the available backends and the arguments they support. Integers can be in decimal as well as hexadecimal notation (`0x1234`).
+
+### `usb`
+
+**Compile option:** `FIBRE_ENABLE_LIBUSB_BACKEND`
+
+**Parameters:**
+
+ - `bus` (int): Only accept devices on this bus number.
+ - `address` (int): Only accept the USB device with this device address. The device address usually changes when the device is replugged.
+ - `idVendor` (int): Only accept devices with this Vendor ID.
+ - `idProduct` (int): Only accept devices with this Product ID.
+ - `bInterfaceClass` (int): The interface class of the compatible interface or interface association.
+ - `bInterfaceSubClass` (int): The interface subclass of the compatible interface or interface association.
+ - `bInterfaceProtocol` (int): The protocol of the compatible interface or interface association.
+
+Omitted parameters are ignored during filtering.
+
+**Example:** `usb:idVendor=0x1209,idVendor=0x0d32` looks for channels on USB devices with VID:PID 1209:0d32.
+
+### `tcp-client`
+
+ - `address` (string): The IP address or hostname of the remote server to connect to.
+ - `port` (int): The port on which to connect.
+
+### `tcp-server`
+
+ - `address` (string): The IP address of the local server on which to listen.
+ - `port` (int): The port on which to listen.
+
+### `serial`
+
+ - `path` (int): The name or path of the serial port. On Unix systems this is usually something like `/dev/ttyACM0` and on Windows something like `COM1`.
+
+**Example:** `serial:path=/dev/ttyACM0` looks for channels on the serial port /dev/ttyACM0.
+
 ## Implementations
 
- * **C/C++**: See [fibre-cpp](cpp/README.md).
+ * **C++**: See [fibre-cpp](cpp/README.md).
+ * **C**: See [fibre-cpp](cpp/README.md), specifically `libfibre.h`.
  * **Python**: See [PyFibre](python/README.md).
  * **JavaScript**: See [fibre-js](js/README.md).
 
-Under the hood all language-specific implementations just bind to the C/C++ implementation which we provide as a precompiled library `libfibre`.
+Under the hood all language-specific implementations bind to the C++ implementation which we provide as a [precompiled library](https://github.com/samuelsadok/fibre/releases) `libfibre`.
 
 ## Adding Fibre to your project
 

@@ -74,14 +74,29 @@ definitions:
       - type: 'null'
       - type: object
         properties:
-          in: {type: object}
-          out: {type: object}
+          in: {"$ref": "#/definitions/argList"}
+          out: {"$ref": "#/definitions/argList"}
           brief: {type: string}
           doc: {type: string}
           __line__: {type: object}
           __column__: {type: object}
         additionalProperties: false
 
+  argList:
+    type: object
+    additionalProperties: { "$ref": "#/definitions/arg" }
+
+  arg:
+    anyOf:
+      - type: object
+        properties:
+          doc: {"type": string}
+          type: {"$ref": "#/definitions/valuetyperef"}
+        additionalProperties: false
+      - {"$ref": "#/definitions/valuetyperef"}
+
+  valuetyperef:
+    type: string
 
 type: object
 properties:
@@ -197,24 +212,24 @@ def make_ref_type(interface):
 def get_dict(elem, key):
     return elem.get(key, None) or OrderedDict()
 
-def regularize_arg(path, name, elem):
-    if elem is None:
-        elem = {}
-    elif isinstance(elem, str):
-        elem = {'type': elem}
-    elem['name'] = name
-    elem['fullname'] = path = join_name(path, name)
-    elem['type'] = regularize_valuetype(path, name, elem['type'])
-    return elem
+class ArgumentElement():
+    def __init__(self, path, name, elem):
+        if elem is None:
+            elem = {}
+        elif isinstance(elem, str):
+            elem = {'type': elem}
+        self.name = name
+        self.fullname = path = join_name(path, name)
+        self.type = regularize_valuetype(path, name, elem['type'])
 
 def regularize_func(path, name, elem, prepend_args):
     if elem is None:
         elem = {}
     elem['name'] = name
     elem['fullname'] = path = join_name(path, name)
-    elem['in'] = OrderedDict((n, regularize_arg(path, n, arg))
+    elem['in'] = OrderedDict((n, ArgumentElement(path, n, arg))
                              for n, arg in (*prepend_args.items(), *get_dict(elem, 'in').items()))
-    elem['out'] = OrderedDict((n, regularize_arg(path, n, arg))
+    elem['out'] = OrderedDict((n, ArgumentElement(path, n, arg))
                               for n, arg in get_dict(elem, 'out').items())
     return elem
 
@@ -506,15 +521,15 @@ def generate_endpoint_table(intf, bindto, idx):
         out_def = []
         for i, (k_arg, arg) in enumerate(list(func['in'].items())[1:]):
             endpoint, endpoint_definition = generate_endpoint_for_property({
-                'name': arg['name'],
-                'type': make_property_type({'fibre.Property.type': arg['type'], 'fibre.Property.mode': 'readwrite'})
+                'name': arg.name,
+                'type': make_property_type({'fibre.Property.type': arg.type, 'fibre.Property.mode': 'readwrite'})
             }, intf.c_name + '::get_' + func['name'] + '_in_' + k_arg + '_' + '(' + bindto + ')', idx + cnt + 1 + i)
             endpoints.append(endpoint)
             in_def.append(endpoint_definition)
         for i, (k_arg, arg) in enumerate(func['out'].items()):
             endpoint, endpoint_definition = generate_endpoint_for_property({
-                'name': arg['name'],
-                'type': make_property_type({'fibre.Property.type': arg['type'], 'fibre.Property.mode': 'readonly'})
+                'name': arg.name,
+                'type': make_property_type({'fibre.Property.type': arg.type, 'fibre.Property.mode': 'readonly'})
             }, intf.c_name + '::get_' + func['name'] + '_out_' + k_arg + '_' + '(' + bindto + ')', idx + cnt + len(func['in']) + i)
             endpoints.append(endpoint)
             out_def.append(endpoint_definition)
@@ -606,9 +621,9 @@ for _, item in list(interfaces.items()):
         prop['type'] = prop['type'].resolve()
     for _, func in item.functions.items():
         for _, arg in func['in'].items():
-            arg['type'] = resolve_valuetype(item.fullname, arg['type'])
+            arg.type = resolve_valuetype(item.fullname, arg.type)
         for _, arg in func['out'].items():
-            arg['type'] = resolve_valuetype(item.fullname, arg['type'])
+            arg.type = resolve_valuetype(item.fullname, arg.type)
 
 # Attach interfaces to their parents
 toplevel_interfaces = []

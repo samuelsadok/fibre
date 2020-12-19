@@ -3,7 +3,6 @@
 
 //#include "legacy_protocol.hpp"
 #include "async_stream.hpp"
-#include <fibre/libfibre.h>
 #include <unordered_map>
 #include <vector>
 #include <memory>
@@ -121,12 +120,12 @@ class LegacyObjectClient {
 public:
     LegacyObjectClient(LegacyProtocolPacketBased* protocol) : protocol_(protocol) {}
 
-    void start(Completer<LegacyObjectClient*, std::shared_ptr<LegacyObject>>& on_found_root_object, Completer<LegacyObjectClient*>& on_lost_root_object);
+    void start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*> on_lost_root_object);
     bool transcode(cbufptr_t src, bufptr_t dst, std::string src_codec, std::string dst_codec);
 
     // For direct access by LegacyProtocolPacketBased and libfibre.cpp
     uint16_t json_crc_ = 0;
-    Completer<LegacyObjectClient*>* on_lost_root_object_;
+    Callback<void, LegacyObjectClient*> on_lost_root_object_;
     std::shared_ptr<LegacyObject> root_obj_;
     std::vector<std::shared_ptr<LegacyObject>> objects_;
     void* user_data_; // used by libfibre to store the libfibre context pointer
@@ -138,7 +137,7 @@ private:
     void receive_more_json();
     void on_received_json(EndpointOperationResult result);
 
-    Completer<LegacyObjectClient*, std::shared_ptr<LegacyObject>>* on_found_root_object_;
+    Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object_;
     uint8_t tx_buf_[4] = {0xff, 0xff, 0xff, 0xff};
     EndpointOperationHandle op_handle_ = 0;
     std::vector<uint8_t> json_;

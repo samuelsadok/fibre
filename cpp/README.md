@@ -12,6 +12,18 @@ _Note:_ Libfibre's API currently only exposes the client role, not the server ro
 
 _Note:_ fibre-cpp makes use of dynamic memory if and only if the client role is used (this limitation might be lifted at some point).
 
+## How to compile
+
+ - `FIBRE_ENABLE_SERVER={0|1}` (_default 0_): Enable support for exposing objects to remote peers.
+ - `FIBRE_ENABLE_CLIENT={0|1}` (_default 0_): Enable support for discovering and using objects exposed by remote peers.
+ - `FIBRE_ENABLE_EVENT_LOOP={0|1}` (_default 0_): Enable the builtin event loop implementation. Not supported on all platforms.
+ - `FIBRE_ALLOW_HEAP={0|1}` (_default 0_): Allow Fibre to allocate memory on the heap using `malloc` and `free`. If this option is disabled only one Fibre instance can be opened.
+ - `FIBRE_MAX_LOG_VERBOSITY={0...5}` (_default 5_): The maximum log verbosity that will be compiled into the binary. In embedded systems it's recommended to set this to 0 to reduce binary size. On platforms that support environment variables the actual run time log verbosity can be changed by setting the environment variable `FIBRE_LOG={0...5}`.
+ - `FIBRE_DEFAULT_LOG_VERBOSITY={0...5}` (_default 5_): The default log verbosity that will be used unless overridden by other means (for instance through the environment variables).
+ - `FIBRE_ENABLE_LIBUSB_BACKEND={0|1}` (_default 0_): Enable libusb backend for host side USB support. This requires `FIBRE_ALLOC_HEAP=1`.
+ - `FIBRE_ENABLE_TCP_CLIENT_BACKEND={0|1}` (_default 0_): Enable TCP client backend. This requires `FIBRE_ALLOC_HEAP=1`.
+ - `FIBRE_ENABLE_TCP_SERVER_BACKEND={0|1}` (_default 0_): Enable TCP server backend. This requires `FIBRE_ALLOC_HEAP=1`.
+
 ## How to embed
 
 Refer to

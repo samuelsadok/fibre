@@ -116,11 +116,11 @@ public: // these should technically be protected but are public for optimization
 };
 
 template<typename T> T& TypeInfo::as(Introspectable& obj) {
-    static_assert(sizeof(T) <= sizeof(obj.storage_));
+    static_assert(sizeof(T) <= sizeof(obj.storage_), "invalid size");
     return *(T*)&obj.storage_;
 }
 template<typename T> const T& TypeInfo::as(const Introspectable& obj) {
-    static_assert(sizeof(T) <= sizeof(obj.storage_));
+    static_assert(sizeof(T) <= sizeof(obj.storage_), "invalid size");
     return *(const T*)&obj.storage_;
 }
 template<typename T> Introspectable TypeInfo::make_introspectable(T obj, const TypeInfo* type_info) {

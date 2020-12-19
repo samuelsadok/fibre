@@ -5,13 +5,58 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch fibre-shell",
+            "name": "fibre-shell",
             "type": "cppdbg",
             "request": "launch",
             "program": "/usr/bin/python",
             "args": ["${workspaceFolder}/tools/fibre-shell"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
+            "environment": [{"name": "FIBRE_LOG", "value": "5"}],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "symbolLoadInfo": {
+                "loadAll": true,
+                "exceptionList": ""
+            }
+        },
+        {
+            "name": "Python Test Client",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/python",
+            "args": ["${workspaceFolder}/test/test_client.py"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [{"name": "FIBRE_LOG", "value": "5"}],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "symbolLoadInfo": {
+                "loadAll": true,
+                "exceptionList": ""
+            }
+        },
+        {
+            "name": "C++ Test Server",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/test/test_server.elf",
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/test",
             "environment": [{"name": "FIBRE_LOG", "value": "5"}],
             "externalConsole": false,
             "MIMode": "gdb",

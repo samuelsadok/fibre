@@ -1,0 +1,26 @@
+---
+version:  0.0.1
+ns:       fibre
+summary:  Fibre Test Interface
+
+interfaces:
+  TestIntf1:
+    c_is_class: True
+    brief: Toplevel interface of the test service.
+    #attributes:
+    #  prop_int8: uint8
+    #  prop_uint8: uint8
+    #  prop_int16: uint8
+    #  prop_uint16: uint8
+    #  prop_int32: uint8
+    #  prop_uint32: uint8
+    functions:
+      func00:
+      #func01: {out: {out1: uint32}}
+      #func02: {out: {out1: uint32, out2: uint32}}
+      #func10: {in: {in1: uint32}}
+      #func11: {in: {in1: uint32}, out: {out1: uint32}}
+      #func12: {in: {in1: uint32}, out: {out1: uint32, out2: uint32}}
+      #func20: {in: {in1: uint32, in2: uint32}}
+      #func21: {in: {in1: uint32, in2: uint32}, out: {out1: uint32}}
+      #func22: {in: {in1: uint32, in2: uint32}, out: {out1: uint32, out2: uint32}}

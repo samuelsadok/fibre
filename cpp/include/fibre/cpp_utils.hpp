@@ -521,6 +521,11 @@ optional<T> make_optional(T&& val) {
     return optional<T>{std::forward<T>(val)};
 }
 
+template<typename T>
+optional<T> make_optional(T& val) {
+    return optional<T>{val};
+}
+
 } // namespace std
 
 #endif

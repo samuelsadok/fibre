@@ -1,58 +1,44 @@
 
 #include <stdio.h>
 #include <unistd.h>
-#include <thread>
-#include <signal.h>
+#include <iostream>
 
 #include <fibre/fibre.hpp>
-#include <fibre/posix_tcp.hpp>
-#include <fibre/posix_udp.hpp>
 
+#include "autogen/interfaces.hpp" // TODO: remove this include
 
-class TestClass {
+class TestClass : public TestIntf1Intf {
 public:
-    float property1;
-    float property2;
-
-    float set_both(float arg1, float arg2) {
-        property1 = arg1;
-        property2 = arg2;
-        return property1 + property2;
+    void func00() {
+        std::cout << "func00 called" << std::endl;
     }
-
-    FIBRE_EXPORTS(TestClass,
-        make_fibre_property("property1", &property1),
-        make_fibre_property("property2", &property2),
-        make_fibre_function("set_both", *obj, &TestClass::set_both, "arg1", "arg2")
-    );
+    uint32_t func01() {
+        std::cout << "func01 called" << std::endl;
+        return 123;
+    }
 };
 
-/*FIBRE_EXPORT_TYPE(float);
-FIBRE_EXPORT_TYPE(TestClass,
-    FIBRE_PROPERTY(property1),
-    FIBRE_PROPERTY(property2)
-    //FIBRE_FUNCTION(set_both, "arg1", "arg2")
-);*/
+TestClass test_object;
 
 int main() {
     printf("Starting Fibre server...\n");
 
-    TestClass test_object = TestClass();
+    bool ok = fibre::launch_event_loop([](fibre::EventLoop* event_loop) {
+        printf("Hello from event loop...\n");
+        auto fibre_ctx = fibre::open(event_loop);
+        //fibre_ctx->create_domain("tcp-client:address=innovation-labs.appinstall.ch,port=3214");
+        fibre_ctx->create_domain("tcp-server:address=localhost,port=14220");
+        //fibre::publish(test_object, "tcp-server:address=localhost,port=14220");
+    });
 
-    // publish the object on Fibre
-    auto definitions = test_object.fibre_definitions;
-    fibre_publish(definitions);
+    printf("test server terminated %s\n", ok ? "nominally" : "with an error");
 
-    // Expose Fibre objects on TCP and UDP
-    std::thread server_thread_tcp(serve_on_tcp, 9910);
-    std::thread server_thread_udp(serve_on_udp, 9910);
-    printf("Fibre server started.\n");
-
-    // Dump property1 value
-    while (1) {
-        printf("test_object.property1: %f\n", test_object.property1);
-        usleep(1000000 / 5); // 5 Hz
-    }
-
-    return 0;
+    return ok ? 0 : 1;
 }
+
+
+#include <fibre/crc.hpp>
+#include <fibre/protocol.hpp>
+#include "autogen/function_stubs.hpp"
+TestClass& ep_root = test_object;
+#include "autogen/endpoints.hpp"

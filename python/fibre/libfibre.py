@@ -66,15 +66,14 @@ lib = windll.LoadLibrary(lib_path) if os.name == 'nt' else cdll.LoadLibrary(lib_
 
 # libfibre definitions --------------------------------------------------------#
 
-PostSignature = CFUNCTYPE(c_void_p, CFUNCTYPE(None, c_void_p), POINTER(c_int))
-RegisterEventSignature = CFUNCTYPE(c_int, c_int, c_uint32, CFUNCTYPE(None, c_void_p), POINTER(c_int))
+PostSignature = CFUNCTYPE(c_int, CFUNCTYPE(None, c_void_p), POINTER(c_int))
+RegisterEventSignature = CFUNCTYPE(c_int, c_int, c_uint32, CFUNCTYPE(None, c_void_p, c_int), POINTER(c_int))
 DeregisterEventSignature = CFUNCTYPE(c_int, c_int)
 CallLaterSignature = CFUNCTYPE(c_void_p, c_float, CFUNCTYPE(None, c_void_p), POINTER(c_int))
 CancelTimerSignature = CFUNCTYPE(c_int, c_void_p)
-ConstructObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p, c_void_p, c_size_t)
-DestroyObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p)
 
-OnFoundObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p)
+OnFoundObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p)
+OnLostObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p)
 OnStoppedSignature = CFUNCTYPE(None, c_void_p, c_int)
 
 OnAttributeAddedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p, c_size_t, c_void_p, c_void_p, c_size_t)
@@ -105,6 +104,15 @@ class LibFibreVersion(Structure):
     def __repr__(self):
         return "{}.{}.{}".format(self.major, self.minor, self.patch)
 
+class LibFibreEventLoop(Structure):
+    _fields_ = [
+        ("post", PostSignature),
+        ("register_event", RegisterEventSignature),
+        ("deregister_event", DeregisterEventSignature),
+        ("call_later", CallLaterSignature),
+        ("cancel_timer", CancelTimerSignature),
+    ]
+
 libfibre_get_version = lib.libfibre_get_version
 libfibre_get_version.argtypes = []
 libfibre_get_version.restype = POINTER(LibFibreVersion)
@@ -114,19 +122,27 @@ if (version.major, version.minor) != (0, 1):
     raise Exception("Incompatible libfibre version: {}".format(version))
 
 libfibre_open = lib.libfibre_open
-libfibre_open.argtypes = [PostSignature, RegisterEventSignature, DeregisterEventSignature, CallLaterSignature, CancelTimerSignature, ConstructObjectSignature, DestroyObjectSignature, c_void_p]
+libfibre_open.argtypes = [LibFibreEventLoop]
 libfibre_open.restype = c_void_p
 
 libfibre_close = lib.libfibre_close
 libfibre_close.argtypes = [c_void_p]
 libfibre_close.restype = None
 
+libfibre_open_domain = lib.libfibre_open_domain
+libfibre_open_domain.argtypes = [c_void_p, c_char_p, c_size_t]
+libfibre_open_domain.restype = c_void_p
+
+libfibre_close_domain = lib.libfibre_close_domain
+libfibre_close_domain.argtypes = [c_void_p]
+libfibre_close_domain.restype = None
+
 libfibre_start_discovery = lib.libfibre_start_discovery
-libfibre_start_discovery.argtypes = [c_void_p, c_char_p, c_size_t, c_void_p, OnFoundObjectSignature, OnStoppedSignature, c_void_p]
-libfibre_start_discovery.restype = c_void_p
+libfibre_start_discovery.argtypes = [c_void_p, c_void_p, OnFoundObjectSignature, OnLostObjectSignature, OnStoppedSignature, c_void_p]
+libfibre_start_discovery.restype = None
 
 libfibre_stop_discovery = lib.libfibre_stop_discovery
-libfibre_stop_discovery.argtypes = [c_void_p, c_void_p]
+libfibre_stop_discovery.argtypes = [c_void_p]
 libfibre_stop_discovery.restype = None
 
 libfibre_subscribe_to_interface = lib.libfibre_subscribe_to_interface
@@ -140,10 +156,6 @@ libfibre_get_attribute.restype = c_int
 libfibre_call = lib.libfibre_call
 libfibre_call.argtypes = [c_void_p, POINTER(c_void_p), c_int, c_void_p, c_size_t, c_void_p, c_size_t, POINTER(c_void_p), POINTER(c_void_p), OnCallCompletedSignature, c_void_p]
 libfibre_call.restype = c_int
-
-#libfibre_end_call = lib.libfibre_end_call
-#libfibre_end_call.argtypes = [c_void_p]
-#libfibre_end_call.restype = None
 
 libfibre_start_tx = lib.libfibre_start_tx
 libfibre_start_tx.argtypes = [c_void_p, c_char_p, c_size_t, OnTxCompletedSignature, c_void_p]
@@ -258,7 +270,10 @@ def run_coroutine_threadsafe(loop, func):
     future = concurrent.futures.Future()
     async def func_async():
         try:
-            future.set_result(await func())
+            result = func()
+            if hasattr(result, '__await__'):
+                result = await result
+            future.set_result(result)
         except Exception as ex:
             future.set_exception(ex)
     loop.call_soon_threadsafe(asyncio.ensure_future, func_async())
@@ -690,9 +705,8 @@ class LibFibre():
         self.c_deregister_event = DeregisterEventSignature(self._deregister_event)
         self.c_call_later = CallLaterSignature(self._call_later)
         self.c_cancel_timer = CancelTimerSignature(self._cancel_timer)
-        self.c_construct_object = ConstructObjectSignature(self._construct_object)
-        self.c_destroy_object = DestroyObjectSignature(self._destroy_object)
         self.c_on_found_object = OnFoundObjectSignature(self._on_found_object)
+        self.c_on_lost_object = OnLostObjectSignature(self._on_lost_object)
         self.c_on_discovery_stopped = OnStoppedSignature(self._on_discovery_stopped)
         self.c_on_attribute_added = OnAttributeAddedSignature(self._on_attribute_added)
         self.c_on_attribute_removed = OnAttributeRemovedSignature(self._on_attribute_removed)
@@ -707,21 +721,25 @@ class LibFibre():
         self._objects = {} # key: libfibre handle, value: python class
         self._calls = {} # key: libfibre handle, value: Call object
 
-        self.ctx = c_void_p(libfibre_open(
-            self.c_post,
-            self.c_register_event, self.c_deregister_event,
-            self.c_call_later, self.c_cancel_timer,
-            self.c_construct_object, self.c_destroy_object, None))
+        event_loop = LibFibreEventLoop()
+        event_loop.post = self.c_post
+        event_loop.register_event = self.c_register_event
+        event_loop.deregister_event = self.c_deregister_event
+        event_loop.call_later = self.c_call_later
+        event_loop.cancel_timer = self.c_cancel_timer
+
+        self.ctx = c_void_p(libfibre_open(event_loop))
 
     def _post(self, callback, ctx):
         self.loop.call_soon_threadsafe(callback, ctx)
+        return 0
 
     def _register_event(self, event_fd, events, callback, ctx):
         self.eventfd_map[event_fd] = events
         if (events & 1):
-            self.loop.add_reader(event_fd, callback, ctx)
+            self.loop.add_reader(event_fd, lambda x: callback(x, 1), ctx)
         if (events & 4):
-            self.loop.add_writer(event_fd, callback, ctx)
+            self.loop.add_writer(event_fd, lambda x: callback(x, 4), ctx)
         if (events & 0xfffffffa):
             raise Exception("unsupported event mask " + str(events))
         return 0
@@ -760,22 +778,45 @@ class LibFibre():
             libfibre_subscribe_to_interface(intf_handle, self.c_on_attribute_added, self.c_on_attribute_removed, self.c_on_function_added, self.c_on_function_removed, intf_handle)
             return py_intf
 
-    def _construct_object(self, ctx, obj, intf, name, name_length):
-        #increment_libfibre_refcount()
-        name = None if name is None else string_at(name, name_length).decode('utf-8')
-        py_intf = self._load_py_intf(name, intf)
-        assert(not obj in self._objects)
-        self._objects[obj] = py_intf(self, obj)
+    def _load_py_obj(self, obj_handle, intf_handle):
+        if not obj_handle in self._objects:
+            name = None # TODO: load from libfibre
+            py_intf = self._load_py_intf(name, intf_handle)
+            py_obj = py_intf(self, obj_handle)
+            self._objects[obj_handle] = py_obj
+        else:
+            py_obj = self._objects[obj_handle]
+        py_obj._refcount += 1
+        return py_obj
 
-    def _destroy_object(self, ctx, obj):
+    def _release_py_obj(self, obj_handle):
+        py_obj = self._objects[obj_handle]
+        py_obj._refcount -= 1
+        if py_obj.refcount <= 0:
+            self._objects.pop(obj_handle)
+
+    #def _construct_object(self, ctx, obj, intf, name, name_length):
+    #    #increment_lib_refcount()
+    #    name = None if name is None else string_at(name, name_length).decode('utf-8')
+    #    py_intf = self._load_py_intf(name, intf)
+    #    assert(not obj in self._objects)
+    #    self._objects[obj] = py_intf(self, obj)
+
+    def _free_py_obj(self, ctx, obj):
         py_obj = self._objects.pop(obj)
         py_obj._destroy()
         #decrement_lib_refcount()
 
-    def _on_found_object(self, ctx, obj):
-        py_obj = self._objects[obj]
-        # notify the subscriber
-        asyncio.ensure_future(self.discovery_processes[ctx]['callback'](py_obj))
+    def _on_found_object(self, ctx, obj, intf):
+        py_obj = self._load_py_obj(obj, intf)
+        discovery = self.discovery_processes[ctx]
+        discovery._unannounced.append(py_obj)
+        old_future = discovery._future
+        discovery._future = self.loop.create_future()
+        old_future.set_result(None)
+    
+    def _on_lost_object(self, ctx, obj):
+        self._free_py_obj(obj)
     
     def _on_discovery_stopped(self, ctx, result):
         print("discovery stopped")
@@ -812,23 +853,96 @@ class LibFibre():
 
         return kFibreBusy
 
-    def start_discovery(self, path, on_obj_discovered, cancellation_token):
+#    def start_discovery(self, path, on_obj_discovered, cancellation_token):
+#        buf = path.encode('ascii')
+#
+#        discovery = {
+#            'domain_handle': c_void_p(0),
+#            'handle': c_void_p(0),
+#            'callback': on_obj_discovered
+#        }
+#        discovery_id = insert_with_new_id(self.discovery_processes, discovery)
+#
+#        def stop_discovery():
+#            libfibre_stop_discovery(discovery['handle'])
+#            print("closing domain")
+#            
+#
+#            print("ok   ")
+#        cancellation_token.subscribe(lambda: stop_discovery)
+#
+#        discovery['domain_handle'] = libfibre_open_domain(self.ctx, buf, len(buf))
+#        assert(discovery['domain_handle'])
+#        libfibre_start_discovery(discovery['domain_handle'], byref(discovery['handle']), self.c_on_found_object, self.c_on_lost_object, self.c_on_discovery_stopped, discovery_id)
+#        print("disc handle ", hex(discovery['handle'].value))
+#
+
+class Discovery():
+    def __init__(self, domain):
+        self._domain = domain
+        self._id = 0
+        self._discovery_handle = c_void_p(0)
+        self._unannounced = []
+        self._future = domain._libfibre.loop.create_future()
+
+    async def _next(self):
+        if len(self._unannounced) == 0:
+            await self._future
+        return self._unannounced.pop(0)
+
+    def _stop(self):
+        self._domain._libfibre.discovery_processes.pop(self._id)
+        libfibre_stop_discovery(self._discovery_handle)
+
+class _Domain():
+    def __init__(self, libfibre, handle):
+        self._libfibre = libfibre
+        self._domain_handle = handle
+
+    def _close(self):
+        libfibre_close_domain(self._domain_handle)
+        self._domain_handle = None
+        #decrement_lib_refcount()
+
+    def _start_discovery(self):
+        discovery = Discovery(self)
+        discovery._id = insert_with_new_id(self._libfibre.discovery_processes, discovery)
+        libfibre_start_discovery(self._domain_handle, byref(discovery._discovery_handle), self._libfibre.c_on_found_object, self._libfibre.c_on_lost_object, self._libfibre.c_on_discovery_stopped, discovery._id)
+        return discovery
+
+    async def _discover_one(self):
+        discovery = self._start_discovery()
+        obj = await discovery._next()
+        discovery._stop()
+        return obj
+
+    def discover_one(self):
+        return run_coroutine_threadsafe(self._libfibre.loop, self._discover_one)
+
+
+
+class Domain():
+    def __init__(self, path):
+        increment_lib_refcount()
+        self._opened_domain = run_coroutine_threadsafe(libfibre.loop, lambda: Domain._open(path))
+        
+    def _open(path):
+        assert(libfibre_thread == threading.current_thread())
         buf = path.encode('ascii')
+        domain_handle = libfibre_open_domain(libfibre.ctx, buf, len(buf))
+        return _Domain(libfibre, domain_handle)
 
-        discovery = {
-            'handle': c_void_p(0),
-            'callback': on_obj_discovered
-        }
-        discovery_id = insert_with_new_id(self.discovery_processes, discovery)
+    def __enter__(self):
+        return self._opened_domain
 
-        cancellation_token.subscribe(lambda: libfibre_stop_discovery(self.ctx, discovery['handle']))
-        libfibre_start_discovery(self.ctx, buf, len(buf), byref(discovery['handle']), self.c_on_found_object, self.c_on_discovery_stopped, discovery_id)
-
-
+    def __exit__(self, type, value, traceback):
+        run_coroutine_threadsafe(self._opened_domain._libfibre.loop, self._opened_domain._close)
+        self._opened_domain = None
+        decrement_lib_refcount()
 
 libfibre = None
 
-def run_event_loop():
+def _run_event_loop():
     global libfibre
     global terminate_libfibre
 
@@ -859,7 +973,7 @@ lock = threading.Lock()
 libfibre_refcount = 0
 libfibre_thread = None
 
-def increment_libfibre_refcount():
+def increment_lib_refcount():
     global libfibre_refcount
     global libfibre_thread
 
@@ -868,7 +982,7 @@ def increment_libfibre_refcount():
         #print("inc refcount to {}".format(libfibre_refcount))
 
         if libfibre_refcount == 1:
-            libfibre_thread = threading.Thread(target = run_event_loop)
+            libfibre_thread = threading.Thread(target = _run_event_loop)
             libfibre_thread.start()
 
         while libfibre is None:
@@ -893,36 +1007,35 @@ def decrement_lib_refcount():
             libfibre_thread = None
 
 
-def start_discovery(path, obj_filter,
-         on_object_discovered,
-         search_cancellation_token,
-         channel_termination_token,
-         logger):
-    """
-    Starts scanning for Fibre objects that match the specified path spec and calls
-    the callback for each Fibre object that is found.
-
-    This function is non-blocking and thread-safe.
-    """
-
-    async def on_object_discovered_filter(obj):
-        increment_libfibre_refcount()
-        if not channel_termination_token is None:
-            channel_termination_token.subscribe(lambda: decrement_lib_refcount())
-        if await obj_filter(obj):
-            result = on_object_discovered(obj)
-            if not result is None:
-                await result
-        elif not channel_termination_token is None:
-            channel_termination_token.set()
-    
-    increment_libfibre_refcount()
-    search_cancellation_token.subscribe(lambda: decrement_lib_refcount())
-
-    libfibre.loop.call_soon_threadsafe(lambda: libfibre.start_discovery(
-        path,
-        on_object_discovered_filter,
-        search_cancellation_token))
+#def start_discovery(path, obj_filter,
+#         on_object_discovered,
+#         search_cancellation_token,
+#         channel_termination_token):
+#    """
+#    Starts scanning for Fibre objects that match the specified path spec and calls
+#    the callback for each Fibre object that is found.
+#
+#    This function is non-blocking and thread-safe.
+#    """
+#
+#    async def on_object_discovered_filter(obj):
+#        increment_lib_refcount()
+#        if not channel_termination_token is None:
+#            channel_termination_token.subscribe(lambda: decrement_lib_refcount())
+#        if await obj_filter(obj):
+#            result = on_object_discovered(obj)
+#            if not result is None:
+#                await result
+#        elif not channel_termination_token is None:
+#            channel_termination_token.set()
+#    
+#    increment_lib_refcount()
+#    search_cancellation_token.subscribe(lambda: decrement_lib_refcount())
+#
+#    libfibre.loop.call_soon_threadsafe(lambda: libfibre.start_discovery(
+#        path,
+#        on_object_discovered_filter,
+#        search_cancellation_token))
 
 
 def get_user_name(obj):
