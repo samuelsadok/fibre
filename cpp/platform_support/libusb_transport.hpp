@@ -2,8 +2,8 @@
 #define __FIBRE_USB_DISCOVERER_HPP
 
 #include <fibre/event_loop.hpp>
-#include "../async_stream.hpp"
-#include "../channel_discoverer.hpp"
+#include <fibre/async_stream.hpp>
+#include <fibre/channel_discoverer.hpp>
 
 #include <libusb.h>
 #include <thread>

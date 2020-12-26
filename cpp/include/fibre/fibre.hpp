@@ -5,7 +5,7 @@
 #include <fibre/bufptr.hpp>
 #include <fibre/cpp_utils.hpp>
 #include <fibre/event_loop.hpp>
-#include <fibre/../../channel_discoverer.hpp>
+#include <fibre/channel_discoverer.hpp>
 #include <string>
 #include <memory>
 

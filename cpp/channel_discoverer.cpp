@@ -1,5 +1,5 @@
 
-#include "channel_discoverer.hpp"
+#include <fibre/channel_discoverer.hpp>
 #include <string.h>
 #include <stdio.h>
 #include <algorithm>

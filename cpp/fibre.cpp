@@ -1,7 +1,7 @@
 
 #include <fibre/fibre.hpp>
 #include "logging.hpp"
-#include "channel_discoverer.hpp"
+#include <fibre/channel_discoverer.hpp>
 #include "legacy_protocol.hpp"
 #include "print_utils.hpp"
 #include <memory>

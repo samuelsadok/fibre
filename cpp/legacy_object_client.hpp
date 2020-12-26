@@ -1,8 +1,7 @@
 #ifndef __FIBRE_LEGACY_OBJECT_MODEL_HPP
 #define __FIBRE_LEGACY_OBJECT_MODEL_HPP
 
-//#include "legacy_protocol.hpp"
-#include "async_stream.hpp"
+#include <fibre/async_stream.hpp>
 #include <unordered_map>
 #include <vector>
 #include <memory>

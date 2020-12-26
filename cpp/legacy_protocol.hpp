@@ -1,7 +1,7 @@
 #ifndef __FIBRE_LEGACY_PROTOCOL_HPP
 #define __FIBRE_LEGACY_PROTOCOL_HPP
 
-#include "async_stream.hpp"
+#include <fibre/async_stream.hpp>
 
 #ifdef FIBRE_ENABLE_CLIENT
 #include "legacy_object_client.hpp"

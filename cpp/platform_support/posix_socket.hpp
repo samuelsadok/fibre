@@ -6,7 +6,7 @@
 #include <string>
 #include <fibre/cpp_utils.hpp>
 #include <fibre/bufptr.hpp>
-#include <../async_stream.hpp>
+#include <fibre/async_stream.hpp>
 
 namespace fibre {
 

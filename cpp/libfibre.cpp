@@ -1,16 +1,11 @@
 
 #include <fibre/libfibre.h>
+#include <fibre/fibre.hpp>
 #include "logging.hpp"
 #include "print_utils.hpp"
-#include "legacy_protocol.hpp"
-#include "legacy_object_client.hpp"
-#include <fibre/event_loop.hpp>
-#include "channel_discoverer.hpp"
-#include "string.h"
+#include "legacy_protocol.hpp" // TODO: remove this include
+#include "legacy_object_client.hpp" // TODO: remove this include
 #include <algorithm>
-#include "fibre/simple_serdes.hpp"
-#include "fibre/callback.hpp"
-
 
 DEFINE_LOG_TOPIC(LIBFIBRE);
 USE_LOG_TOPIC(LIBFIBRE);

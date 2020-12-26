@@ -2,11 +2,11 @@
 
 #include "legacy_protocol.hpp"
 
-#include <fibre/protocol.hpp>
-#include <fibre/crc.hpp>
+#include "protocol.hpp"
+#include "crc.hpp"
 #include "logging.hpp"
 #include "print_utils.hpp"
-#include "async_stream.hpp"
+#include <fibre/async_stream.hpp>
 #include <memory>
 #include <stdlib.h>
 

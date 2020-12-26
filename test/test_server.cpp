@@ -37,8 +37,8 @@ int main() {
 }
 
 
-#include <fibre/crc.hpp>
-#include <fibre/protocol.hpp>
+#include <fibre/../../crc.hpp>
+#include <fibre/../../protocol.hpp>
 #include "autogen/function_stubs.hpp"
 TestClass& ep_root = test_object;
 #include "autogen/endpoints.hpp"

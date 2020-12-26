@@ -3,8 +3,7 @@
 
 #include <fibre/event_loop.hpp>
 #include "posix_socket.hpp"
-//#include "../async_stream.hpp"
-#include "../channel_discoverer.hpp"
+#include <fibre/channel_discoverer.hpp>
 #include <string>
 #include <netdb.h>
 
