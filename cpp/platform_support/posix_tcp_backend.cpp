@@ -2,9 +2,7 @@
 #include "posix_tcp_backend.hpp"
 #include "posix_socket.hpp"
 #include "../logging.hpp"
-#include <sys/signalfd.h>
 #include <signal.h>
-#include <sys/epoll.h>
 #include <unistd.h>
 #include <algorithm>
 #include <string.h>

@@ -11,27 +11,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-16.04, ubuntu-latest, windows-latest, macOS-latest]
+        include:
+          - {os: ubuntu-latest, target: local}
 
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
-
-      - name: Compile
-        run: |
-          tup init
-          tup generate ./tup_build.sh
-          ./tup_build.sh
+      - uses: ./.github/actions/compile
+        with:
+          target: ${{ matrix.local }}
 
   formatting:
     strategy:
       fail-fast: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04 # need a recent clang-format
     steps:
       - uses: actions/checkout@v2
 
       - name: Check C++ Formatting
         run: |
+          clang-format --version
           # TODO: we run this only on one file for now until we have it properly configured
           clang-format -style=file --Werror --dry-run test/test_server.cpp
 

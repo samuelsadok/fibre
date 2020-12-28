@@ -4,20 +4,6 @@ tup.include('package.lua')
 CFLAGS = {'-fPIC -std=c++11 -DFIBRE_COMPILE'}
 LDFLAGS = {'-static-libstdc++'}
 
--- Runs the specified shell command immediately (not as part of the dependency
--- graph).
--- Returns the values (return_code, stdout) where stdout has the trailing new
--- line removed.
-function run_now(command)
-    local handle
-    handle = io.popen(command)
-    local output = handle:read("*a")
-    local rc = {handle:close()}
-    if not rc[1] then
-        error("failed to invoke "..command)
-    end
-    return string.sub(output, 0, -2)
-end
 
 if tup.getconfig("CC") == "" then
     CXX = 'clang++'
@@ -95,7 +81,7 @@ pkg = get_fibre_package({
     enable_tcp_client_backend=get_bool_config("ENABLE_TCP_CLIENT_BACKEND", true),
     enable_libusb_backend=get_bool_config("ENABLE_LIBUSB_BACKEND", true),
     allow_heap=true,
-    use_pkgconf=get_bool_config("USE_PKGCONF", true)
+    use_pkgconf=get_bool_config("USE_PKGCONF", nil)
 })
 
 CFLAGS += pkg.cflags
