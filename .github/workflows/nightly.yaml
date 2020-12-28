@@ -1,9 +1,9 @@
 name: Nightly Releases
 
 # TODO: use schedule
-on:
-  push:
-    branches: []
+#on:
+#  push:
+#    branches: []
 
 jobs:
   create_release:
