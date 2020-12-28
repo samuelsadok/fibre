@@ -1,0 +1,22 @@
+---
+BasedOnStyle: Google
+IndentWidth: 4
+
+AccessModifierOffset: -4
+
+#AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Empty
+DerivePointerAlignment: false
+SpaceAfterTemplateKeyword: false
+AlwaysBreakTemplateDeclarations: No
+
+IncludeBlocks: Merge
+IncludeCategories:
+  - Regex:           '^"'
+    Priority:        1
+  - Regex:           '^(<|")fibre/'
+    Priority:        2
+  - Regex:           '<[[:alnum:].]+>'
+    Priority:        4
+  - Regex:           '.*'
+    Priority:        3

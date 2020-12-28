@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [master, devel]
+  push:
+    branches: [master, devel]
+
+jobs:
+  compile:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-16.04, ubuntu-latest, windows-latest, macOS-latest]
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Compile
+        run: |
+          tup init
+          tup generate ./tup_build.sh
+          ./tup_build.sh
+
+  formatting:
+    strategy:
+      fail-fast: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Check C++ Formatting
+        run: |
+          # TODO: we run this only on one file for now until we have it properly configured
+          clang-format -style=file --Werror --dry-run test/test_server.cpp
+
+  #    TODO: check if interface_generator outputs the same thing with Python 3.5 and Python 3.8
