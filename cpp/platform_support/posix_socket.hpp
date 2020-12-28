@@ -162,32 +162,12 @@ private:
     Callback<void, WriteResult> tx_callback_; // valid while there is a TX request pending
 };
 
-/**
- * @brief Tag type to print the last socket error.
- * 
- * This is very similar to sys_err(), except that on Windows it uses
- * WSAGetLastError() instead of `errno` to fetch the last error code.
- */
-struct sock_err {
-    sock_err() :
-#if defined(_WIN32) || defined(_WIN64)
-        error_number(WSAGetLastError()) {}
-#else
-        error_number(errno) {}
-#endif
-
-    sock_err(int error_number) : error_number(error_number) {}
-
-    int error_number;
-};
-
 }
 
 #include <iostream>
 
 namespace std {
 std::ostream& operator<<(std::ostream& stream, const struct sockaddr_storage& val);
-std::ostream& operator<<(std::ostream& stream, const fibre::sock_err&);
 }
 
 #endif // __FIBRE_POSIX_SOCKET_HPP
