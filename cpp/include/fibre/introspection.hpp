@@ -10,7 +10,7 @@
 
 class TypeInfo;
 class Introspectable;
-using introspectable_storage_t = std::aligned_storage<16, 4>::type;
+using introspectable_storage_t = std::aligned_storage<4 * sizeof(uintptr_t), sizeof(uintptr_t)>::type;
 
 struct PropertyInfo {
     const char * name;

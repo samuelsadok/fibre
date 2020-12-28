@@ -7,6 +7,9 @@
 
 class TestClass : public TestIntf1Intf {
 public:
+    uint32_t prop_uint32_;
+    uint32_t prop_uint32_rw_;
+
     void func00() {
         std::cout << "func00 called" << std::endl;
     }
@@ -14,6 +17,39 @@ public:
     uint32_t func01() {
         std::cout << "func01 called" << std::endl;
         return 123;
+    }
+
+    std::tuple<uint32_t, uint32_t> func02() {
+        std::cout << "func02 called" << std::endl;
+        return {123, 123};
+    }
+
+    void func10(uint32_t) {
+        std::cout << "func10 called" << std::endl;
+    }
+
+    uint32_t func11(uint32_t) {
+        std::cout << "func11 called" << std::endl;
+        return 123;
+    }
+
+    std::tuple<uint32_t, uint32_t> func12(uint32_t) {
+        std::cout << "func12 called" << std::endl;
+        return {123, 123};
+    }
+
+    void func20(uint32_t, uint32_t) {
+        std::cout << "func20 called" << std::endl;
+    }
+
+    uint32_t func21(uint32_t, uint32_t) {
+        std::cout << "func21 called" << std::endl;
+        return 123;
+    }
+
+    std::tuple<uint32_t, uint32_t> func22(uint32_t, uint32_t) {
+        std::cout << "func22 called" << std::endl;
+        return {123, 123};
     }
 };
 

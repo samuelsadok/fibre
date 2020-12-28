@@ -394,7 +394,9 @@ def make_property_type(typeargs):
     if fullname in interfaces:
         return interfaces[fullname]
     else:
-        return PropertyInterfaceElement(name, fullname, mode, value_type)
+        prop = PropertyInterfaceElement(name, fullname, mode, value_type)
+        interfaces[fullname] = prop
+        return prop
 
 generics = {
     'fibre.Property': make_property_type # TODO: improve generic support
