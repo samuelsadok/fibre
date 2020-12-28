@@ -37,7 +37,7 @@ Refer to
   4. Navigate to this directory and run `make`
 
 ### Ubuntu
-  1. `sudo apt-get libusb-1.0-dev`
+  1. `sudo apt-get install libusb-1.0-0-dev`
   2. Navigate to this directory and run `make`
 
 ### macOS

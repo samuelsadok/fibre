@@ -3,13 +3,13 @@
 #include "../logging.hpp"
 #include "../print_utils.hpp"
 
+#include <errno.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <netdb.h>
-#include <sys/eventfd.h>
 #include <signal.h>
 #include <sys/epoll.h>
 
@@ -19,6 +19,27 @@ USE_LOG_TOPIC(SOCKET);
 #define MAX_CONCURRENT_CONNECTIONS 128
 
 using namespace fibre;
+
+namespace fibre {
+/**
+ * @brief Tag type to print the last socket error.
+ * 
+ * This is very similar to sys_err(), except that on Windows it uses
+ * WSAGetLastError() instead of `errno` to fetch the last error code.
+ */
+struct sock_err {
+    sock_err() :
+#if defined(_WIN32) || defined(_WIN64)
+        error_number(WSAGetLastError()) {}
+#else
+        error_number(errno) {}
+#endif
+
+    sock_err(int error_number) : error_number(error_number) {}
+
+    int error_number;
+};
+}
 
 namespace std {
 std::ostream& operator<<(std::ostream& stream, const struct sockaddr_storage& val) {
@@ -33,7 +54,7 @@ std::ostream& operator<<(std::ostream& stream, const struct sockaddr_storage& va
     }
 }
 
-std::ostream& operator<<(std::ostream& stream, const sock_err& err) {
+std::ostream& operator<<(std::ostream& stream, const fibre::sock_err& err) {
     return stream << strerror(err.error_number) << " (" << err.error_number << ")";
 }
 }

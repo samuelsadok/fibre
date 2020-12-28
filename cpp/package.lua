@@ -3,15 +3,20 @@
 -- Returns a table that contains the Fibre code files and the flags required to
 -- compile and link those files.
 --
--- args: A dictionary containing the fibre options. Possible keys are:
---       enable_server, enable_client, enable_event_loop, allow_heap, enable_libusb, max_log_verbosity
---       The meaning of these options is documented in README.md.
---       In addition:
---          pkgconfig: nil, a boolean or a string. If a string is provided, it
---                     names the "pkgconfig" binary that this function may
---                     invoke to find build dependencies. nil or a boolean of
---                     true is equal to providing "pkgconf". A boolean of false
---                     means the function may return an incomplete list of compile flags.
+-- args: A dictionary containing the fibre options. Refer to the Compile Options
+--       in README.md for a list of available options. For example the option
+--       `FIBRE_ENABLE_SERVER` maps to the argument `args.enable_server`.
+-- In addition:
+-- args.pkgconf: Controls the use of the pkgconf or pkg-config utility that
+--     shall be used to locate build dependencies. Can be one of the following:
+--        - A string: Use the binary provided by the string. Fail if it doesn't
+--          exist.
+--        - true: Use "pkgconf" and fall back to "pkg-config" if "pkgconf"
+--          doesn't exist. Fail if both don't exist.
+--        - false: Don't use pkg-config. The user is responsible of determining
+--          the required compile and link flags.
+--        - nil: Try both "pkgconf" and "pkg-config". If both don't exist fall
+--          back to a hardcoded list of well-known settings.
 --
 -- Returns: A dictionary with the following items:
 --  code_files: A list of strings that name the C++ code files to be compiled.
@@ -26,9 +31,7 @@
 function get_fibre_package(args)
     pkg = {
         code_files = {
-            --'libfibre.cpp',
             'fibre.cpp',
-            --'legacy_protocol.cpp',
             'channel_discoverer.cpp',
         },
         include_dirs = {'include'},
@@ -36,17 +39,30 @@ function get_fibre_package(args)
         ldflags = {},
     }
 
+    -- Select a pkgconf function
     if args.pkgconf == true or args.pkgconf == nil then
-        pkgconf_file = 'pkgconf'
-    elseif args.pkgconf then
-        pkgconf_file = args.pkgconf
-    end
-
-    function pkgconf(lib)
-        if pkgconf_file then
-            pkg.cflags += run_now(pkgconf_file..' '..lib..' --cflags')
-            pkg.ldflags += run_now(pkgconf_file..' '..lib..' --libs')
+        -- Autodetect pkgconf
+        if test_pkgconf('pkgconf') then
+            print("using pkgconf")
+            pkgconf_file = 'pkgconf'
+            pkgconf = real_pkgconf
+        elseif test_pkgconf('pkg-config') then
+            print("using pkg-config")
+            pkgconf_file = 'pkg-config'
+            pkgconf = real_pkgconf
+        elseif args.pkgconf == nil then
+            print("using hardcoded pkgconf")
+            pkgconf = hardcoded_pkgconf
+        else
+            error("couldn't find pkgconf nor pkg-config")
         end
+
+    elseif args.pkgconf == false then
+        pkgconf_file = nil
+        pkgconf = null_pkgconf
+    else
+        pkgconf_file = args.pkgconf
+        pkgconf = real_pkgconf
     end
 
     pkg.cflags += '-DFIBRE_ENABLE_SERVER='..(args.enable_server and '1' or '0')
@@ -61,7 +77,7 @@ function get_fibre_package(args)
 
     if args.enable_libusb_backend then
         pkg.code_files += 'platform_support/libusb_transport.cpp'
-        pkgconf("libusb-1.0")
+        pkgconf(pkg, "libusb-1.0")
 
         -- TODO: only add pthread on linux and windows
         pkg.ldflags += '-lpthread'
@@ -97,8 +113,27 @@ function run_now(command)
     handle = io.popen(command)
     local output = handle:read("*a")
     local rc = {handle:close()}
-    if not rc[1] then
-        error("failed to invoke "..command)
-    end
-    return string.sub(output, 0, -2)
+    return string.sub(output, 0, -2), rc[1]
+end
+
+function test_pkgconf(name)
+    local str, rc = run_now(name.." --version 2>&1 >/dev/null")
+    return rc
+end
+
+function real_pkgconf(pkg, lib)
+    pkg.cflags += run_now(pkgconf_file..' '..lib..' --cflags')
+    pkg.ldflags += run_now(pkgconf_file..' '..lib..' --libs')
+end
+
+function null_pkgconf(pkg, lib)
+    -- don't do anything
+end
+
+function hardcoded_pkgconf(pkg, lib)
+    libs = {
+        ['libusb-1.0'] = {cflags = {}, ldflags = {}},
+    }
+    tup.append_table(pkg.cflags, libs[lib].cflags)
+    tup.append_table(pkg.ldflags, libs[lib].ldflags)
 end
