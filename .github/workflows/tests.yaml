@@ -13,6 +13,8 @@ jobs:
       matrix:
         include:
           - {os: ubuntu-latest, target: local}
+          - {os: macos-latest, target: local}
+          - {os: windows-latest, target: local}
 
     runs-on: ${{ matrix.os }}
     steps:

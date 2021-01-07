@@ -81,7 +81,7 @@ pkg = get_fibre_package({
     enable_tcp_client_backend=get_bool_config("ENABLE_TCP_CLIENT_BACKEND", true),
     enable_libusb_backend=get_bool_config("ENABLE_LIBUSB_BACKEND", true),
     allow_heap=true,
-    use_pkgconf=get_bool_config("USE_PKGCONF", nil)
+    pkgconf=tup.getconfig("USE_PKGCONF") or nil
 })
 
 CFLAGS += pkg.cflags
@@ -95,6 +95,8 @@ for _, src_file in pairs(pkg.code_files) do
     object_files += compile(src_file)
 end
 object_files += compile('libfibre.cpp')
+
+outname = 'build/'..outname
 
 if not STRIP then
     compile_outname=outname
