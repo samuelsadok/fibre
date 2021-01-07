@@ -216,8 +216,6 @@ bool LibusbDiscoverer::deinit(int stage) {
 void LibusbDiscoverer::start_channel_discovery(const char* specs, size_t specs_len, ChannelDiscoveryContext** handle, Callback<void, ChannelDiscoveryResult> on_found_channels) {
     FIBRE_LOG(D) << "starting discovery with filter \"" << std::string(specs, specs_len) << "\"";
 
-    const char* prev_delim = specs;
-
     InterfaceSpecs interface_specs;
 
     try_parse_key(specs, specs + specs_len, "bus", &interface_specs.bus);
@@ -450,7 +448,6 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDi
         }
     }
     
-    static libusb_device_handle *handle = nullptr;
     struct libusb_config_descriptor* config_desc = nullptr;
 
     if (libusb_get_active_config_descriptor(device, &config_desc) != LIBUSB_SUCCESS) {
