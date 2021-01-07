@@ -1,4 +1,7 @@
+
 name: Tests
+
+# new draft: https://godbolt.org/z/qMa4YG
 
 on:
   pull_request:
@@ -11,21 +14,39 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {os: ubuntu-latest, target: local}
-          - {os: macos-latest, target: local}
-          - {os: windows-latest, target: local}
+        target: [linux-amd64, linux-armhf, macos-x86, wasm, windows-amd64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+      - uses: ./.github/actions/compile
+        with:
+          target: ${{ matrix.target }}
+      - name: List outputs
+        run: ls -la cpp/build/
+      - uses: actions/upload-artifact@v2
+        with:
+          name: libfibre-${{ matrix.target }}
+          path: cpp/build/libfibre-*
 
+  test-pyfibre:
+    needs: [compile]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
-      - uses: ./.github/actions/compile
+      - uses: actions/download-artifact@v2
         with:
-          target: ${{ matrix.local }}
-      - uses: actions/upload-artifact@v2
-        with:
-          name: libfibre
-          path: cpp/libfibre-*
+          path: artifacts
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+      - run: |
+          echo "not implemented yet"
+          false
 
   formatting:
     strategy:

@@ -6,6 +6,7 @@
 #include "print_utils.hpp"
 #include <memory>
 #include <algorithm>
+#include <array>
 
 #if FIBRE_ALLOW_HEAP
 #include <unordered_map>

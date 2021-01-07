@@ -34,7 +34,7 @@ fibre_pkg = get_fibre_package({
     enable_client=false,
     enable_event_loop=true,
     allow_heap=true,
-    enable_libusb_backend=true,
+    enable_libusb_backend=false,
     enable_tcp_client_backend=true,
     enable_tcp_server_backend=true,
 })
@@ -56,7 +56,7 @@ end
 --compile('autogen/fibre_exports.cpp', 'build/autogen_fibre_exports.cpp.o')
 --object_files += compile('autogen/fibre_exports.cpp')
 
-compile_outname='test_server.elf'
+compile_outname='build/test_server.elf'
 
 tup.frule{
     inputs=object_files,

@@ -642,7 +642,7 @@ void LibusbBulkEndpoint<TRes>::on_transfer_finished() {
         ssize_t n_devices = libusb_get_device_list(parent_->libusb_ctx_, &list);
 
         if (n_devices >= 0) {
-            for (size_t i = 0; i < n_devices; ++i) {
+            for (size_t i = 0; i < (size_t)n_devices; ++i) {
                 if (list[i] == dev) {
                     break;
                 }
