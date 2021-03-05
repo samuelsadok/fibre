@@ -231,7 +231,7 @@ std::vector<LegacyFibreArg> parse_arglist(const json_value& list_val) {
     return arglist;
 }
 
-void LegacyObjectClient::start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*> on_lost_root_object) {
+void LegacyObjectClient::start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_lost_root_object) {
     FIBRE_LOG(D) << "start";
     on_found_root_object_ = on_found_root_object;
     on_lost_root_object_ = on_lost_root_object;
@@ -621,6 +621,7 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
                 return ContinueWithApp{kFibreInternalError, app_tx_end_, app_rx_buf_.begin()};
             }
             transcoded_pos += arg.protocol_size;
+            tx_pos_ += arg.app_size;
         }
 
         tx_buf_ = transcoded;
@@ -647,6 +648,7 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
                 return ContinueWithApp{kFibreInternalError, app_tx_end_, app_rx_buf_.begin()};
             }
             transcoded_pos += arg.app_size;
+            rx_pos_ += arg.protocol_size;
         }
 
         rx_buf_ = transcoded;
