@@ -4666,8 +4666,18 @@ var _libfibre_close = Module["_libfibre_close"] = function() {
 };
 
 /** @type {function(...*):?} */
-var _libfibre_register_discoverer = Module["_libfibre_register_discoverer"] = function() {
-  return (_libfibre_register_discoverer = Module["_libfibre_register_discoverer"] = Module["asm"]["libfibre_register_discoverer"]).apply(null, arguments);
+var _libfibre_register_backend = Module["_libfibre_register_backend"] = function() {
+  return (_libfibre_register_backend = Module["_libfibre_register_backend"] = Module["asm"]["libfibre_register_backend"]).apply(null, arguments);
+};
+
+/** @type {function(...*):?} */
+var _libfibre_open_domain = Module["_libfibre_open_domain"] = function() {
+  return (_libfibre_open_domain = Module["_libfibre_open_domain"] = Module["asm"]["libfibre_open_domain"]).apply(null, arguments);
+};
+
+/** @type {function(...*):?} */
+var _libfibre_close_domain = Module["_libfibre_close_domain"] = function() {
+  return (_libfibre_close_domain = Module["_libfibre_close_domain"] = Module["asm"]["libfibre_close_domain"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -4731,13 +4741,18 @@ var _libfibre_close_rx = Module["_libfibre_close_rx"] = function() {
 };
 
 /** @type {function(...*):?} */
-var ___errno_location = Module["___errno_location"] = function() {
-  return (___errno_location = Module["___errno_location"] = Module["asm"]["__errno_location"]).apply(null, arguments);
+var _malloc = Module["_malloc"] = function() {
+  return (_malloc = Module["_malloc"] = Module["asm"]["malloc"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var _malloc = Module["_malloc"] = function() {
-  return (_malloc = Module["_malloc"] = Module["asm"]["malloc"]).apply(null, arguments);
+var _free = Module["_free"] = function() {
+  return (_free = Module["_free"] = Module["asm"]["free"]).apply(null, arguments);
+};
+
+/** @type {function(...*):?} */
+var ___errno_location = Module["___errno_location"] = function() {
+  return (___errno_location = Module["___errno_location"] = Module["asm"]["__errno_location"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -4773,11 +4788,6 @@ var stackAlloc = Module["stackAlloc"] = function() {
 /** @type {function(...*):?} */
 var _setThrew = Module["_setThrew"] = function() {
   return (_setThrew = Module["_setThrew"] = Module["asm"]["setThrew"]).apply(null, arguments);
-};
-
-/** @type {function(...*):?} */
-var _free = Module["_free"] = function() {
-  return (_free = Module["_free"] = Module["asm"]["free"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */

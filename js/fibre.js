@@ -8,15 +8,18 @@ function assert(expression) {
 }
 
 const FIBRE_STATUS_OK = 0;
-const FIBRE_STATUS_CANCELLED = 1;
-const FIBRE_STATUS_CLOSED = 2;
-const FIBRE_STATUS_INVALID_ARGUMENT = 3;
-const FIBRE_STATUS_INTERNAL_ERROR = 4;
+const FIBRE_STATUS_BUSY = 1;
+const FIBRE_STATUS_CANCELLED = 2;
+const FIBRE_STATUS_CLOSED = 3;
+const FIBRE_STATUS_INVALID_ARGUMENT = 4;
+const FIBRE_STATUS_INTERNAL_ERROR = 5;
+const FIBRE_STATUS_PROTOCOL_ERROR = 6;
+const FIBRE_STATUS_HOST_UNREACHABLE = 7;
 
 const ptrSize = 4;
 
 function _getError(code) {
-    if (code == FIBRE_CANCELLED) {
+    if (code == FIBRE_STATUS_CANCELLED) {
         return Error("libfibre: Operation Cancelled");
     } else if (code == FIBRE_STATUS_CLOSED) {
         return Error("libfibre: Closed");
@@ -24,6 +27,10 @@ function _getError(code) {
         return Error("libfibre: Invalid Argument");
     } else if (code == FIBRE_STATUS_INTERNAL_ERROR) {
         return Error("libfibre: Internal Error");
+    } else if (code == FIBRE_STATUS_PROTOCOL_ERROR) {
+        return Error("libfibre: Misbehaving Peer");
+    } else if (code == FIBRE_STATUS_HOST_UNREACHABLE) {
+        return Error("libfibre: Host Unreachable");
     } else {
         return Error("libfibre: Unknown Error " + code);
     }
@@ -32,15 +39,43 @@ function _getError(code) {
 class BasicCodec {
     constructor(typeName, byteLength, littleEndian) {
         this.getSize = () => byteLength;
-        this.serialize = (libfibre, val) => {
-            var myBuf = new ArrayBuffer(byteLength);
-            new DataView(myBuf)['set' + typeName](0, val, littleEndian)
-            return Array.from(new Uint8Array(myBuf));
+        this.serialize = (libfibre, val, ptr) => {
+            new DataView(libfibre.wasm.Module.HEAPU8.buffer, ptr)['set' + typeName](0, val._handle, littleEndian);
+            return byteLength;
         }
-        this.deserialize = (libfibre, buf) => {
-            var myBuf = new ArrayBuffer(buf.length);
-            new Uint8Array(myBuf).set(buf);
-            return new DataView(myBuf)['get' + typeName](0, littleEndian);
+        this.deserialize = (libfibre, ptr) => {
+            return new DataView(libfibre.wasm.Module.HEAPU8.buffer, ptr)['get' + typeName](0, littleEndian);
+        }
+    }
+}
+
+class BoolCodec {
+    constructor() {
+        this.getSize = () => 1;
+        this.serialize = (libfibre, val, ptr) => {
+            val = (val) ? 1 : 0;
+            new DataView(libfibre.wasm.Module.HEAPU8.buffer, ptr).setUint8(0, val._handle);
+            return 1;
+        }
+        this.deserialize = (libfibre, ptr) => {
+            return !!(new DataView(libfibre.wasm.Module.HEAPU8.buffer, ptr).getUint8(0));
+        }
+    }
+}
+
+class ObjectPtrCodec {
+    constructor() {
+        this.getSize = () => 4;
+        this.serialize = (libfibre, val, ptr) => {
+            if (!val._handle) {
+                throw Error("attempt to serialize stale object");
+            }
+            new DataView(libfibre.wasm.Module.HEAPU8.buffer, ptr).setUint32(0, val._handle, true);
+            return 4;
+        }
+        this.deserialize = (libfibre, ptr) => {
+            const handle = new DataView(libfibre.wasm.Module.HEAPU8.buffer, ptr).getUint32(0, true);
+            return libfibre._objMap[handle]; // TODO: this can fail in some cases where the attribute was not previously fetched
         }
     }
 }
@@ -55,6 +90,8 @@ const codecs = {
     'int64': new BasicCodec('BigInt64', 8, true),
     'uint64': new BasicCodec('BigUint64', 8, true),
     'float': new BasicCodec('Float32', 4, true),
+    'bool': new BoolCodec(),
+    'object_ref': new ObjectPtrCodec(),
 };
 
 class EofError extends Error {
@@ -190,6 +227,8 @@ class RxStream {
 class RemoteInterface {
     constructor(libfibre, intfName) {
         this._libfibre = libfibre;
+        this._refCount = 0;
+        this._children = [];
         this.intfName = intfName;
         this._onLost = new Promise((resolve) => this._onLostResolve = resolve);
     }
@@ -206,12 +245,14 @@ class RemoteAttribute {
     }
 
     get(obj) {
-        let objHandlePtr = this._libfibre.wasm.malloc(ptrSize);
-        try {
-            this._libfibre.wasm.Module._libfibre_get_attribute(obj._handle, this._handle, objHandlePtr);
-            return this._libfibre._objMap[this._libfibre._derefIntPtr(objHandlePtr)];
-        } finally {
-            this._libfibre.wasm.free(objHandlePtr);
+        const objHandle = this._libfibre._withOutputArg((objHandlePtr) => 
+            this._libfibre.wasm.Module._libfibre_get_attribute(obj._handle, this._handle, objHandlePtr));
+        if (objHandle in obj._children) {
+            return this._libfibre._objMap[objHandle];
+        } else {
+            const child = this._libfibre._loadJsObj(objHandle, this._subintf);
+            obj._children.push(objHandle);
+            return child;
         }
     }
 }
@@ -229,67 +270,118 @@ class RemoteFunction extends Function {
         // associated with the constructor call.
         return Object.setPrototypeOf(closure, new.target.prototype);
     }
-    
-    /**
-     * @brief Starts a function call on this function.
-     * @return {TxStream, RxStream, Promise} A TX stream that can be used to
-     * send data on this function call, an RX stream that can be used to receive
-     * data on this function call and a promise that will be completed once the
-     * function call completes.
-     */
-    startCall(obj) {
-        let _callHandle, _txStreamHandle, _rxStreamHandle;
-        let completionPromise = new Promise((resolve, reject) => {
-            let completer = (status) => {
-                if (status == FIBRE_STATUS_OK) {
-                    resolve();
-                } else {
-                    reject(_getError(status));
-                }
-            };
-            [_callHandle, _txStreamHandle, _rxStreamHandle] = this._libfibre._withOutputArg(
-                (_callHandlePtr, _txStreamHandlePtr, _rxStreamHandlePtr) =>
-                    this._libfibre.wasm.Module._libfibre_start_call(obj._handle, this._handle,
-                        _callHandlePtr,
-                        _txStreamHandlePtr, _rxStreamHandlePtr, this._libfibre._onCallCompleted,
-                        this._libfibre._allocRef(completer)));
-        });
-        return [
-            new TxStream(this._libfibre, _txStreamHandle),
-            new RxStream(this._libfibre, _rxStreamHandle),
-            completionPromise];
-    }
 
-    async _call(obj, ...args) {
-        assert(args.length == this._inputArgs.length);
-
-        let txBuf = [];
-        for (let argSpec of this._inputArgs) {
-            txBuf.push(...argSpec.codec.serialize());
+    async _call(...args) {
+        if (args.length != this._inputArgs.length) {
+            throw Error("expected " + this._inputArgs.length + " arguments but got " + args.length);
         }
-        
+
+        const txLen = this._inputArgs.reduce((a, b) => a + b.codec.getSize(), 0);
         const rxLen = this._outputArgs.reduce((a, b) => a + b.codec.getSize(), 0);
-        assert(Number.isInteger(rxLen));
+        const txBufPtr = this._libfibre.wasm.malloc(txLen);
+        const rxBufPtr = this._libfibre.wasm.malloc(rxLen);
+        const txEndPtrPtr = this._libfibre.wasm.malloc(ptrSize);
+        const rxEndPtrPtr = this._libfibre.wasm.malloc(ptrSize);
+        const handlePtr = this._libfibre.wasm.malloc(ptrSize);
 
-        const [txStream, rxStream, completionPromise] = this.startCall(obj);
+        try {
+            // keep track of the objects whose IDs we serialized. If any of
+            // these objects disappears during the call we must cancel the call.
+            const outputObjects = [];
 
-        // RX must be started before TX
-        const rxPromise = rxStream.readAll(rxLen);
-        await txStream.writeAll(txBuf);
-        let rxBuf = await rxPromise;
-        await completionPromise;
+            // Serialize output arguments
+            let pos = 0;
+            for (let i = 0; i < args.length; ++i) {
+                pos += this._inputArgs[i].codec.serialize(this._libfibre, args[i], txBufPtr + pos);
+                if (this._inputArgs[i].codecName == 'object_ref') {
+                    outputObjects.push(args[i]);
+                }
+            }
 
-        let outputs = [];
-        for (let argSpec of this._outputArgs) {
-            let argLength = argSpec.codec.getSize()
-            outputs.push(argSpec.codec.deserialize(self._libfibre, rxBuf.slice(0, argLength)))
-            rxBuf = rxBuf.slice(argLength);
-        }
+            var handlesStillValid = () => outputObjects.every((obj) => obj._handle);
+            
+            let txPos = 0;
+            let rxPos = 0;
+            this._libfibre._setIntPtr(handlePtr, 0);
 
-        if (outputs.length == 1) {
-            return outputs[0];
-        } else if (outputs.length > 1) {
-            return outputs;
+            do {
+                let callCallback;
+                const promise = new Promise((resolve, reject) => 
+                    callCallback = (status, txEnd, rxEnd) => {
+                        txPos = txEnd - txBufPtr;
+                        rxPos = rxEnd - rxBufPtr;
+
+                        if (status == FIBRE_STATUS_OK) {
+                            assert(rxPos < rxLen || txPos < txLen);
+                            assert(handlesStillValid());
+                            return [
+                                FIBRE_STATUS_CLOSED,
+                                txBufPtr + txPos, txLen - txPos,
+                                rxBufPtr + rxPos, rxLen - rxPos,
+                            ];
+                        } else {
+                            resolve(status);
+                            return [FIBRE_STATUS_CLOSED, 0, 0, 0, 0];
+                        }
+                    }
+                );
+                let callCallbackRef = this._libfibre._allocRef(callCallback);
+
+                try {
+                    assert(handlesStillValid());
+                    assert(this._handle);
+
+                    status = this._libfibre.wasm.Module._libfibre_call(this._handle, handlePtr,
+                        // We always pass the complete buffers, so if libfibre
+                        // manages to process the buffers to the end the call is
+                        // completed.
+                        FIBRE_STATUS_CLOSED,
+                        txBufPtr + txPos, txLen - txPos,
+                        rxBufPtr + rxPos, rxLen - rxPos,
+                        txEndPtrPtr, rxEndPtrPtr,
+                        this._libfibre._onCallCompleted,
+                        callCallbackRef);
+
+                    txPos = this._libfibre._getIntPtr(txEndPtrPtr) - txBufPtr;
+                    rxPos = this._libfibre._getIntPtr(rxEndPtrPtr) - rxBufPtr;
+
+                    if (status == FIBRE_STATUS_BUSY) {
+                        status = await promise;
+                        assert(status != FIBRE_STATUS_BUSY);
+                    }
+                } finally {
+                    this._libfibre._freeRef(callCallbackRef);
+                }
+
+            } while ((txPos < txLen || rxPos < rxLen) && status == FIBRE_STATUS_OK);
+
+            if (txPos == txLen && rxPos == rxLen && status == FIBRE_STATUS_OK) {
+                throw Error("libfibre ignored our close request");
+            } else if (txPos < txLen && rxPos < rxLen && status == FIBRE_STATUS_CLOSED) {
+                throw Error("call closed unexpectedly by remote");
+            } else if (status != FIBRE_STATUS_CLOSED) {
+                throw _getError(status);
+            }
+
+            let outputs = [];
+            pos = 0;
+            for (let argSpec of this._outputArgs) {
+                outputs.push(argSpec.codec.deserialize(this._libfibre, rxBufPtr + pos))
+                pos += argSpec.codec.getSize();
+            }
+
+            if (outputs.length == 1) {
+                return outputs[0];
+            } else if (outputs.length > 1) {
+                return outputs;
+            }
+
+        } finally {
+            this._libfibre.wasm.free(handlePtr);
+            this._libfibre.wasm.free(rxEndPtrPtr);
+            this._libfibre.wasm.free(txEndPtrPtr);
+            this._libfibre.wasm.free(rxBufPtr);
+            this._libfibre.wasm.free(txBufPtr);
         }
     }
 }
@@ -322,41 +414,32 @@ class LibFibre {
             return cancelTimeout(timer);
         }, 'ii')
 
-        this._onConstructObject = wasm.addFunction((ctx, obj, intf, intfName, intfNameLength) => {
-            let jsIntf = this._loadJsIntf(intf, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, intfName, intfNameLength));
-            this._objMap[obj] = new jsIntf(this, obj);
-        }, 'viiiii')
-
-        this._onDestroyObject = wasm.addFunction((ctx, obj) => {
-            let jsObj = this._objMap[obj];
-            delete this._objMap[obj];
-            delete jsObj._handle;
-            Object.setPrototypeOf(jsObj, _staleObject);
-            console.log("destroyed remote object");
-            jsObj._oldHandle = obj;
-            jsObj._onLostResolve();
-        }, 'vii')
-
-        this._onStartDiscovery = wasm.addFunction((ctx, discCtx, specs, specsLength) => {
-            console.log("start discovery");
-            let discoverer = this._deref(ctx);
+        this._onStartDiscovery = wasm.addFunction((ctx, domainHandle, specs, specsLength) => {
+            console.log("start discovery for domain", domainHandle);
+            const discoverer = this._deref(ctx);
             discoverer.startChannelDiscovery(
                 this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, specs, specsLength),
-                discCtx);
+                domainHandle);
         }, 'viiii')
 
-        this._onStopDiscovery = wasm.addFunction((ctx, discCtx) => {
-            console.log("stop discovery");
+        this._onStopDiscovery = wasm.addFunction((ctx, status) => {
+            console.log("discovery stopped with status ", status);
             this._freeRef(ctx);
         }, 'viiii')
 
-        this._onFoundObject = wasm.addFunction((ctx, obj) => {
-            let onFoundObject = this._deref(ctx);
-            onFoundObject(this._objMap[obj]);
+        this._onFoundObject = wasm.addFunction((ctx, obj, intf) => {
+            const discovery = this._deref(ctx);
+            discovery.onFoundObject(this._loadJsObj(obj, intf));
+        }, 'viii')
+
+        this._onLostObject = wasm.addFunction((ctx, obj) => {
+            const discovery = this._deref(ctx);
+            this._releaseJsObj(obj);
         }, 'vii')
 
         this._onAttributeAdded = wasm.addFunction((ctx, attr, name, nameNength, subintf, subintfName, subintfNameLength) => {
             let jsIntf = this._intfMap[ctx];
+            assert(jsIntf);
             let jsAttr = new RemoteAttribute(this, attr, subintf, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, subintfName, subintfNameLength));
             Object.defineProperty(jsIntf.prototype, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameNength), {
                 get: function () { return jsAttr.get(this); }
@@ -369,8 +452,15 @@ class LibFibre {
 
         this._onFunctionAdded = wasm.addFunction((ctx, func, name, nameLength, inputNames, inputCodecs, outputNames, outputCodecs) => {
             const jsIntf = this._intfMap[ctx];
-            const jsInputParams = [...this._decodeArgList(inputNames, inputCodecs)];
-            const jsOutputParams = [...this._decodeArgList(outputNames, outputCodecs)];
+            let jsInputParams;
+            let jsOutputParams;
+            try {
+                jsInputParams = [...this._decodeArgList(inputNames, inputCodecs)];
+                jsOutputParams = [...this._decodeArgList(outputNames, outputCodecs)];
+            } catch (err) {
+                console.warn(err.message);
+                return;
+            }
             let jsFunc = new RemoteFunction(this, func, jsInputParams, jsOutputParams);
             jsIntf.prototype[this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameLength)] = jsFunc;
         }, 'viiiiiiii')
@@ -379,10 +469,15 @@ class LibFibre {
             console.log("function removed"); // TODO
         }, 'vii')
 
-        this._onCallCompleted = wasm.addFunction((ctx, status) => {
-            let completer = this._freeRef(ctx);
-            completer(status);
-        }, 'vii');
+        this._onCallCompleted = wasm.addFunction((ctx, status, txEnd, rxEnd, txBufPtr, txLenPtr, rxBufPtr, rxLenPtr) => {
+            let completer = this._deref(ctx);
+            const [retStatus, txBuf, txLen, rxBuf, rxLen] = completer(status, txEnd, rxEnd);
+            this._setIntPtr(txBufPtr, txBuf);
+            this._setIntPtr(txLenPtr, txLen);
+            this._setIntPtr(rxBufPtr, rxBuf);
+            this._setIntPtr(rxLenPtr, rxLen);
+            return retStatus;
+        }, 'iiiiiiiii');
 
         this._onTxCompleted = wasm.addFunction((ctx, txStream, status, txEnd) => {
             this._txStreamMap[txStream]._complete(status, txEnd);
@@ -399,57 +494,65 @@ class LibFibre {
             minor: version_array[1],
             patch: version_array[2]
         };
+        if ((this.version.major, this.version.minor) != (0, 1)) {
+            throw Error("incompatible libfibre version " + JSON.stringify(this.version));
+        }
+
 
         this._intfMap = {};
         this._refMap = {};
         this._objMap = {};
+        this._domainMap = {};
         this._txStreamMap = {};
         this._rxStreamMap = {};
 
-        this._handle = this.wasm.Module._libfibre_open(
-            this._onPost,
-            0,
-            0,
-            this._onCallLater,
-            this._onCancelTimer,
-            this._onConstructObject,
-            this._onDestroyObject
-        );
+        const event_loop = wasm.malloc(4 * 5);
+        try {
+            const event_loop_array = (new Uint32Array(wasm.Module.HEAPU8.buffer, event_loop, 5));
+            event_loop_array[0] = this._onPost;
+            event_loop_array[1] = 0; // register_event
+            event_loop_array[2] = 0; // deregister_event
+            event_loop_array[3] = this._onCallLater;
+            event_loop_array[4] = this._onCancelTimer;
+        } finally {
+            wasm.free(event_loop);
+        }
+
+        this._handle = this.wasm.Module._libfibre_open(event_loop);
 
         this.usbDiscoverer = new WebUsbDiscoverer(this);
 
         let buf = [this.wasm.malloc(4), 4];
         try {
             let len = this.wasm.stringToUTF8Array("usb", this.wasm.Module.HEAPU8, buf[0], buf[1]);
-            this.wasm.Module._libfibre_register_discoverer(this._handle, buf[0], len,
+            this.wasm.Module._libfibre_register_backend(this._handle, buf[0], len,
                 this._onStartDiscovery, this._onStopDiscovery, this._allocRef(this.usbDiscoverer));
         } finally {
             this.wasm.free(buf[0]);
         }
     }
 
-    addChannels(mtu, channelDiscoveryHandle) {
+    addChannels(domainHandle, mtu) {
         console.log("add channel with mtu " + mtu);
         const [txChannelId, rxChannelId] = this._withOutputArg((txChannelIdPtr, rxChannelIdPtr) =>
-            this.wasm.Module._libfibre_add_channels(this._handle, channelDiscoveryHandle, txChannelIdPtr, rxChannelIdPtr, mtu)
+            this.wasm.Module._libfibre_add_channels(domainHandle, txChannelIdPtr, rxChannelIdPtr, mtu)
         );
         return [
-            new RxStream(this, txChannelId),
-            new TxStream(this, rxChannelId)
+            new RxStream(this, txChannelId), // libfibre => backend
+            new TxStream(this, rxChannelId) // backend => libfibre
         ];
     }
 
-    startDiscovery(filter, onFoundObject) {
+    openDomain(filter) {
         let buf = [this.wasm.malloc(filter.length + 1), filter.length + 1];
         try {
             let len = this.wasm.stringToUTF8Array(filter, this.wasm.Module.HEAPU8, buf[0], buf[1]);
-            this._withOutputArg((discoveryHandlePtr) => 
-                this.wasm.Module._libfibre_start_discovery(this._handle, buf[0], len,
-                    discoveryHandlePtr,
-                    this._onFoundObject, this._onStopped, this._allocRef(onFoundObject)));
+            var domainHandle = this.wasm.Module._libfibre_open_domain(this._handle, buf[0], len);
         } finally {
             this.wasm.free(buf[0]);
         }
+        console.log("opened domain", domainHandle);
+        return new Domain(this, domainHandle);
     }
 
     /**
@@ -461,7 +564,7 @@ class LibFibre {
     _allocRef(obj) {
         let id = 0;
         while (++id in this._refMap) {}
-        console.log("allocating id " + id, obj);
+        //console.log("allocating id " + id, obj);
         this._refMap[id] = obj;
         return id;
     }
@@ -470,13 +573,17 @@ class LibFibre {
         return this._refMap[id];
     }
 
-    _derefIntPtr(ptr) {
+    _getIntPtr(ptr) {
         return new Uint32Array(this.wasm.Module.HEAPU8.buffer, ptr, 1)[0]
     }
 
+    _setIntPtr(ptr, val) {
+        new Uint32Array(this.wasm.Module.HEAPU8.buffer, ptr, 1)[0] = val;
+    }
+
     * _getStringList(ptr) {
-        for (let i = 0; this._derefIntPtr(ptr + i * ptrSize); ++i) {
-            yield this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, this._derefIntPtr(ptr + i * ptrSize));
+        for (let i = 0; this._getIntPtr(ptr + i * ptrSize); ++i) {
+            yield this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, this._getIntPtr(ptr + i * ptrSize));
         }
     }
 
@@ -490,7 +597,7 @@ class LibFibre {
     _freeRef(id) {
         let obj = this._refMap[id];
         delete this._refMap[id];
-        console.log("freeing id " + id, obj);
+        //console.log("freeing id " + id, obj);
         return obj;
     }
 
@@ -501,7 +608,7 @@ class LibFibre {
                 ptrs.push(this.wasm.malloc(ptrSize));
             }
             func(...ptrs);
-            return ptrs.map((ptr) => this._derefIntPtr(ptr));
+            return ptrs.map((ptr) => this._getIntPtr(ptr));
         } finally {
             for (let ptr of ptrs) {
                 this.wasm.free(ptr);
@@ -514,6 +621,9 @@ class LibFibre {
         codecNames = [...this._getStringList(codecNames)];
         assert(argNames.length == codecNames.length);
         for (let i in argNames) {
+            if (!(codecNames[i] in codecs)) {
+                throw Error("unknown codec " + codecNames[i]);
+            }
             yield {
                 name: argNames[i],
                 codecName: codecNames[i],
@@ -544,6 +654,74 @@ class LibFibre {
         }
     }
 
+    _loadJsObj(objHandle, intfHandle) {
+        let jsObj;
+        if (objHandle in this._objMap) {
+            jsObj = this._objMap[objHandle];
+        } else {
+            const jsIntf = this._loadJsIntf(intfHandle, 'anonymous_interface'); // TODO: load name from libfibre
+            jsObj = new jsIntf(this, objHandle);
+            this._objMap[objHandle] = jsObj;
+        }
+
+        // Note: this refcount does not count the JS references to the object
+        // but rather mirrors the libfibre-internal refcount of the object. This
+        // is so that we can destroy the JS object when libfibre releases it.
+        jsObj._refCount++;
+        return jsObj;
+    }
+
+    _releaseJsObj(objHandle) {
+        const jsObj = this._objMap[objHandle];
+        assert(jsObj);
+        jsObj._refCount--;
+        if (jsObj._refCount <= 0) {
+            const children = jsObj._children;
+            delete this._objMap[objHandle];
+            delete jsObj._handle;
+            delete jsObj._children;
+            Object.setPrototypeOf(jsObj, _staleObject);
+
+            for (const child of children) {
+                this._releaseJsObj(child);
+            }
+
+            jsObj._oldHandle = objHandle;
+            jsObj._onLostResolve();
+        }
+    }
+}
+
+class Discovery {
+    
+};
+
+class Domain {
+    constructor(libfibre, handle) {
+        this._libfibre = libfibre;
+        this._handle = handle;
+        this._libfibre._domainMap[handle] = this;
+    }
+
+    addChannels(mtu) {
+        return this._libfibre.addChannels(this._handle, mtu);
+    }
+
+    startDiscovery(onFoundObject) {
+        let discovery = new Discovery();
+        discovery.onFoundObject = onFoundObject;
+
+        return this._libfibre._withOutputArg((discoveryHandlePtr) => 
+            this._libfibre.wasm.Module._libfibre_start_discovery(this._handle,
+                discoveryHandlePtr, this._libfibre._onFoundObject,
+                this._libfibre._onLostObject,
+                this._libfibre._onStopped,
+                this._libfibre._allocRef(discovery)));
+    }
+
+    stopDiscovery(discovery) {
+        this._libfibre.wasm.Module._libfibre_stop_discovery(this._handle);
+    }
 }
 
 export function fibreOpen() {
@@ -577,17 +755,17 @@ export function fibreOpen() {
 class WebUsbDiscoverer {
     constructor(libfibre) {
         this._libfibre = libfibre;
-        this._discoveryProcesses = [];
+        this._domains = [];
 
         if (navigator.usb.onconnect != null) {
             console.warn("There was already a subscriber for usb.onconnect.");
         }
         navigator.usb.onconnect = (event) => {
-            for (let discovery of this._discoveryProcesses) {
-                this._consider(event.device, discovery.filter, discovery.handle);
+            for (let domain of this._domains) {
+                this._consider(event.device, domain.filter, domain.handle);
             }
         }
-        navigator.usb.ondisconnect = () => console.log("disconnect");
+        navigator.usb.ondisconnect = () => console.log("USB device disconnected");
 
         this._filterKeys = {
             'idVendor': 'vendorId',
@@ -598,31 +776,31 @@ class WebUsbDiscoverer {
         };
 
         this.showDialog = async () => {
-            let filters = this._discoveryProcesses.map((d) => d.filter);
+            let filters = this._domains.map((d) => d.filter);
             let dev = await navigator.usb.requestDevice({filters: filters});
-            for (let discovery of this._discoveryProcesses) {
-                this._consider(dev, discovery.filter, discovery.handle);
+            for (let domain of this._domains) {
+                this._consider(dev, domain.filter, domain.handle);
             }
         };
     }
 
-    async startChannelDiscovery(specs, discoveryHandle) {
+    async startChannelDiscovery(specs, domainHandle) {
         let filter = {}
         for (let item of specs.split(',')) {
             filter[this._filterKeys[item.split('=')[0]]] = item.split('=')[1]
         }
 
-        this._discoveryProcesses.push({
+        this._domains.push({
             filter: filter,
-            handle: discoveryHandle
+            handle: domainHandle
         });
 
         for (let dev of await navigator.usb.getDevices({filters: [filter]})) {
-            this._consider(dev, filter, discoveryHandle);
+            this._consider(dev, filter, domainHandle);
         }
     }
 
-    async _consider(device, filter, channelDiscoveryHandle) {
+    async _consider(device, filter, domainHandle) {
         if ((filter.vendorId != undefined) && (filter.vendorId != device.vendorId)) {
             return;
         }
@@ -669,7 +847,7 @@ class WebUsbDiscoverer {
                     device.knownOutEndpoints.push(epOut.endpointNumber);
 
                     let mtu = Math.min(epIn.packetSize, epOut.packetSize);
-                    const [txChannel, rxChannel] = this._libfibre.addChannels(mtu, channelDiscoveryHandle);
+                    const [txChannel, rxChannel] = this._libfibre.addChannels(domainHandle, mtu);
                     this._connectBulkInEp(device, epIn, rxChannel);
                     this._connectBulkOutEp(device, epOut, txChannel);
                 }
@@ -690,7 +868,7 @@ class WebUsbDiscoverer {
                 result = {status: "stall"};
             }
             assert(result.bytesWritten == data.length);
-            console.log(dev.opened);
+            //console.log(dev.opened);
             if (!dev.opened || result.status == "stall") {
                 stream.close(FIBRE_STATUS_CLOSED);
                 break;
@@ -701,7 +879,7 @@ class WebUsbDiscoverer {
 
     async _connectBulkInEp(dev, ep, stream) {
         while (true) {
-            //console.log("waiting for up to " + epIn.packetSize + " bytes from USB...");
+            //console.log("waiting for up to " + ep.packetSize + " bytes from USB...");
             let result;
             try {
                 result = await dev.transferIn(ep.endpointNumber, ep.packetSize);
@@ -709,8 +887,8 @@ class WebUsbDiscoverer {
                 result = {status: "stall"};
             }
             //console.log("got for data from USB...");
-            console.log(dev.opened);
-            console.log(dev);
+            //console.log(dev.opened);
+            //console.log(dev);
             if (!dev.opened || result.status == "stall") {
                 stream.close(FIBRE_STATUS_CLOSED);
                 break;

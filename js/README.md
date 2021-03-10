@@ -10,9 +10,11 @@ fibre-js currently supports the following transport providers:
 
  - WebUSB ([Chrome and Edge only](https://caniuse.com/webusb))
 
+NodeJS environments (incl Electron) are currently not supported due to issues with the WebUSB polyfill.
+
 ## How to use
 
-So you want your website or Electron App to connect to some resource(s) using Fibre. Let's start with a simple HTML scaffolding.
+So you want your website to connect to some resource(s) using Fibre. Let's start with a simple HTML scaffolding.
 
 ```HTML
 <!doctype html>
@@ -45,14 +47,15 @@ Now that fibre-js is ready to use we can start discovering remote objects. For t
 
 ```JS
 const filter = 'usb:idVendor=0x1209,idProduct=0x0D32,bInterfaceClass=0,bInterfaceSubClass=1,bInterfaceProtocol=0';
+const domain = libfibre.openDomain(filter);
 const onFoundObject = async (obj) => {
     console.log("found an object!", obj);
     // TODO: do something with obj
 }
-libfibre.startDiscovery(filter, onFoundObject);
+domain.startDiscovery(onFoundObject);
 ```
 
-Now that we have the object we can start calling functions on it. Let's assume our object has the property `vbus_voltage`. In the `onFoundObject` handle, add:
+Now that we have the object we can start calling functions on it. Let's assume our object has the property `vbus_voltage`. In the `onFoundObject` callback, add:
 
 ```JS
 while (true) {
@@ -81,3 +84,23 @@ That's it! You can now open the HTML page in the browser and should see somethin
 Note how the user doesn't need to manually reselect the device after the website is reloaded. The website is now already authorized to access the device so Fibre immediately connects to it. The same is true when the device is unpluggend and replugged to the computer.
 
 You can find the complete example code [here](example.html). A more elaborate example which can connect to multiple objects can be found here [here](multidevice_example.html).
+
+## Sidenote on WebUSB examples
+
+WebUSB cannot be used on sites served via HTTP. To run the examples you must serve them from a HTTPS server. To do this, navigate to this directory and run:
+
+```
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 10000 -nodes
+python3 server.py
+```
+
+where `server.py`:
+```python
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import ssl
+httpd = HTTPServer(('localhost', 8000), SimpleHTTPRequestHandler)
+httpd.socket = ssl.wrap_socket (httpd.socket, 
+        keyfile="key.pem", 
+        certfile='cert.pem', server_side=True)
+httpd.serve_forever()
+```
