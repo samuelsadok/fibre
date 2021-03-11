@@ -40,7 +40,7 @@ class BasicCodec {
     constructor(typeName, byteLength, littleEndian) {
         this.getSize = () => byteLength;
         this.serialize = (libfibre, val, ptr) => {
-            new DataView(libfibre.wasm.Module.HEAPU8.buffer, ptr)['set' + typeName](0, val._handle, littleEndian);
+            new DataView(libfibre.wasm.Module.HEAPU8.buffer, ptr)['set' + typeName](0, val, littleEndian);
             return byteLength;
         }
         this.deserialize = (libfibre, ptr) => {
@@ -224,12 +224,12 @@ class RxStream {
     }
 }
 
-class RemoteInterface {
+export class RemoteInterface {
     constructor(libfibre, intfName) {
         this._libfibre = libfibre;
         this._refCount = 0;
         this._children = [];
-        this.intfName = intfName;
+        this._intfName = intfName;
         this._onLost = new Promise((resolve) => this._onLostResolve = resolve);
     }
 }
@@ -250,14 +250,14 @@ class RemoteAttribute {
         if (objHandle in obj._children) {
             return this._libfibre._objMap[objHandle];
         } else {
-            const child = this._libfibre._loadJsObj(objHandle, this._subintf);
+            const child = this._libfibre._loadJsObj(objHandle, this._subintf, this._subintfName);
             obj._children.push(objHandle);
             return child;
         }
     }
 }
 
-class RemoteFunction extends Function {
+export class RemoteFunction extends Function {
     constructor(libfibre, handle, inputArgs, outputArgs) {
         let closure = function(...args) { 
             return closure._call(this, ...args);
@@ -429,7 +429,7 @@ class LibFibre {
 
         this._onFoundObject = wasm.addFunction((ctx, obj, intf) => {
             const discovery = this._deref(ctx);
-            discovery.onFoundObject(this._loadJsObj(obj, intf));
+            discovery.onFoundObject(this._loadJsObj(obj, intf, 'anonymous_root_interface')); // TODO: load interface name from libfibre
         }, 'viii')
 
         this._onLostObject = wasm.addFunction((ctx, obj) => {
@@ -442,7 +442,8 @@ class LibFibre {
             assert(jsIntf);
             let jsAttr = new RemoteAttribute(this, attr, subintf, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, subintfName, subintfNameLength));
             Object.defineProperty(jsIntf.prototype, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameNength), {
-                get: function () { return jsAttr.get(this); }
+                get: function () { return jsAttr.get(this); },
+                enumerable: true
             });
         }, 'viiiiiii')
 
@@ -462,7 +463,10 @@ class LibFibre {
                 return;
             }
             let jsFunc = new RemoteFunction(this, func, jsInputParams, jsOutputParams);
-            jsIntf.prototype[this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameLength)] = jsFunc;
+            Object.defineProperty(jsIntf.prototype, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameLength), {
+                value: jsFunc,
+                enumerable: true
+            });
         }, 'viiiiiiii')
 
         this._onFunctionRemoved = wasm.addFunction((ctx, func) => {
@@ -654,12 +658,12 @@ class LibFibre {
         }
     }
 
-    _loadJsObj(objHandle, intfHandle) {
+    _loadJsObj(objHandle, intfHandle, intfName) {
         let jsObj;
         if (objHandle in this._objMap) {
             jsObj = this._objMap[objHandle];
         } else {
-            const jsIntf = this._loadJsIntf(intfHandle, 'anonymous_interface'); // TODO: load name from libfibre
+            const jsIntf = this._loadJsIntf(intfHandle, intfName);
             jsObj = new jsIntf(this, objHandle);
             this._objMap[objHandle] = jsObj;
         }
