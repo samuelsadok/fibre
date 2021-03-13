@@ -489,7 +489,7 @@ public:
     }
 
     inline optional& operator=(const optional & other) {
-        ~*this();
+        (**this).~T();
         new (this) optional{other};
         return *this;
     }
@@ -506,8 +506,8 @@ public:
         return *(T*)content_;
     }
 
-    inline T& operator->() {
-        return *(T*)content_;
+    inline T* operator->() {
+        return (T*)content_;
     }
 
     storage_t content_;
@@ -521,8 +521,16 @@ optional<T> make_optional(T&& val) {
     return optional<T>{std::forward<T>(val)};
 }
 
+template<typename T>
+optional<T> make_optional(T& val) {
+    return optional<T>{val};
+}
+
 } // namespace std
 
+#else
+#include <variant>
+#include <optional>
 #endif
 
 /* Stuff that should be in the STL but isn't ---------------------------------*/

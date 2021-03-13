@@ -13,10 +13,9 @@ see protocol.md for the protocol specification
 #include <string.h>
 #include <unistd.h>
 #include <cstring>
-#include "crc.hpp"
-#include "cpp_utils.hpp"
-#include "bufptr.hpp"
-#include "simple_serdes.hpp"
+#include <fibre/cpp_utils.hpp>
+#include <fibre/bufptr.hpp>
+#include <fibre/simple_serdes.hpp>
 
 
 typedef struct {
@@ -93,11 +92,12 @@ template<> struct Codec<float> {
 };
 template<typename T>
 struct Codec<T, std::enable_if_t<std::is_enum<T>::value>> {
+    using int_type = std::underlying_type_t<T>;
     static std::optional<T> decode(cbufptr_t* buffer) {
-        std::optional<int32_t> int_val = SimpleSerializer<int32_t, false>::read(&(buffer->begin()), buffer->end());
+        std::optional<int_type> int_val = SimpleSerializer<int_type, false>::read(&(buffer->begin()), buffer->end());
         return int_val.has_value() ? std::make_optional(static_cast<T>(*int_val)) : std::nullopt;
     }
-    static bool encode(T value, bufptr_t* buffer) { return SimpleSerializer<int32_t, false>::write(value, &(buffer->begin()), buffer->end()); }
+    static bool encode(T value, bufptr_t* buffer) { return SimpleSerializer<int_type, false>::write(value, &(buffer->begin()), buffer->end()); }
 };
 template<> struct Codec<endpoint_ref_t> {
     static std::optional<endpoint_ref_t> decode(cbufptr_t* buffer) {

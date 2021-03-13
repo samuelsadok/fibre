@@ -7,8 +7,14 @@
 #include "libusb_transport.hpp"
 #include "../logging.hpp"
 #include "../print_utils.hpp"
+#include <fibre/fibre.hpp>
 
 #include <algorithm>
+#include <string.h>
+
+#if !FIBRE_ALLOW_HEAP
+#  error "The libusb backend requires heap allocation."
+#endif
 
 using namespace fibre;
 
@@ -17,7 +23,7 @@ USE_LOG_TOPIC(USB);
 
 // This probably has no noteworthy effect since we automatically restart
 // timed out operations anyway.
-constexpr unsigned int kBulkTimeoutMs = 2000;
+constexpr unsigned int kBulkTimeoutMs = 10000;
 
 // Only relevant for platforms don't support hotplug detection and thus
 // need polling.
@@ -34,14 +40,14 @@ constexpr unsigned int kPollingIntervalMs = 1000;
  *        pointer must be non-null and initialized when this function is called.
  *        It must remain initialized until deinit() of this discoverer was called.
  */
-int LibusbDiscoverer::init(EventLoop* event_loop) {
+bool LibusbDiscoverer::init(EventLoop* event_loop) {
     if (!event_loop)
-        return -1;
+        return false;
     event_loop_ = event_loop;
 
     if (libusb_init(&libusb_ctx_) != LIBUSB_SUCCESS) {
         FIBRE_LOG(E) << "libusb_init() failed: " << sys_err();
-        return deinit(0), -1;
+        return deinit(0), false;
     }
 
     // Fetch initial list of file-descriptors we have to monitor.
@@ -79,7 +85,7 @@ int LibusbDiscoverer::init(EventLoop* event_loop) {
         // different approach for Windows anyway.
         const struct libusb_pollfd** pollfds = libusb_get_pollfds(libusb_ctx_);
         if (!pollfds) {
-            return deinit(2), -1;
+            return deinit(2), false;
         }
 
         for (size_t i = 0; pollfds[i]; ++i) {
@@ -113,7 +119,7 @@ int LibusbDiscoverer::init(EventLoop* event_loop) {
         if (LIBUSB_SUCCESS != result) {
             FIBRE_LOG(E) << "Error subscribing to hotplug events";
             hotplug_callback_handle_ = 0;
-            return deinit(3), -1;
+            return deinit(3), false;
         }
 
     } else {
@@ -129,10 +135,10 @@ int LibusbDiscoverer::init(EventLoop* event_loop) {
         FIBRE_LOG(E) << "Hotplug detection with separate libusb thread will cause trouble.";
     }
 
-    return 0;
+    return true;
 }
 
-int LibusbDiscoverer::deinit(int stage) {
+bool LibusbDiscoverer::deinit(int stage) {
     // TODO: verify that all devices are closed and hotplug detection is disabled
 
     if (stage > 3 && libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
@@ -188,24 +194,7 @@ int LibusbDiscoverer::deinit(int stage) {
 
     event_loop_ = nullptr;
 
-    return 0;
-}
-
-bool try_parse_key(const char* begin, const char* end, const char* key, int* val) {
-    char buf[end - begin + 1];
-    memcpy(buf, begin, end - begin);
-    buf[end - begin] = 0;
-
-    char fmt1[strlen(key) + 6];
-    memcpy(fmt1, key, strlen(key));
-    memcpy(fmt1 + strlen(key), "=0x%x", 6);
-
-    char fmt2[strlen(key) + 4];
-    memcpy(fmt2, key, strlen(key));
-    memcpy(fmt2 + strlen(key), "=%d", 4);
-
-    return sscanf(buf, fmt1, val) == 1
-        || sscanf(buf, fmt2, val) == 1;
+    return true;
 }
 
 /**
@@ -218,48 +207,29 @@ bool try_parse_key(const char* begin, const char* end, const char* key, int* val
  * If the function succeeds, an opaque context pointer is returned which must be
  * passed to stop_channel_discovery() to terminate this particular request.
  * 
- * @param specs: Specifies the constraints to consider. Must be either empty or
- *        of the format "key1=val1,key2=val2" where the available keys are:
- *
- *          bus, address, idProduct, idVendor, bInterfaceClass,
- *          bInterfaceSubClass, bInterfaceProtocol
- *
- *        The value can be either a integer in decimal or hexadecimal notation
- *        (0x1234).
- *        Omitted keys are ignored during filtering.
+ * @param specs: See README of the main Fibre repository for details.
+ *        (https://github.com/samuelsadok/fibre/tree/devel).
  *
  * @param on_found_channels: Invoked when a matching pair of RX/TX channels is found.
  *        This callback will also be called for any matching channels that already exist when
  *        the discovery is started.
  */
-void LibusbDiscoverer::start_channel_discovery(const char* specs, size_t specs_len, ChannelDiscoveryContext** handle, Completer<ChannelDiscoveryResult>& on_found_channels) {
+void LibusbDiscoverer::start_channel_discovery(Domain* domain, const char* specs, size_t specs_len, ChannelDiscoveryContext** handle) {
     FIBRE_LOG(D) << "starting discovery with filter \"" << std::string(specs, specs_len) << "\"";
-
-    const char* prev_delim = specs;
 
     InterfaceSpecs interface_specs;
 
-    while (prev_delim < specs + specs_len) {
-        const char* next_delim = std::find(prev_delim, specs + specs_len, ',');
-        
-        bool success = try_parse_key(prev_delim, next_delim, "bus", &interface_specs.bus)
-                    || try_parse_key(prev_delim, next_delim, "address", &interface_specs.address)
-                    || try_parse_key(prev_delim, next_delim, "idVendor", &interface_specs.vendor_id)
-                    || try_parse_key(prev_delim, next_delim, "idProduct", &interface_specs.product_id)
-                    || try_parse_key(prev_delim, next_delim, "bInterfaceClass", &interface_specs.interface_class)
-                    || try_parse_key(prev_delim, next_delim, "bInterfaceSubClass", &interface_specs.interface_subclass)
-                    || try_parse_key(prev_delim, next_delim, "bInterfaceProtocol", &interface_specs.interface_protocol);
+    try_parse_key(specs, specs + specs_len, "bus", &interface_specs.bus);
+    try_parse_key(specs, specs + specs_len, "address", &interface_specs.address);
+    try_parse_key(specs, specs + specs_len, "idVendor", &interface_specs.vendor_id);
+    try_parse_key(specs, specs + specs_len, "idProduct", &interface_specs.product_id);
+    try_parse_key(specs, specs + specs_len, "bInterfaceClass", &interface_specs.interface_class);
+    try_parse_key(specs, specs + specs_len, "bInterfaceSubClass", &interface_specs.interface_subclass);
+    try_parse_key(specs, specs + specs_len, "bInterfaceProtocol", &interface_specs.interface_protocol);
 
-        if (!success) {
-            FIBRE_LOG(E) << "could not interpret channel discovery specs";
-            on_found_channels.complete({kFibreInvalidArgument, nullptr, nullptr});
-            return;
-        }
-
-        prev_delim = std::min(next_delim + 1, specs + specs_len);
-    }
-
-    ChannelDiscoveryContext* subscription = new ChannelDiscoveryContext{interface_specs, &on_found_channels};
+    MyChannelDiscoveryContext* subscription = new MyChannelDiscoveryContext{};
+    subscription->interface_specs = interface_specs;
+    subscription->domain = domain;
     subscriptions_.push_back(subscription);
 
     for (auto& dev: known_devices_) {
@@ -322,9 +292,8 @@ void LibusbDiscoverer::on_event_loop_iteration() {
     if (libusb_get_next_timeout(libusb_ctx_, &timeout)) {
         float timeout_sec = (float)timeout.tv_sec + (float)timeout.tv_usec * 1e-6;
         FIBRE_LOG(D) << "setting event loop timeout to " << timeout_sec << " s";
-        event_loop_timer_ = event_loop_->call_later(timeout_sec, [](void* ctx) {
-            ((LibusbDiscoverer*)ctx)->on_event_loop_iteration();
-        }, this);
+        event_loop_timer_ = event_loop_->call_later(timeout_sec,
+            MEMBER_CB(this, on_event_loop_iteration));
     }
 }
 
@@ -332,9 +301,8 @@ void LibusbDiscoverer::on_event_loop_iteration() {
  * @brief Called when libusb wants to add a file descriptor to our event loop.
  */
 void LibusbDiscoverer::on_add_pollfd(int fd, short events) {
-    event_loop_->register_event(fd, events, [](void* ctx) {
-        ((LibusbDiscoverer*)ctx)->on_event_loop_iteration();
-    }, this);
+    event_loop_->register_event(fd, events,
+        MEMBER_CB(this, on_event_loop_iteration2));
 }
 
 /**
@@ -450,13 +418,12 @@ void LibusbDiscoverer::poll_devices_now() {
 
     // It's possible that the discoverer was deinited during this function.
     if (event_loop_) {
-        device_polling_timer_ = event_loop_->call_later(kPollingIntervalMs * 0.001f, [](void* ctx) {
-            ((LibusbDiscoverer*)ctx)->poll_devices_now();
-        }, this);
+        device_polling_timer_ = event_loop_->call_later(kPollingIntervalMs * 0.001f,
+            MEMBER_CB(this, poll_devices_now));
     }
 }
 
-void LibusbDiscoverer::consider_device(struct libusb_device *device, ChannelDiscoveryContext* subscription) {
+void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDiscoveryContext* subscription) {
     uint8_t bus_number = libusb_get_bus_number(device);
     uint8_t dev_number = libusb_get_device_address(device);
 
@@ -482,7 +449,6 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, ChannelDisc
         }
     }
     
-    static libusb_device_handle *handle = nullptr;
     struct libusb_config_descriptor* config_desc = nullptr;
 
     if (libusb_get_active_config_descriptor(device, &config_desc) != LIBUSB_SUCCESS) {
@@ -532,9 +498,12 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, ChannelDisc
                     continue;
                 }
 
+                size_t mtu = SIZE_MAX;
+
                 LibusbBulkInEndpoint* ep_in = new LibusbBulkInEndpoint();
                 if (libusb_ep_in && ep_in->init(this, my_dev.handle, libusb_ep_in->bEndpointAddress)) {
                     my_dev.ep_in.push_back(ep_in);
+                    mtu = std::min(mtu, (size_t)libusb_ep_in->wMaxPacketSize);
                 } else {
                     delete ep_in;
                     ep_in = nullptr;
@@ -543,14 +512,13 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, ChannelDisc
                 LibusbBulkOutEndpoint* ep_out = new LibusbBulkOutEndpoint();
                 if (libusb_ep_out && ep_out->init(this, my_dev.handle, libusb_ep_out->bEndpointAddress)) {
                     my_dev.ep_out.push_back(ep_out);
+                    mtu = std::min(mtu, (size_t)libusb_ep_out->wMaxPacketSize);
                 } else {
                     delete ep_out;
                     ep_out = nullptr;
                 }
 
-                if (subscription->on_found_channels) {
-                    subscription->on_found_channels->complete({kFibreOk, ep_in, ep_out});
-                }
+                subscription->domain->add_channels({kFibreOk, ep_in, ep_out, mtu});
             }
         }
 
@@ -583,20 +551,20 @@ bool LibusbBulkEndpoint<TRes>::deinit() {
 }
 
 template<typename TRes>
-void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* handle, Completer<TRes>& completer) {
+void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* handle, Callback<void, TRes> completer) {
     if (handle) {
         *handle = reinterpret_cast<TransferHandle>(this);
     }
 
     if (completer_) {
         FIBRE_LOG(E) << "transfer already in progress";
-        completer.complete({kStreamError, nullptr});
+        completer.invoke({kStreamError, nullptr});
         return;
     }
 
     if (!handle_) {
         FIBRE_LOG(E) << "device not open";
-        completer.complete({kStreamError, nullptr});
+        completer.invoke({kStreamError, nullptr});
         return;
     }
 
@@ -607,11 +575,8 @@ void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* h
     // This callback is used if we start our own libusb thread
     // separate from the application's event loop thread
     auto indirect_callback = [](struct libusb_transfer* transfer){
-        ((LibusbBulkEndpoint<TRes>*)transfer->user_data)->parent_->event_loop_->post(
-            [](void* ctx) {
-                ((LibusbBulkEndpoint<TRes>*)ctx)->on_transfer_finished();
-            }, transfer->user_data
-        );
+        auto ep = (LibusbBulkEndpoint<TRes>*)transfer->user_data;
+        ep->parent_->event_loop_->post(MEMBER_CB(ep, on_transfer_finished));
     };
 
     //FIBRE_LOG(D) << "transfer of size " << buffer.size();
@@ -620,7 +585,7 @@ void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* h
         parent_->using_sparate_libusb_thread_ ? indirect_callback : direct_callback,
         this, kBulkTimeoutMs);
     
-    completer_ = &completer;
+    completer_ = completer;
     submit_transfer();
 }
 
@@ -642,10 +607,10 @@ void LibusbBulkEndpoint<TRes>::submit_transfer() {
         FIBRE_LOG(T) << "started USB transfer on EP " << as_hex(endpoint_id_);
     } else if (LIBUSB_ERROR_NO_DEVICE == result) {
         FIBRE_LOG(W) << "couldn't start USB transfer on EP " << as_hex(endpoint_id_) << ": " << libusb_error_name(result);
-        safe_complete(completer_, {kStreamClosed, nullptr});
+        completer_.invoke_and_clear({kStreamClosed, nullptr});
     } else {
         FIBRE_LOG(W) << "couldn't start USB transfer on EP " << as_hex(endpoint_id_) << ": " << libusb_error_name(result);
-        safe_complete(completer_, {kStreamError, nullptr});
+        completer_.invoke_and_clear({kStreamError, nullptr});
     }
 }
 
@@ -671,6 +636,9 @@ void LibusbBulkEndpoint<TRes>::on_transfer_finished() {
         // Sometimes it's LIBUSB_TRANSFER_STALL, sometimes
         // LIBUSB_TRANSFER_ERROR. Therefore we just check if the device
         // is still present to determine which error code to return.
+        // TODO: this detection doesn't really work. The device is still in the
+        // device list at this point when it just got unplugged. For now we
+        // just ignore transfer errors.
 
         bool found = false;
 
@@ -678,8 +646,9 @@ void LibusbBulkEndpoint<TRes>::on_transfer_finished() {
         ssize_t n_devices = libusb_get_device_list(parent_->libusb_ctx_, &list);
 
         if (n_devices >= 0) {
-            for (size_t i = 0; i < n_devices; ++i) {
+            for (size_t i = 0; i < (size_t)n_devices; ++i) {
                 if (list[i] == dev) {
+                    // found = true;
                     break;
                 }
             }
@@ -702,7 +671,7 @@ void LibusbBulkEndpoint<TRes>::on_transfer_finished() {
     }
 
     uint8_t* end = std::max(transfer_->buffer + transfer_->actual_length, transfer_->buffer);
-    safe_complete(completer_, {status, end});
+    completer_.invoke_and_clear({status, end});
     
     // If libusb does hotplug detection itself then we don't need to handle
     // device removal here. Libusb will call the corresponding hotplug callback.
