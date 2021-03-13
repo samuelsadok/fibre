@@ -11,12 +11,14 @@ RUN echo "[custom]" >> /etc/pacman.conf && \
 
 # Install prerequisites for the following targets:
 #  - Linux (AMD64)
-#  - Linux (ARM)
+#  - Linux (ARM 32-bit)
+#  - Linux (AArch64)
 #  - Windows (AMD64)
 #  - macOS (x86_32/AMD64)
 #  - WebAssembly
 RUN pacman -S --noconfirm tup clang gcc binutils wget && \
     pacman -S --noconfirm arm-linux-gnueabihf-gcc arm-linux-gnueabihf-binutils && \
+    pacman -S --noconfirm aarch64-linux-gnu-gcc && \
     pacman -S --noconfirm mingw-w64-gcc mingw-w64-binutils p7zip && \
     pacman -S --noconfirm apple-darwin-osxcross && \
     pacman -S --noconfirm emscripten
@@ -33,6 +35,8 @@ RUN /get_dependencies.sh download_deb_pkg libusb-dev-amd64 "http://mirrors.kerne
     /get_dependencies.sh download_deb_pkg libusb-dev-i386 "http://mirrors.kernel.org/ubuntu/pool/main/libu/libusb-1.0/libusb-1.0-0-dev_1.0.23-2build1_i386.deb" && \
     /get_dependencies.sh download_deb_pkg libusb-armhf "http://mirrordirector.raspbian.org/raspbian/pool/main/libu/libusb-1.0/libusb-1.0-0_1.0.24-2_armhf.deb" && \
     /get_dependencies.sh download_deb_pkg libusb-dev-armhf "http://mirrordirector.raspbian.org/raspbian/pool/main/libu/libusb-1.0/libusb-1.0-0-dev_1.0.24-2_armhf.deb" && \
+    /get_dependencies.sh download_deb_pkg libusb-aarch64 "http://deb.debian.org/debian/pool/main/libu/libusb-1.0/libusb-1.0-0_1.0.24-2_arm64.deb" && \
+    /get_dependencies.sh download_deb_pkg libusb-dev-aarch64 "http://deb.debian.org/debian/pool/main/libu/libusb-1.0/libusb-1.0-0-dev_1.0.24-2_arm64.deb" && \
     /get_dependencies.sh download_deb_pkg libstdc++-linux-armhf "http://mirrors.kernel.org/ubuntu/pool/universe/g/gcc-10-cross/libstdc++-10-dev-armhf-cross_10-20200411-0ubuntu1cross1_all.deb"
 
 

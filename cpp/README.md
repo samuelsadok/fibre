@@ -76,6 +76,12 @@ If something fails you can enter the container interactively with `docker run -i
   1. `brew install libusb`
   2. Navigate to this directory and run `make`
 
+### ARM64 Linux
+  1. `sudo apt install libusb-1.0-0-dev libncurses5`
+  2. Install Clang
+  3. Navigate to this directory
+  4. Run `tup init` and then `tup`. The shared library will be under the `build` directory.
+
 ## Using `libfibre`
 
 The API is documented in [libfibre.h](include/fibre/libfibre.h).
