@@ -90,6 +90,24 @@ struct LegacyProtocolPacketBased;
 class LegacyObjectClient;
 struct LegacyObject;
 
+#if FIBRE_ENABLE_SERVER
+typedef uint8_t ServerFunctionId;
+typedef uint8_t ServerInterfaceId;
+
+// TODO: Use pointer instead? The codec that decodes the object still needs a table
+// to prevent arbitrary memory access.
+typedef uint8_t ServerObjectId;
+
+struct ServerFunctionDefinition {
+    Callback<std::optional<CallBufferRelease>, Domain*, bool, bufptr_t, CallBuffers, Callback<std::optional<CallBuffers>, CallBufferRelease>> impl;
+};
+
+struct ServerObjectDefinition {
+    void* ptr;
+    ServerInterfaceId interface; // TODO: use pointer instead of index? Faster but needs more memory
+};
+#endif
+
 class Domain {
     friend struct Context;
 public:
@@ -101,6 +119,11 @@ public:
 #endif
 
     void add_channels(ChannelDiscoveryResult result);
+
+#if FIBRE_ENABLE_SERVER
+    ServerFunctionDefinition* get_server_function(ServerFunctionId id);
+    ServerObjectDefinition* get_server_object(ServerObjectId id);
+#endif
 
     Context* ctx;
 private:

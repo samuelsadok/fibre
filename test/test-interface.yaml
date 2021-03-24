@@ -16,6 +16,12 @@ interfaces:
       prop_uint32: readonly uint32
       prop_uint32_rw: uint32
       #prop_uint32: readonly uint32
+      subobj:
+        c_is_class: True
+        functions:
+          subfunc: {out: {out1: uint32}}
+        #attributes:
+        #  parent: TestIntf1
     functions:
       func00:
       func01: {out: {out1: uint32}}
@@ -26,3 +32,6 @@ interfaces:
       func20: {in: {in1: uint32, in2: uint32}}
       func21: {in: {in1: uint32, in2: uint32}, out: {out1: uint32}}
       func22: {in: {in1: uint32, in2: uint32}, out: {out1: uint32, out2: uint32}}
+
+exports:
+  test_object: TestIntf1

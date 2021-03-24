@@ -95,6 +95,11 @@ function_traits<_TRet, _TObj, _TArgs...> make_function_traits(_TRet (_TObj::*)(_
     return {};
 }
 
+template<typename _TRet, typename _TObj, typename ... _TArgs>
+function_traits<_TRet, _TObj, _TArgs...> make_function_traits(_TRet (_TObj::*)(_TArgs...) const) {
+    return {};
+}
+
 template<typename T1, T1 T2, typename T3, typename T4, typename T5>
 struct MemberCallback;
 

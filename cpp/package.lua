@@ -92,6 +92,9 @@ function get_fibre_package(args)
     if args.enable_client then
         pkg.code_files += 'legacy_object_client.cpp'
     end
+    if args.enable_server then
+        pkg.code_files += 'legacy_object_server.cpp'
+    end
     if args.enable_client or args.enable_server then
         pkg.code_files += 'legacy_protocol.cpp'
     end

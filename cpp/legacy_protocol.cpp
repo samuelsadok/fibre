@@ -292,33 +292,6 @@ void LegacyProtocolPacketBased::cancel_endpoint_operation(EndpointOperationHandl
 
 #endif
 
-#if FIBRE_ENABLE_SERVER
-
-// Returns part of the JSON interface definition.
-bool fibre::endpoint0_handler(fibre::cbufptr_t* input_buffer, fibre::bufptr_t* output_buffer) {
-    // The request must contain a 32 bit integer to specify an offset
-    std::optional<uint32_t> offset = read_le<uint32_t>(input_buffer);
-    
-    if (!offset.has_value()) {
-        // Didn't receive any offset
-        return false;
-    } else if (*offset == 0xffffffff) {
-        // If the offset is special value 0xFFFFFFFF, send back the JSON version ID instead
-        return write_le<uint32_t>(json_version_id_, output_buffer);
-    } else if (*offset >= embedded_json_length) {
-        // Attempt to read beyond the buffer end - return empty response
-        return true;
-    } else {
-        // Return part of the json file
-        size_t n_copy = std::min(output_buffer->size(), embedded_json_length - (size_t)*offset);
-        memcpy(output_buffer->begin(), embedded_json + *offset, n_copy);
-        *output_buffer = output_buffer->skip(n_copy);
-        return true;
-    }
-}
-
-#endif
-
 void LegacyProtocolPacketBased::on_write_finished(WriteResult result) {
     tx_handle_ = 0;
 
@@ -487,9 +460,9 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
         if (expected_response_length > tx_mtu_ - 2)
             expected_response_length = tx_mtu_ - 2;
 
-        fibre::cbufptr_t input_buffer{rx_buf.begin(), rx_buf.end() - 2};
-        fibre::bufptr_t output_buffer{tx_buf_ + 2, expected_response_length};
-        fibre::endpoint_handler(endpoint_id, &input_buffer, &output_buffer);
+        cbufptr_t input_buffer{rx_buf.begin(), rx_buf.end() - 2};
+        bufptr_t output_buffer{tx_buf_ + 2, expected_response_length};
+        server_.endpoint_handler(domain_, endpoint_id, &input_buffer, &output_buffer);
 
         // Send response
         if (expect_response) {

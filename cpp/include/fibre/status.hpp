@@ -12,7 +12,8 @@ enum Status {
     kFibreInternalError, //!< Bug in the local fibre implementation
     kFibreProtocolError, //!< A remote peer is misbehaving (indicates bug in the remote peer)
     kFibreHostUnreachable, //!< The remote peer can no longer be reached
-    //kFibreInsufficientData, // maybe we will introduce this to tell the caller that the granularity of the data is too small
+    kFibreOutOfMemory, //!< There are not enough local resources to complete the request (this error can also pertain to statically sized buffers, not only heap memory)
+    kFibreInsufficientData, // TODO: review if we need this status code
 };
 
 }

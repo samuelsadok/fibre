@@ -13,8 +13,9 @@
 #ifndef __FIBRE_ENDPOINTS_HPP
 #define __FIBRE_ENDPOINTS_HPP
 
-#include <fibre/introspection.hpp>
+//#include <fibre/introspection.hpp>
 #include <fibre/../../legacy_protocol.hpp>
+#include <fibre/../../protocol.hpp>
 #include <fibre/../../crc.hpp>
 
 // Note: with -Og the functions with large switch statements reserves a huge amount
@@ -32,7 +33,7 @@ const unsigned char embedded_json[] = [[embedded_endpoint_definitions | to_c_str
 const size_t embedded_json_length = sizeof(embedded_json) - 1;
 const uint16_t json_crc_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(PROTOCOL_VERSION, embedded_json, embedded_json_length);
 const uint32_t json_version_id_ = (json_crc_ << 16) | calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(json_crc_, embedded_json, embedded_json_length);
-
+/*
 static void get_property(Introspectable& result, size_t idx) {
     switch (idx) {
 [%- for endpoint in endpoints %]
@@ -84,7 +85,7 @@ bool set_endpoint_from_float(endpoint_ref_t endpoint_ref, float value) {
     const FloatSettableTypeInfo* type_info = dynamic_cast<const FloatSettableTypeInfo*>(property.get_type_info());
     return type_info && type_info->set_float(property, value);
 }
-
+*/
 }
 
 #pragma GCC pop_options

@@ -1,0 +1,39 @@
+
+#include <fibre/object_server.hpp>
+#include "interfaces.hpp"
+
+using namespace fibre;
+
+[%- macro intf_name(intf) %]
+[%- if intf.builtin %]fibre::Property<[['const ' if intf.mode == 'readonly']][[type_name(intf.value_type)]]>
+[%- else %]
+[%- for elem in intf.name %][[elem | to_pascal_case]][['_' if not loop.last]][% endfor %]Intf
+[%- endif %]
+[%- endmacro %]
+
+[%- macro type_name(type) %]
+[%- if type.c_name %][[type.c_name]][% else %]unknown name for [[type]][% endif %]
+[%- endmacro %]
+
+ServerFunctionDefinition fibre::static_server_function_table[] = {
+[%- for func in exported_functions %]
+    { MEMBER_CB((&sync_member_func_wrapper<decltype(&[[intf_name(func.intf)]]::[[func.name[-1]]]), &[[intf_name(func.intf)]]::[[func.name[-1]]]>), entrypoint) },
+[%- endfor %]
+};
+[% for intf in exported_interfaces %]
+template<> ServerInterfaceId fibre::get_interface_id<[[intf_name(intf)]]>() { return [[intf.id]]; };
+[%- endfor %]
+
+// Must be defined by the application
+[%- for obj in published_objects %]
+extern [[intf_name(obj.type)]]* [[obj.name[0]]]_ptr;
+[%- endfor %]
+
+ServerObjectDefinition fibre::static_server_object_table[] = {
+[%- for name, obj in exported_objects.items() %]
+    make_obj([[obj.name[0]]]_ptr[% for elem in obj.name[1:] %]->get_[[elem]]()[% endfor %]),
+[%- endfor %]
+};
+
+size_t fibre::n_static_server_functions = [[exported_functions | length]];
+size_t fibre::n_static_server_objects = [[exported_objects | length]];

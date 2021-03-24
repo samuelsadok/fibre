@@ -7,6 +7,7 @@
 #include <memory>
 #include <algorithm>
 #include <array>
+#include "static_exports.hpp"
 
 #if FIBRE_ALLOW_HEAP
 #include <unordered_map>
@@ -240,7 +241,7 @@ void Domain::add_channels(ChannelDiscoveryResult result) {
 
 #if FIBRE_ENABLE_CLIENT || FIBRE_ENABLE_SERVER
     // Deleted during on_stopped()
-    auto protocol = new fibre::LegacyProtocolPacketBased(result.rx_channel, result.tx_channel, result.mtu);
+    auto protocol = new fibre::LegacyProtocolPacketBased(this, result.rx_channel, result.tx_channel, result.mtu);
 #if FIBRE_ENABLE_CLIENT
     protocol->start(MEMBER_CB(this, on_found_root_object), MEMBER_CB(this, on_lost_root_object), MEMBER_CB(this, on_stopped));
 #else
@@ -268,3 +269,18 @@ void Domain::on_lost_root_object(LegacyObjectClient* obj_client, std::shared_ptr
 void Domain::on_stopped(LegacyProtocolPacketBased* protocol, StreamStatus status) {
     delete protocol;
 }
+
+#if FIBRE_ENABLE_SERVER
+ServerFunctionDefinition* Domain::get_server_function(ServerFunctionId id) {
+    if (id < n_static_server_functions) {
+        return &static_server_function_table[id];
+    }
+    return nullptr;
+}
+ServerObjectDefinition* Domain::get_server_object(ServerObjectId id) {
+    if (id < n_static_server_objects) {
+        return &static_server_object_table[id];
+    }
+    return nullptr;
+}
+#endif

@@ -639,6 +639,8 @@ public:
 * For an empty TypeList, the return type is void. For a list with
 * one type, the return type is equal to that type. For a list with
 * more than one items, the return type is a tuple.
+*
+* TODO: this is redundant with as_tuple
 */
 template<typename ... Types>
 struct return_type;
@@ -1042,6 +1044,11 @@ struct result_of<TRet(&)(TArgs...)> {
 };
 
 template<typename TRet, typename TObj, typename... TArgs>
+struct result_of<TRet(TObj::*)(TArgs...)> {
+    using type = TRet;
+};
+
+template<typename TRet, typename TObj, typename... TArgs>
 struct result_of<TRet(TObj::*)(TArgs...) const> {
     using type = TRet;
 };
@@ -1079,16 +1086,32 @@ using tuple_cat_t = decltype(std::tuple_cat<TTuples...>(std::declval<TTuples>().
 template<typename T = void>
 struct as_tuple {
     using type = std::tuple<T>;
+
+    template<typename TFunc>
+    static std::tuple<T> wrap_result(TFunc func) {
+        return {func()};
+    }
 };
 
 template<>
 struct as_tuple<void> {
     using type = std::tuple<>;
+
+    template<typename TFunc>
+    static std::tuple<> wrap_result(TFunc func) {
+        func();
+        return {};
+    }
 };
 
 template<typename... Ts>
 struct as_tuple<std::tuple<Ts...>> {
     using type = std::tuple<Ts...>;
+
+    template<typename TFunc>
+    static std::tuple<Ts...> wrap_result(TFunc func) {
+        return func();
+    }
 };
 
 template<typename T>

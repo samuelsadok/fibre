@@ -54,7 +54,7 @@
             "name": "C++ Test Server",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/test/test_server.elf",
+            "program": "${workspaceFolder}/test/build/test_server.elf",
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/test",
             "environment": [{"name": "FIBRE_LOG", "value": "5"}],

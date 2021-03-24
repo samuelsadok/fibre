@@ -9,6 +9,9 @@
 #include <optional>
 #include <queue>
 #endif
+#if FIBRE_ENABLE_SERVER
+#include "legacy_object_server.hpp"
+#endif
 
 namespace fibre {
 
@@ -90,11 +93,12 @@ private:
 
 struct LegacyProtocolPacketBased {
 public:
-    LegacyProtocolPacketBased(AsyncStreamSource* rx_channel, AsyncStreamSink* tx_channel, size_t tx_mtu)
-        : rx_channel_(rx_channel), tx_channel_(tx_channel), tx_mtu_(std::min(tx_mtu, sizeof(tx_buf_))) {}
+    LegacyProtocolPacketBased(Domain* domain, AsyncStreamSource* rx_channel, AsyncStreamSink* tx_channel, size_t tx_mtu)
+        : domain_(domain), rx_channel_(rx_channel), tx_channel_(tx_channel), tx_mtu_(std::min(tx_mtu, sizeof(tx_buf_))) {}
 
-    AsyncStreamSource* rx_channel_ = nullptr;
-    AsyncStreamSink* tx_channel_ = nullptr;
+    Domain* domain_;
+    AsyncStreamSource* rx_channel_;
+    AsyncStreamSink* tx_channel_;
     size_t tx_mtu_;
     uint8_t tx_buf_[128];
     uint8_t rx_buf_[128];
@@ -112,6 +116,10 @@ public:
     void cancel_endpoint_operation(EndpointOperationHandle handle);
 
     LegacyObjectClient client_{this};
+#endif
+
+#if FIBRE_ENABLE_SERVER
+    LegacyObjectServer server_;
 #endif
 
 #if FIBRE_ENABLE_CLIENT
@@ -150,8 +158,8 @@ private:
 
 struct LegacyProtocolStreamBased {
 public:
-    LegacyProtocolStreamBased(AsyncStreamSource* rx_channel, AsyncStreamSink* tx_channel)
-        : unwrapper_(rx_channel), wrapper_(tx_channel) {}
+    LegacyProtocolStreamBased(Domain* domain, AsyncStreamSource* rx_channel, AsyncStreamSink* tx_channel)
+        : unwrapper_(rx_channel), wrapper_(tx_channel), inner_protocol_{domain, &unwrapper_, &wrapper_, 127} {}
 
 
 #if FIBRE_ENABLE_CLIENT
@@ -165,7 +173,7 @@ public:
 private:
     PacketUnwrapper unwrapper_;
     PacketWrapper wrapper_;
-    LegacyProtocolPacketBased inner_protocol_{&unwrapper_, &wrapper_, 127};
+    LegacyProtocolPacketBased inner_protocol_;
 };
 
 }

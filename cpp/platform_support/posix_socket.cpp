@@ -12,6 +12,7 @@
 #include <netdb.h>
 #include <signal.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 
 DEFINE_LOG_TOPIC(SOCKET);
 USE_LOG_TOPIC(SOCKET);
@@ -69,7 +70,7 @@ struct fibre::AddressResolutionContext {
     struct gaicb gaicb{};
     struct gaicb* list[1];
 
-    void on_gai_completed();
+    void on_gai_completed(uint32_t);
 };
 
 bool fibre::start_resolving_address(EventLoop* event_loop, std::tuple<std::string, int> address, bool passive, AddressResolutionContext** handle, Callback<void, std::optional<cbufptr_t>> callback) {
@@ -106,9 +107,17 @@ bool fibre::start_resolving_address(EventLoop* event_loop, std::tuple<std::strin
         .sigev_notify = SIGEV_THREAD,
     };
     sig.sigev_notify_function = [](union sigval sigval) {
-        auto ctx = ((AddressResolutionContext*)sigval.sival_ptr);
-        ctx->event_loop->post(MEMBER_CB(ctx, on_gai_completed));
+        auto ctx = ((AddressResolutionContext*)sigval.sival_ptr);    
+        const uint64_t val = 1;
+        write(ctx->cmpl_fd, &val, sizeof(val));
     };
+
+
+    // Note: we can't use event_loop->post from the other thread because in the
+    // meantime the ref count of the event loop might have gone to zero.
+
+    ctx->cmpl_fd = eventfd(0, 0);
+    event_loop->register_event(ctx->cmpl_fd, EPOLLIN, MEMBER_CB(ctx, on_gai_completed));
 
     FIBRE_LOG(D) << "starting address resolution for " << ctx->address_str;
     if (getaddrinfo_a(GAI_NOWAIT, ctx->list, 1, &sig) != 0) {
@@ -124,7 +133,11 @@ void fibre::cancel_resolving_address(AddressResolutionContext* handle) {
     gai_cancel(&handle->gaicb);
 }
 
-void AddressResolutionContext::on_gai_completed() {
+void AddressResolutionContext::on_gai_completed(uint32_t) {
+    if (!event_loop->deregister_event(cmpl_fd)) {
+        FIBRE_LOG(W) << "failed to deregister event";
+    }
+
     FIBRE_LOG(D) << "address resolution complete";
     if (gai_error(&gaicb) != 0) {
         FIBRE_LOG(W) << "failed to resolve " << address_str << ": " << sys_err();

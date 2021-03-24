@@ -111,6 +111,9 @@ properties:
   valuetypes:
     type: object
     additionalProperties: { "$ref": "#/definitions/valuetype" }
+  exports:
+    type: object
+    additionalProperties: { "$ref": "#/definitions/intf_type_ref" }
   userdata:
     type: object
   __line__: {type: object}
@@ -160,7 +163,9 @@ def join_name(*names, delimiter: str = '.'):
     Joins two name components.
     e.g. 'io.helloworld' + 'sayhello' => 'io.helloworld.sayhello'
     """
-    return delimiter.join(y for x in names for y in x.split(delimiter) if y != '')
+
+    #return delimiter.join(y for x in names for y in x.split(delimiter) if y != '')
+    return NameInfo(*names)
 
 def split_name(name, delimiter: str = '.'):
     def replace_delimiter_in_parentheses():
@@ -176,42 +181,31 @@ def to_macro_case(s): return '_'.join(get_words(s)).upper()
 def to_snake_case(s): return '_'.join(get_words(s)).lower()
 def to_kebab_case(s): return '-'.join(get_words(s)).lower()
 
-value_types = OrderedDict({
-    'bool': {'builtin': True, 'fullname': 'bool', 'name': 'bool', 'c_name': 'bool', 'py_type': 'bool'},
-    'float32': {'builtin': True, 'fullname': 'float32', 'name': 'float32', 'c_name': 'float', 'py_type': 'float'},
-    'uint8': {'builtin': True, 'fullname': 'uint8', 'name': 'uint8', 'c_name': 'uint8_t', 'py_type': 'int'},
-    'uint16': {'builtin': True, 'fullname': 'uint16', 'name': 'uint16', 'c_name': 'uint16_t', 'py_type': 'int'},
-    'uint32': {'builtin': True, 'fullname': 'uint32', 'name': 'uint32', 'c_name': 'uint32_t', 'py_type': 'int'},
-    'uint64': {'builtin': True, 'fullname': 'uint64', 'name': 'uint64', 'c_name': 'uint64_t', 'py_type': 'int'},
-    'int8': {'builtin': True, 'fullname': 'int8', 'name': 'int8', 'c_name': 'int8_t', 'py_type': 'int'},
-    'int16': {'builtin': True, 'fullname': 'int16', 'name': 'int16', 'c_name': 'int16_t', 'py_type': 'int'},
-    'int32': {'builtin': True, 'fullname': 'int32', 'name': 'int32', 'c_name': 'int32_t', 'py_type': 'int'},
-    'int64': {'builtin': True, 'fullname': 'int64', 'name': 'int64', 'c_name': 'int64_t', 'py_type': 'int'},
-    'endpoint_ref': {'builtin': True, 'fullname': 'endpoint_ref', 'name': 'endpoint_ref', 'c_name': 'endpoint_ref_t', 'py_type': '[not implemented]'},
-})
 
-enums = OrderedDict()
-interfaces = OrderedDict()
-userdata = OrderedDict() # Arbitrary data passed from the definition file to the template
+class NameInfo():
+    def __init__(self, *parts):
+        flat_parts = []
+        for p in parts:
+            if isinstance(p, NameInfo):
+                flat_parts += list(p)
+            elif isinstance(p, str):
+                flat_parts += split_name(p)
+            else:
+                raise Exception("unexpected type " + str(type(p)))
+        self.__parts = flat_parts
 
-def make_ref_type(interface):
-    name = 'Ref<' + interface.fullname + '>'
-    fullname = join_name('fibre', name)
-    if fullname in interfaces:
-        return interfaces[fullname]
+    def __getitem__(self, index):
+        return self.__parts[index]
 
-    ref_type = {
-        'builtin': True,
-        'name': name,
-        'fullname': fullname,
-        'c_name': interface.fullname.replace('.', 'Intf::') + 'Intf*'
-    }
-    value_types[fullname] = ref_type
+    def __len__(self):
+        return len(self.__parts)
 
-    return ref_type
+    def __repr__(self):
+        return "Fibre Name \"" + self.get_fibre_name() + "\""
 
-def get_dict(elem, key):
-    return elem.get(key, None) or OrderedDict()
+    def get_fibre_name(self):
+        return ".".join((n for n in self))
+
 
 class ArgumentElement():
     def __init__(self, path, name, elem):
@@ -219,58 +213,9 @@ class ArgumentElement():
             elem = {}
         elif isinstance(elem, str):
             elem = {'type': elem}
-        self.name = name
-        self.fullname = path = join_name(path, name)
-        self.type = regularize_valuetype(path, name, elem['type'])
+        self.name = join_name(path, name)
+        self.type = ValueTypeRefElement(path, name, elem['type'], [])
 
-def regularize_func(path, name, elem, prepend_args):
-    if elem is None:
-        elem = {}
-    elem['name'] = name
-    elem['fullname'] = path = join_name(path, name)
-    elem['in'] = OrderedDict((n, ArgumentElement(path, n, arg))
-                             for n, arg in (*prepend_args.items(), *get_dict(elem, 'in').items()))
-    elem['out'] = OrderedDict((n, ArgumentElement(path, n, arg))
-                              for n, arg in get_dict(elem, 'out').items())
-    return elem
-
-def regularize_attribute(parent, name, elem, c_is_class):
-    if elem is None:
-        elem = {}
-    if isinstance(elem, str):
-        elem = {'type': elem}
-    elif not 'type' in elem:
-        elem['type'] = {}
-        if 'attributes' in elem: elem['type']['attributes'] = elem.pop('attributes')
-        if 'functions' in elem: elem['type']['functions'] = elem.pop('functions')
-        if 'implements' in elem: elem['type']['implements'] = elem.pop('implements')
-        if 'c_is_class' in elem: elem['type']['c_is_class'] = elem.pop('c_is_class')
-        if 'values' in elem: elem['type']['values'] = elem.pop('values')
-        if 'flags' in elem: elem['type']['flags'] = elem.pop('flags')
-        if 'nullflag' in elem: elem['type']['nullflag'] = elem.pop('nullflag')
-    
-    elem['name'] = name
-    elem['fullname'] = join_name(parent.fullname, name)
-    elem['parent'] = parent
-    elem['typeargs'] = elem.get('typeargs', {})
-    elem['c_name'] = elem.get('c_name', None) or (elem['name'] + ('_' if c_is_class else ''))
-    if ('c_getter' in elem) or ('c_setter' in elem):
-        elem['c_getter'] = elem.get('c_getter', elem['c_name'])
-        elem['c_setter'] = elem.get('c_setter', elem['c_name'] + ' = ')
-
-    if isinstance(elem['type'], str) and elem['type'].startswith('readonly '):
-        elem['typeargs']['fibre.Property.mode'] = 'readonly'
-        elem['typeargs']['fibre.Property.type'] = elem['type'][len('readonly '):]
-        elem['type'] = InterfaceRefElement(parent.fullname, None, 'fibre.Property', elem['typeargs'])
-        if elem['typeargs']['fibre.Property.mode'] == 'readonly' and 'c_setter' in elem: elem.pop('c_setter')
-    elif ('flags' in elem['type']) or ('values' in elem['type']):
-        elem['typeargs']['fibre.Property.mode'] = elem['typeargs'].get('fibre.Property.mode', None) or 'readwrite'
-        elem['typeargs']['fibre.Property.type'] = regularize_valuetype(parent.fullname, to_pascal_case(name), elem['type'])
-        elem['type'] = InterfaceRefElement(parent.fullname, None, 'fibre.Property', elem['typeargs'])
-        if elem['typeargs']['fibre.Property.mode'] == 'readonly' and 'c_setter' in elem: elem.pop('c_setter')
-    else:
-        elem['type'] = InterfaceRefElement(parent.fullname, to_pascal_case(name), elem['type'], elem['typeargs'])
-    return elem
 
 class InterfaceRefElement():
     def __init__(self, scope, name, elem, typeargs):
@@ -291,47 +236,82 @@ class InterfaceRefElement():
         At every scope level, if no matching interface is found, it is checked if a
         matching value type exists. If so, the interface type fibre.Property<value_type>
         is returned.
+
+        This also adds the interface element to the global interface list and
+        recursively resolves any on-demand created types.
         """
         if not self._intf is None:
+            if self._intf.name.get_fibre_name() in interfaces:
+                raise Exception("redefinition of " + str(self._intf.name))
+            interfaces[self._intf.name.get_fibre_name()] = self._intf
+            deep_resolve(self._intf)
             return self._intf
 
         typeargs = self._typeargs
-        if 'fibre.Property.type' in typeargs:
-            typeargs['fibre.Property.type'] = resolve_valuetype(self._scope, typeargs['fibre.Property.type'])
+        if 'fibre.Property.type' in typeargs and isinstance(typeargs['fibre.Property.type'], ValueTypeRefElement):
+            typeargs['fibre.Property.type'] = typeargs['fibre.Property.type'].resolve()
 
-        scope = self._scope.split('.')
-        for probe_scope in [join_name(*scope[:(len(scope)-i)]) for i in range(len(scope)+1)]:
-            probe_name = join_name(probe_scope, self._name)
+        for probe_scope in [join_name(*self._scope[:(len(self._scope)-i)]) for i in range(len(self._scope)+1)]:
+            probe_name = join_name(probe_scope, self._name).get_fibre_name()
             #print('probing ' + probe_name)
             if probe_name in interfaces:
                 return interfaces[probe_name]
             elif probe_name in value_types:
                 typeargs['fibre.Property.type'] = value_types[probe_name]
-                return make_property_type(typeargs)
+                return get_property_type(typeargs)
             elif probe_name in generics:
                 return generics[probe_name](typeargs)
 
         raise Exception('could not resolve type {} in {}. Known interfaces are: {}. Known value types are: {}'.format(self._name, self._scope, list(interfaces.keys()), list(value_types.keys())))
+
+
+class ValueTypeRefElement():
+    def __init__(self, scope, name, elem, typeargs = []):
+        if isinstance(elem, str):
+            self._val_type = None
+            self._scope = scope
+            self._name = elem
+        else:
+            self._val_type = ValueTypeElement(scope, name, elem)
+            self._scope = None
+            self._name = None
+        self._typeargs = typeargs
+
+    def resolve(self):
+        """
+        Resolves this value type reference to an actual ValueTypeElement instance.
+        The innermost scope is searched first.
+        """
+        if not self._val_type is None:
+            value_types[self._val_type.name.get_fibre_name()] = self._intf
+            return self._val_type
+    
+        for probe_scope in [join_name(*self._scope[:(len(self._scope)-i)]) for i in range(len(self._scope)+1)]:
+            probe_name = join_name(probe_scope, self._name).get_fibre_name()
+            if probe_name in value_types:
+                return value_types[probe_name]
+            elif probe_name.startswith("fibre.Ref<"):
+                return get_ref_type(interfaces[probe_name[10:-1]]) # TODO: this is a bit hacky
+
+        raise Exception('could not resolve type {} in {}. Known value types are: {}'.format(self._name, self._scope, list(value_types.keys())))
+
 
 class InterfaceElement():
     def __init__(self, path, name, elem):
         if elem is None:
             elem = {}
         assert(isinstance(elem, dict))
-        
-        path = join_name(path, name)
-        interfaces[path] = self
 
-        self.name = split_name(name)[-1]
-        self.fullname = path
-        self.c_name = elem.get('c_name', self.fullname.replace('.', 'Intf::')) + 'Intf'
+        #self.name = split_name(name)[-1]
+        self.name = NameInfo(path, name)
+        #self.c_name = elem.get('c_name', self.fullname.replace('.', 'Intf::')) + 'Intf'
         
         if not 'implements' in elem:
             elem['implements'] = []
         elif isinstance(elem['implements'], str):
             elem['implements'] = [elem['implements']]
-        self.implements = [InterfaceRefElement(path, None, elem, {}) for elem in elem['implements']]
-        self.functions = OrderedDict((name, regularize_func(path, name, func, {'obj': {'type': make_ref_type(self)}}))
+        self.implements = [InterfaceRefElement(self.name, None, elem, {}) for elem in elem['implements']]
+        self.functions = OrderedDict((name, regularize_func(self, name, func, {'obj': {'type': 'fibre.Ref<' + self.name.get_fibre_name() + '>'}}))
                                         for name, func in get_dict(elem, 'functions').items())
         if not 'c_is_class' in elem:
             raise Exception(elem)
@@ -357,12 +337,68 @@ class InterfaceElement():
         result.update(self.functions)
         return result
 
-class PropertyInterfaceElement(InterfaceElement):
-    def __init__(self, name, fullname, mode, value_type):
+
+class ValueTypeElement():
+    def __init__(self, path, name, elem):
+        if elem is None:
+            elem = {}
+        print(type(elem))
+        assert(isinstance(elem, dict))
+
+        self.name = join_name(path, name)
+        #elem['c_name'] = elem.get('c_name', elem['fullname'].replace('.', 'Intf::'))
+        #value_types[self.name.get_fibre_name()] = self
+
+        if 'flags' in elem: # treat as flags
+            bit = 0
+            for k, v in elem['flags'].items():
+                elem['flags'][k] = elem['flags'][k] or OrderedDict()
+                elem['flags'][k]['name'] = k
+                current_bit = elem['flags'][k].get('bit', bit)
+                elem['flags'][k]['bit'] = current_bit
+                elem['flags'][k]['value'] = 0 if current_bit is None else (1 << current_bit)
+                bit = bit if current_bit is None else current_bit + 1
+            if 'nullflag' in elem:
+                elem['flags'] = OrderedDict([(elem['nullflag'], OrderedDict({'name': elem['nullflag'], 'value': 0, 'bit': None})), *elem['flags'].items()])
+            self.values = elem['flags']
+            self.is_flags = True
+            self.is_enum = True
+            enums[path] = elem
+
+        elif 'values' in elem: # treat as enum
+            val = 0
+            self.values = {}
+            for k, v in elem['values'].items():
+                self.values[k] = elem['values'][k] or OrderedDict()
+                self.values[k]['name'] = k
+                val = self.values[k].get('value', val)
+                self.values[k]['value'] = val
+                val += 1
+            enums[path] = elem
+            self.is_flags = False
+            self.is_enum = True
+
+        else:
+            print(elem)
+            raise Exception("unable to interpret as value type")
+
+
+class RefType(ValueTypeElement):
+    def __init__(self, interface):
+        assert(isinstance(interface, InterfaceElement))
+        self.name = NameInfo('fibre', 'Ref<' + interface.name.get_fibre_name() + '>')
+
+
+class BasicValueType(ValueTypeElement):
+    def __init__(self, name, info):
         self.name = name
-        self.fullname = fullname
-        self.purename = 'fibre.Property'
-        self.c_name = 'Property<' + ('const ' if mode == 'readonly' else '') + value_type['c_name'] + '>'
+        self.c_name = info['c_name']
+
+
+class PropertyInterfaceElement(InterfaceElement):
+    def __init__(self, name, mode, value_type):
+        self.name = name
+        #self.c_name = 'Property<' + ('const ' if mode == 'readonly' else '') + value_type['c_name'] + '>'
         self.value_type = value_type # TODO: should be a metaarg
         self.mode = mode # TODO: should be a metaarg
         self.builtin = True
@@ -370,97 +406,98 @@ class PropertyInterfaceElement(InterfaceElement):
         self.functions = OrderedDict()
         if mode != 'readonly':
             self.functions['exchange'] = {
-                'name': 'exchange',
-                'fullname': join_name(fullname, 'exchange'),
-                'in': OrderedDict([('obj', {'name': 'obj', 'type': {'c_name': self.c_name}}), ('value', {'name': 'value', 'type': value_type, 'optional': True})]),
-                'out': OrderedDict([('value', {'name': 'value', 'type': value_type})]),
+                'name': join_name(name, 'exchange'),
+                'intf': self,
+                'in': OrderedDict([('obj', ArgumentElement(name, 'obj', 'fibre.Ref<' + self.name.get_fibre_name() + '>')),
+                                   ('value', ArgumentElement(name, 'value', value_type.name.get_fibre_name()))]),
+                'out': OrderedDict([('value', ArgumentElement(name, 'value', value_type.name.get_fibre_name()))]),
                 #'implementation': 'fibre_property_exchange<' + value_type['c_name'] + '>'
             }
-        else:
-            self.functions['read'] = {
-                'name': 'read',
-                'fullname': join_name(fullname, 'read'),
-                'in': OrderedDict([('obj', {'name': 'obj', 'type': {'c_name': self.c_name}})]),
-                'out': OrderedDict([('value', {'name': 'value', 'type': value_type})]),
-                #'implementation': 'fibre_property_read<' + value_type['c_name'] + '>'
-            }
+        self.functions['read'] = {
+            'name': join_name(name, 'read'),
+            'intf': self,
+            'in': OrderedDict([('obj', ArgumentElement(name, 'obj', 'fibre.Ref<' + self.name.get_fibre_name() + '>'))]),
+            'out': OrderedDict([('value', ArgumentElement(name, 'value', value_type.name.get_fibre_name()))]),
+            #'implementation': 'fibre_property_read<' + value_type['c_name'] + '>'
+        }
 
-        interfaces[fullname] = self # TODO: not good to write to a global here
 
-def make_property_type(typeargs):
-    value_type = resolve_valuetype('', typeargs['fibre.Property.type'])
-    mode = typeargs.get('fibre.Property.mode', 'readwrite')
-    name = 'Property<' + value_type['fullname'] + ', ' + mode + '>'
-    fullname = join_name('fibre', name)
-    if fullname in interfaces:
-        return interfaces[fullname]
-    else:
-        prop = PropertyInterfaceElement(name, fullname, mode, value_type)
-        interfaces[fullname] = prop
-        return prop
+def get_dict(elem, key):
+    return elem.get(key, None) or OrderedDict()
 
-generics = {
-    'fibre.Property': make_property_type # TODO: improve generic support
-}
+def regularize_func(intf, name, elem, prepend_args):
+    if elem is None:
+        elem = {}
+    elem['intf'] = intf
+    elem['name'] = join_name(intf.name, name)
+    elem['in'] = OrderedDict((n, ArgumentElement(elem['name'], n, arg))
+                             for n, arg in (*prepend_args.items(), *get_dict(elem, 'in').items()))
+    elem['out'] = OrderedDict((n, ArgumentElement(elem['name'], n, arg))
+                              for n, arg in get_dict(elem, 'out').items())
+    return elem
 
-def regularize_valuetype(path, name, elem):
+def regularize_attribute(parent, name, elem, c_is_class):
     if elem is None:
         elem = {}
     if isinstance(elem, str):
-        return elem # will be resolved during type resolution
-    elem['name'] = split_name(name)[-1]
-    elem['fullname'] = path = join_name(path, name)
-    elem['c_name'] = elem.get('c_name', elem['fullname'].replace('.', 'Intf::'))
-    value_types[path] = elem
-
-    if 'flags' in elem: # treat as flags
-        bit = 0
-        for k, v in elem['flags'].items():
-            elem['flags'][k] = elem['flags'][k] or OrderedDict()
-            elem['flags'][k]['name'] = k
-            current_bit = elem['flags'][k].get('bit', bit)
-            elem['flags'][k]['bit'] = current_bit
-            elem['flags'][k]['value'] = 0 if current_bit is None else (1 << current_bit)
-            bit = bit if current_bit is None else current_bit + 1
-        if 'nullflag' in elem:
-            elem['flags'] = OrderedDict([(elem['nullflag'], OrderedDict({'name': elem['nullflag'], 'value': 0, 'bit': None})), *elem['flags'].items()])
-        elem['values'] = elem['flags']
-        elem['is_flags'] = True
-        elem['is_enum'] = True
-        enums[path] = elem
-
-    elif 'values' in elem: # treat as enum
-        val = 0
-        for k, v in elem['values'].items():
-            elem['values'][k] = elem['values'][k] or OrderedDict()
-            elem['values'][k]['name'] = k
-            val = elem['values'][k].get('value', val)
-            elem['values'][k]['value'] = val
-            val += 1
-        enums[path] = elem
-        elem['is_enum'] = True
+        elem = {'type': elem}
+    elif not 'type' in elem:
+        elem['type'] = {}
+        if 'attributes' in elem: elem['type']['attributes'] = elem.pop('attributes')
+        if 'functions' in elem: elem['type']['functions'] = elem.pop('functions')
+        if 'implements' in elem: elem['type']['implements'] = elem.pop('implements')
+        if 'c_is_class' in elem: elem['type']['c_is_class'] = elem.pop('c_is_class')
+        if 'values' in elem: elem['type']['values'] = elem.pop('values')
+        if 'flags' in elem: elem['type']['flags'] = elem.pop('flags')
+        if 'nullflag' in elem: elem['type']['nullflag'] = elem.pop('nullflag')
     
+    #elem['name'] = name
+    elem['name'] = join_name(parent.name, name)
+    elem['parent'] = parent
+    elem['typeargs'] = elem.get('typeargs', {})
+    #elem['c_name'] = elem.get('c_name', None) or (elem['name'] + ('_' if c_is_class else ''))
+    if ('c_getter' in elem) or ('c_setter' in elem):
+        elem['c_getter'] = elem.get('c_getter', elem['c_name'])
+        elem['c_setter'] = elem.get('c_setter', elem['c_name'] + ' = ')
+
+    if isinstance(elem['type'], str) and elem['type'].startswith('readonly '):
+        elem['typeargs']['fibre.Property.mode'] = 'readonly'
+        elem['typeargs']['fibre.Property.type'] = ValueTypeRefElement(parent.name, None, elem['type'][len('readonly '):])
+        elem['type'] = InterfaceRefElement(parent.name, None, 'fibre.Property', elem['typeargs'])
+        if elem['typeargs']['fibre.Property.mode'] == 'readonly' and 'c_setter' in elem: elem.pop('c_setter')
+    elif ('flags' in elem['type']) or ('values' in elem['type']):
+        elem['typeargs']['fibre.Property.mode'] = elem['typeargs'].get('fibre.Property.mode', None) or 'readwrite'
+        elem['typeargs']['fibre.Property.type'] = ValueTypeRefElement(parent.name, to_pascal_case(name), elem['type'])
+        elem['type'] = InterfaceRefElement(parent.name, None, 'fibre.Property', elem['typeargs'])
+        if elem['typeargs']['fibre.Property.mode'] == 'readonly' and 'c_setter' in elem: elem.pop('c_setter')
+    else:
+        elem['type'] = InterfaceRefElement(parent.name, to_pascal_case(name), elem['type'], elem['typeargs'])
     return elem
 
-def resolve_valuetype(scope, name):
-    """
-    Resolves a type name given as a string to the type object.
-    The innermost scope is searched first.
-    """
-    if not isinstance(name, str):
-        return name
-    
-    scope = scope.split('.')
-    for probe_scope in [join_name(*scope[:(len(scope)-i)]) for i in range(len(scope)+1)]:
-        probe_name = join_name(probe_scope, name)
-        if probe_name in value_types:
-            return value_types[probe_name]
+def get_ref_type(interface):
+    name = NameInfo('fibre', 'Ref<' + interface.name.get_fibre_name() + '>')
+    ref_type = value_types.get(name.get_fibre_name(), None)
+    if ref_type is None:
+        value_types[name.get_fibre_name()] = ref_type = RefType(interface)
+    return ref_type
 
-    raise Exception('could not resolve type {} in {}. Known value types are: {}'.format(name, join_name(*scope), list(value_types.keys())))
+def get_property_type(typeargs):
+    assert(isinstance(typeargs['fibre.Property.type'], ValueTypeElement))
+    value_type = typeargs['fibre.Property.type']
+    mode = typeargs.get('fibre.Property.mode', 'readwrite')
+    name = NameInfo('fibre', 'Property<' + value_type.name.get_fibre_name() + ', ' + mode + '>')
+    prop_type = interfaces.get(name.get_fibre_name(), None)
+    if prop_type is None:
+        interfaces[name.get_fibre_name()] = prop_type = PropertyInterfaceElement(name, mode, value_type)
+        deep_resolve(prop_type)
+    return prop_type
+
+
+
 
 
 def map_to_fibre01_type(t):
-    if t.get('is_enum', False):
+    if hasattr(t, 'is_enum') and t.is_enum:
         max_val = max(v['value'] for v in t['values'].values())
         if max_val <= 0xff:
             return 'uint8'
@@ -472,9 +509,12 @@ def map_to_fibre01_type(t):
             return 'uint64'
         else:
             raise Exception("enum with a maximum value of " + str(max_val) + " not supported")
-    elif t['fullname'] == 'float32':
+    elif t.name.get_fibre_name() == 'float32':
         return 'float'
-    return t['fullname']
+    return t.name.get_fibre_name()
+
+legacy_sizes = {'uint8': 1, 'int8': 1, 'uint16': 2, 'int16': 2, 'uint32': 4,
+                'int32': 4, 'uint64': 8, 'int64': 8, 'float': 1}
 
 def generate_endpoint_for_property(prop, attr_bindto, idx):
     prop_intf = interfaces[prop['type'].fullname]
@@ -504,7 +544,7 @@ def generate_endpoint_table(intf, bindto, idx):
     cnt = 0
 
     for k, prop in intf.get_all_attributes().items():
-        property_value_type = re.findall('^fibre\.Property<([^>]*), (readonly|readwrite)>$', prop['type'].fullname)
+        property_value_type = re.findall('^fibre\.Property<([^>]*), (readonly|readwrite)>$', prop['type'].name.get_fibre_name())
         #attr_bindto = join_name(bindto, bindings_map.get(join_name(intf['fullname'], k), k + ('_' if len(intf['functions']) or (intf['fullname'] in treat_as_classes) else '')))
         attr_bindto = intf.c_name + '::get_' + prop['name'] + '(' + bindto + ')'
         if len(property_value_type):
@@ -535,14 +575,14 @@ def generate_endpoint_table(intf, bindto, idx):
         for i, (k_arg, arg) in enumerate(list(func['in'].items())[1:]):
             endpoint, endpoint_definition = generate_endpoint_for_property({
                 'name': arg.name,
-                'type': make_property_type({'fibre.Property.type': arg.type, 'fibre.Property.mode': 'readwrite'})
+                'type': get_property_type({'fibre.Property.type': arg.type, 'fibre.Property.mode': 'readwrite'})
             }, intf.c_name + '::get_' + func['name'] + '_in_' + k_arg + '_' + '(' + bindto + ')', idx + cnt + 1 + i)
             endpoints.append(endpoint)
             in_def.append(endpoint_definition)
         for i, (k_arg, arg) in enumerate(func['out'].items()):
             endpoint, endpoint_definition = generate_endpoint_for_property({
                 'name': arg.name,
-                'type': make_property_type({'fibre.Property.type': arg.type, 'fibre.Property.mode': 'readonly'})
+                'type': get_property_type({'fibre.Property.type': arg.type, 'fibre.Property.mode': 'readonly'})
             }, intf.c_name + '::get_' + func['name'] + '_out_' + k_arg + '_' + '(' + bindto + ')', idx + cnt + len(func['in']) + i)
             endpoints.append(endpoint)
             out_def.append(endpoint_definition)
@@ -580,7 +620,7 @@ parser.add_argument("--generate-endpoints", type=str, nargs='?',
 args = parser.parse_args()
 
 if args.version:
-    print("0.0.1")
+    print("0.1.0")
     sys.exit(0)
 
 
@@ -589,6 +629,26 @@ template_file = args.template
 
 
 # Load definition files
+
+# Add built-in types
+value_types = OrderedDict({
+    'bool': BasicValueType(NameInfo('bool'), {'c_name': 'bool', 'py_type': 'bool'}),
+    'float32': BasicValueType(NameInfo('float32'), {'c_name': 'float', 'py_type': 'float'}),
+    'uint8': BasicValueType(NameInfo('uint8'), {'c_name': 'uint8_t', 'py_type': 'int'}),
+    'uint16': BasicValueType(NameInfo('uint16'), {'c_name': 'uint16_t', 'py_type': 'int'}),
+    'uint32': BasicValueType(NameInfo('uint32'), {'c_name': 'uint32_t', 'py_type': 'int'}),
+    'uint64': BasicValueType(NameInfo('uint64'), {'c_name': 'uint64_t', 'py_type': 'int'}),
+    'int8': BasicValueType(NameInfo('int8'), {'c_name': 'int8_t', 'py_type': 'int'}),
+    'int16': BasicValueType(NameInfo('int16'), {'c_name': 'int16_t', 'py_type': 'int'}),
+    'int32': BasicValueType(NameInfo('int32'), {'c_name': 'int32_t', 'py_type': 'int'}),
+    'int64': BasicValueType(NameInfo('int64'), {'c_name': 'int64_t', 'py_type': 'int'}),
+    'endpoint_ref': BasicValueType(NameInfo('endpoint_ref'), {'c_name': 'endpoint_ref_t', 'py_type': '[not implemented]'}),
+})
+
+enums = OrderedDict()
+interfaces = OrderedDict()
+userdata = OrderedDict() # Arbitrary data passed from the definition file to the template
+exports = OrderedDict()
 
 for definition_file in definition_files:
     try:
@@ -604,19 +664,20 @@ for definition_file in definition_files:
         #instance = err.instance.get(re.findall("([^']*)' (?:was|were) unexpected\)", err.message)[0], err.instance)
         # TODO: print line number
         raise Exception(err.message + '\nat ' + str(list(err.absolute_path)))
-    interfaces.update(get_dict(file_content, 'interfaces'))
-    value_types.update(get_dict(file_content, 'valuetypes'))
+
+    # Regularize everything into a wellknown form
+    for k, item in list(get_dict(file_content, 'interfaces').items()):
+        interfaces[NameInfo(k).get_fibre_name()] = InterfaceElement(NameInfo(), k, item)
+    for k, item in list(get_dict(file_content, 'valuetypes').items()):
+        value_types[NameInfo(k).get_fibre_name()] = ValueTypeElement(NameInfo(), k, item)
+    for k, item in list(get_dict(file_content, 'exports').items()):
+        exports[k] = InterfaceRefElement(NameInfo(), k, item, [])
+
     userdata.update(get_dict(file_content, 'userdata'))
     dictionary += file_content.get('dictionary', None) or []
 
 
-# Preprocess definitions
 
-# Regularize everything into a wellknown form
-for k, item in list(interfaces.items()):
-    InterfaceElement('', k, item)
-for k, item in list(value_types.items()):
-    regularize_valuetype('', k, item)
 
 if args.verbose:
     print('Known interfaces: ' + ''.join([('\n  ' + k) for k in interfaces.keys()]))
@@ -627,16 +688,28 @@ if len(clashing_names):
     print("**Error**: Found both an interface and a value type with the name {}. This is not allowed, interfaces and value types (such as enums) share the same namespace.".format(clashing_names[0]), file=sys.stderr)
     sys.exit(1)
 
+# We init generics this late because they must not be resolved prior to the
+# resolve phase.
+generics = {
+    'fibre.Property': get_property_type # TODO: improve generic support
+}
+
+def deep_resolve(intf):
+    #print("resolving", intf.name, "")
+    assert(isinstance(intf, InterfaceElement))
+    for k, attr in intf.attributes.items():
+        #print("resolving attr ", k)
+        attr['type'] = attr['type'].resolve()
+    for _, func in intf.functions.items():
+        for _, arg in func['in'].items():
+            arg.type = arg.type.resolve()
+        for _, arg in func['out'].items():
+            arg.type = arg.type.resolve()
+
 # Resolve all types to references
 for _, item in list(interfaces.items()):
     item.implements = [ref.resolve() for ref in item.implements]
-    for _, prop in item.attributes.items():
-        prop['type'] = prop['type'].resolve()
-    for _, func in item.functions.items():
-        for _, arg in func['in'].items():
-            arg.type = resolve_valuetype(item.fullname, arg.type)
-        for _, arg in func['out'].items():
-            arg.type = resolve_valuetype(item.fullname, arg.type)
+    deep_resolve(item)
 
 # Attach interfaces to their parents
 toplevel_interfaces = []
@@ -646,7 +719,7 @@ for k, item in list(interfaces.items()):
         toplevel_interfaces.append(item)
     else:
         if k[:-1] != ['fibre']: # TODO: remove special handling
-            parent = interfaces[join_name(*k[:-1])]
+            parent = interfaces[join_name(*k[:-1]).get_fibre_name()]
             parent.interfaces.append(item)
             item.parent = parent
 toplevel_enums = []
@@ -656,18 +729,140 @@ for k, item in list(enums.items()):
         toplevel_enums.append(item)
     else:
         if k[:-1] != ['fibre']: # TODO: remove special handling
-            parent = interfaces[join_name(*k[:-1])]
+            parent = interfaces[join_name(*k[:-1]).get_fibre_name()]
             parent.enums.append(item)
             item['parent'] = parent
 
 
-if args.generate_endpoints:
-    endpoints, embedded_endpoint_definitions, _ = generate_endpoint_table(interfaces[args.generate_endpoints], '&ep_root', 1) # TODO: make user-configurable
-    embedded_endpoint_definitions = [{'name': '', 'id': 0, 'type': 'json', 'access': 'r'}] + embedded_endpoint_definitions
-    endpoints = [{'id': 0, 'function': {'fullname': 'endpoint0_handler', 'in': {}, 'out': {}}, 'bindings': {}}] + endpoints
-else:
-    embedded_endpoint_definitions = None
-    endpoints = None
+exported_functions = []
+exported_interfaces = []
+exported_objects = {}
+published_objects = []
+endpoint_table = [{}] # LEGACY
+
+def exported_func(func):
+    if func in exported_functions:
+        return
+    func['id'] = len(exported_functions)
+    exported_functions.append(func)
+
+def export_intf(intf):
+    if intf in exported_interfaces:
+        return
+    intf.id = len(exported_interfaces)
+    exported_interfaces.append(intf)
+    for k, attr in intf.attributes.items():
+        export_intf(attr['type'])
+    for _, func in intf.functions.items():
+        exported_func(func)
+
+def export_obj(obj, intf_stack):
+    if obj['type'] in intf_stack:
+        raise Exception("circular attribute tree not yet supported")
+
+    obj['id'] = len(exported_objects)
+    intf = obj['type']
+    exported_objects[obj['name'].get_fibre_name()] = obj
+
+
+    # LEGACY SUPPORT
+    property_value_type = re.findall('^fibre\.Property<([^>]*), (readonly|readwrite)>$', intf.name.get_fibre_name())
+    if len(property_value_type):
+        # Special handling for Property<...> attributes: they resolve to one single endpoint
+        endpoint_descr = {
+            'name': obj['name'][-1],
+            'id': len(endpoint_table),
+            'type': map_to_fibre01_type(intf.value_type),
+            'access': 'r' if intf.mode == 'readonly' else 'rw',
+        }
+        endpoint_table.append(
+            '{.type = EndpointType::kRoProperty, .ro_property = {.read_function_id = ' + str(intf.functions['read']['id']) + ', .object_id = ' + str(obj['id']) + '}}'
+            if intf.mode == 'readonly' else
+            '{.type = EndpointType::kRwProperty, .rw_property = {.read_function_id = ' + str(intf.functions['read']['id']) + ', .exchange_function_id = ' + str(intf.functions['exchange']['id']) + ', .object_id = ' + str(obj['id']) + '}}'
+        )
+    else:
+        endpoint_descr = {
+            'name': obj['name'][-1],
+            'type': 'object',
+            'members': []
+        }
+        for k, func in intf.get_all_functions().items():
+            fn_desc = {
+                'name': k,
+                'id': len(endpoint_table),
+                'type': 'function',
+                'inputs': [],
+                'outputs': []
+            }
+            endpoint_table.append(
+                '{.type = EndpointType::kFunctionTrigger, .function_trigger = {.function_id = ' + str(func['id']) + ', .object_id = ' + str(obj['id']) + '}}'
+            )
+            for i, (k_arg, arg) in enumerate(list(func['in'].items())[1:]):
+                fn_desc['inputs'].append({
+                    'name': k_arg,
+                    'id': len(endpoint_table),
+                    'type': map_to_fibre01_type(arg.type),
+                    'access': 'rw',
+                })
+                endpoint_table.append(
+                    '{.type = EndpointType::kFunctionInput, .function_input = {.size = ' + str(legacy_sizes[map_to_fibre01_type(arg.type)]) + '}}'
+                )
+            for i, (k_arg, arg) in enumerate(func['out'].items()):
+                fn_desc['outputs'].append({
+                    'name': k_arg,
+                    'id': len(endpoint_table),
+                    'type': map_to_fibre01_type(arg.type),
+                    'access': 'r',
+                })
+                endpoint_table.append(
+                    '{.type = EndpointType::kFunctionOutput, .function_output = {.size = ' + str(legacy_sizes[map_to_fibre01_type(arg.type)]) + '}}'
+                )
+            endpoint_descr['members'].append(fn_desc)
+
+    for k, attr in intf.attributes.items():
+        endpoint_descr['members'].append(export_obj({'name': NameInfo(obj['name'], k), 'type': attr['type']}, intf_stack + [obj['type']]))
+    
+    return endpoint_descr
+
+
+
+endpoint_descr = [{'name': '', 'id': 0, 'type': 'json', 'access': 'r'}] # LEGACY
+
+
+
+for name, export in exports.items():
+    intf = export.resolve()
+    export_intf(intf)
+    obj = {'name': NameInfo(name), 'type': intf}
+    endpoint_descr += export_obj(obj, [])['members']
+    published_objects.append(obj)
+
+    
+
+## Legacy support
+
+
+#def generate_endpoints(intf):
+#    table = []
+#
+#    for k, prop in intf.get_all_attributes().items():
+#    return table
+
+
+#for name, export in exports.items():
+#    intf = export.resolve()
+#    endpoint_descr += generate_endpoints(intf)
+
+#if args.generate_endpoints:
+#    endpoints, embedded_endpoint_definitions, _ = generate_endpoint_table(interfaces[args.generate_endpoints])
+#    embedded_endpoint_definitions = 
+#        
+#    
+#     + embedded_endpoint_definitions
+#    endpoints = [{'id': 0, 'function': {'fullname': 'endpoint0_handler', 'in': {}, 'out': {}}, 'bindings': {}}] + endpoints
+#else:
+#    embedded_endpoint_definitions = None
+#    endpoints = None
 
 
 # Render template
@@ -740,9 +935,13 @@ template_args = {
     'interfaces': interfaces,
     'value_types': value_types,
     'toplevel_interfaces': toplevel_interfaces,
+    'exported_functions': exported_functions,
+    'exported_interfaces': exported_interfaces,
+    'exported_objects': exported_objects,
+    'published_objects': published_objects,
     'userdata': userdata,
-    'endpoints': endpoints,
-    'embedded_endpoint_definitions': embedded_endpoint_definitions
+    'endpoint_table': endpoint_table, # deprecated
+    'endpoint_descr': endpoint_descr, # deprecated
 }
 
 if not args.output is None:

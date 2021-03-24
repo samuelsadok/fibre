@@ -935,7 +935,9 @@ class _Domain():
     async def _discover_one(self):
         discovery = self._start_discovery()
         obj = await discovery._next()
-        discovery._stop()
+        # TODO: this would tear down all discovered objects. Need to think about
+        # how to implement this properly (object ref count?).
+        #discovery._stop()
         return obj
 
     def discover_one(self):
