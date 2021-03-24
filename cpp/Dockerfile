@@ -23,6 +23,10 @@ RUN pacman -S --noconfirm tup clang gcc binutils wget && \
     pacman -S --noconfirm apple-darwin-osxcross && \
     pacman -S --noconfirm emscripten
 
+# Downgrade binutils (temporary workaround for https://bugs.archlinux.org/task/69567)
+RUN wget https://archive.archlinux.org/packages/b/binutils/binutils-2.35.1-1-x86_64.pkg.tar.zst && \
+    pacman -U --noconfirm binutils-2.35.1-1-x86_64.pkg.tar.zst
+
 ENV PATH=${PATH}:/opt/osxcross/bin
 ENV PATH=${PATH}:/usr/lib/emscripten
 

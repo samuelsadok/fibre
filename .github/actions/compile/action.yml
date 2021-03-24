@@ -11,7 +11,7 @@ inputs:
 
 runs:
   using: 'docker'
-  image: '../../../cpp/Dockerfile'
+  image: fibreframework/compiler:latest
   args: ['cpp/configs/${{ inputs.target }}.config']
 
 branding:

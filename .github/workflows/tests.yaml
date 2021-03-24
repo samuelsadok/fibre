@@ -7,35 +7,41 @@ on:
   pull_request:
     branches: [master, devel]
   push:
-    branches: [master, devel]
+    branches: [master, devel, test-ci]
 
 jobs:
   compile:
     strategy:
       fail-fast: false
       matrix:
-        target: [linux-amd64, linux-armhf, macos-x86, wasm, windows-amd64]
+        target: [linux-aarch64, linux-amd64, linux-armhf, macos-x86, wasm, windows-amd64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: satackey/action-docker-layer-caching@v0.0.11
-        continue-on-error: true
       - uses: ./.github/actions/compile
         with:
           target: ${{ matrix.target }}
       - name: List outputs
-        run: ls -la cpp/build/
+        run: |
+          sudo rm -f cpp/build/*.fat
+          ls -la cpp/build/
+          ls -la test/build/
       - uses: actions/upload-artifact@v2
         with:
           name: libfibre-${{ matrix.target }}
           path: cpp/build/libfibre-*
+      - uses: actions/upload-artifact@v2
+        with:
+          name: test-server-${{ matrix.target }}
+          path: test/build/test_server.elf
 
   test-pyfibre:
     needs: [compile]
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        #os: [ubuntu-latest, macos-latest, windows-latest] # TODO: add TCP support to windows and macOS to test on CI
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -44,9 +50,78 @@ jobs:
           path: artifacts
       - name: Display structure of downloaded files
         run: ls -R artifacts
-      - run: |
-          echo "not implemented yet"
-          false
+
+      - name: Run test server
+        run: |
+          uname -a
+          ARCH="$(uname -m)"
+
+          if [[ "$OSTYPE" == "msys" ]] && [[ "$ARCH" == "x86_64" ]]; then
+            ARCH="windows-amd64"
+          elif [[ "$OSTYPE" == "linux-gnu"* ]] && [[ "$ARCH" == "x86_64" ]]; then
+            ARCH="linux-amd64"
+          elif [[ "$OSTYPE" == "darwin"* ]] && [[ "$ARCH" == "x86_64" ]]; then
+            ARCH="macos-x86"
+            brew install coreutils # needed for the timeout command to work
+          else
+            echo "Unknown platform: $OSTYPE-$ARCH"
+            false
+          fi
+
+          python3 --version
+
+          chmod +x ./artifacts/test-server-$ARCH/test_server.elf
+          ls ./artifacts/test-server-$ARCH/test_server.elf
+          rm ./python/fibre/libfibre-*
+          cp ./artifacts/libfibre-$ARCH/* ./python/fibre/
+
+          # Launch test server in background
+          FIBRE_LOG=5 ./artifacts/test-server-$ARCH/test_server.elf >test_server.log 2>&1 &
+
+          # TODO: try launching client/server in reverse order
+          sleep 1
+
+          if FIBRE_LOG=5 timeout --signal=9 5s python3 ./test/test_client.py; then
+            echo "Test client succeeded"
+            CLIENT_STATUS="ok"
+          elif [ "$?" == "124" ]; then
+            echo "Test client timed out"
+            CLIENT_STATUS="timeout"
+          else
+            echo "Test client failed"
+            CLIENT_STATUS="fail"
+          fi
+
+          # Tell test_server.elf politely to finish (if it's still running)
+
+          echo "terminiating test server"
+
+          # TODO: find out why SIGINT doesn't work
+          kill -9 $! || true
+          SERVER_STATUS="ok"
+
+          #timeout 1s kill -2 $! || true
+          #echo "kill command completed"
+
+          ## If it failed to react, force kill
+          #sleep 1
+          #echo "checking if still running"
+          #if kill -0 $!; then
+          #  echo "Test server did not react to SIGINT. Killing."
+          #  kill -9 $! || true
+          #  SERVER_STATUS="timeout"
+          #elif ! wait $!; then
+          #  echo "Test server returned error code"
+          #  SERVER_STATUS="fail"
+          #else
+          #  SERVER_STATUS="ok"
+          #fi
+
+          echo "Test server log:"
+          cat test_server.log
+
+          [ $CLIENT_STATUS == "ok" ] && [ $SERVER_STATUS == "ok" ]
+        shell: bash
 
   formatting:
     strategy:
