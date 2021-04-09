@@ -4,6 +4,7 @@
 #include <fibre/event_loop.hpp>
 #include <fibre/async_stream.hpp>
 #include <fibre/channel_discoverer.hpp>
+#include <fibre/logging.hpp>
 
 #include <libusb.h>
 #include <thread>
@@ -36,10 +37,10 @@ public:
     };
 
     constexpr static const char* get_name() { return "usb"; }
-    bool init(EventLoop* event_loop);
-    bool deinit() { return deinit(INT_MAX); }
+    RichStatus init(EventLoop* event_loop, Logger logger);
+    RichStatus deinit() { return deinit(INT_MAX); }
     void start_channel_discovery(Domain* domain, const char* specs, size_t specs_len, ChannelDiscoveryContext** handle) final;
-    int stop_channel_discovery(ChannelDiscoveryContext* handle) final;
+    RichStatus stop_channel_discovery(ChannelDiscoveryContext* handle) final;
 
 private:
     friend class LibusbBulkEndpoint<ReadResult>;
@@ -52,7 +53,7 @@ private:
         std::vector<LibusbBulkOutEndpoint*> ep_out;
     };
 
-    bool deinit(int stage);
+    RichStatus deinit(int stage);
     void internal_event_loop();
     void on_event_loop_iteration();
     void on_event_loop_iteration2(uint32_t) { on_event_loop_iteration(); }
@@ -63,6 +64,7 @@ private:
     void consider_device(struct libusb_device *device, MyChannelDiscoveryContext* subscription);
 
     EventLoop* event_loop_ = nullptr;
+    Logger logger_ = Logger::none();
     bool using_sparate_libusb_thread_; // true on Windows. Initialized in init()
     libusb_context *libusb_ctx_ = nullptr; // libusb session
     libusb_hotplug_callback_handle hotplug_callback_handle_ = 0;

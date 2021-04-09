@@ -1,6 +1,5 @@
 
 #include <fibre/fibre.hpp>
-#include "logging.hpp"
 #include <fibre/channel_discoverer.hpp>
 #include "legacy_protocol.hpp"
 #include "print_utils.hpp"
@@ -13,9 +12,6 @@
 #include <unordered_map>
 #include <string>
 #endif
-
-DEFINE_LOG_TOPIC(FIBRE);
-USE_LOG_TOPIC(FIBRE);
 
 #if FIBRE_ENABLE_EVENT_LOOP
 #  ifdef __linux__
@@ -39,8 +35,9 @@ T* my_alloc() {
 }
 
 template<typename T>
-void my_free(T* ctx) {
+RichStatus my_free(T* ctx) {
     delete ctx;
+    return RichStatus::success();
 }
 
 #else
@@ -65,29 +62,30 @@ T* my_alloc() {
 }
 
 template<typename T>
-void my_free(T* ctx) {
+RichStatus my_free(T* ctx) {
     if (ctx == &TheInstance<T>::instance) {
         TheInstance<T>::in_use = false;
+        return RichStatus::success();
     } else {
-        FIBRE_LOG(E) << "bad instance";
+        return F_MAKE_ERR("bad instance");
     }
 }
 
 #endif
 
-bool fibre::launch_event_loop(Callback<void, EventLoop*> on_started) {
+RichStatus fibre::launch_event_loop(Logger logger, Callback<void, EventLoop*> on_started) {
 #if FIBRE_ENABLE_EVENT_LOOP
     EventLoopImpl* event_loop = my_alloc<EventLoopImpl>(); // TODO: free
-    return event_loop->start([&](){ on_started.invoke(event_loop); });
+    return event_loop->start(logger, [&](){ on_started.invoke(event_loop); });
 #else
-    return false;
+    return F_MAKE_ERR("event loop support not enabled");
 #endif
 }
 
 struct BackendInitializer {
     template<typename T>
     bool operator()(T& backend) {
-        if (!backend.init(ctx->event_loop)) {
+        if (F_LOG_IF_ERR(ctx->logger, backend.init(ctx->event_loop, ctx->logger), "backend init failed")) {
             return false;
         }
         ctx->register_backend(backend.get_name(), &backend);
@@ -99,7 +97,10 @@ struct BackendDeinitializer {
     template<typename T>
     bool operator()(T& backend) {
         ctx->deregister_backend(backend.get_name());
-        return backend.deinit();
+        if (F_LOG_IF_ERR(ctx->logger, backend.deinit(), "backend deinit failed")) {
+            return false;
+        }
+        return true;
     }
     Context* ctx;
 };
@@ -115,40 +116,79 @@ bool all(std::tuple<T...> args) {
     return all(args, std::make_index_sequence<sizeof...(T)>());
 }
 
-Context* fibre::open(EventLoop* event_loop) {
+RichStatus fibre::open(EventLoop* event_loop, Logger logger, Context** p_ctx) {
     Context* ctx = my_alloc<Context>();
-    if (!ctx) {
-        FIBRE_LOG(E) << "already opened";
-        return nullptr;
-    }
+    ctx->logger = logger;
+    F_RET_IF(!ctx, "already opened");
 
     ctx->event_loop = event_loop;
     auto static_backends_good = for_each_in_tuple(BackendInitializer{ctx},
             ctx->static_backends);
 
-    if (!all(static_backends_good)) {
-        // TODO: shutdown backends
-        FIBRE_LOG(E) << "some backends failed to initialize";
-        return nullptr;
+    F_RET_IF(!all(static_backends_good), "some backends failed to initialize");
+    // TODO: shutdown backends on error
+
+    if (p_ctx) {
+        *p_ctx = ctx;
     }
 
-    return ctx;
+    return RichStatus::success();
 }
 
+
 void fibre::close(Context* ctx) {
-    if (ctx->n_domains) {
-        FIBRE_LOG(W) <<ctx->n_domains << " domains are still open";
-    }
+    F_LOG_IF(ctx->logger, ctx->n_domains, ctx->n_domains << " domains are still open");
 
     for_each_in_tuple(BackendDeinitializer{ctx},
             ctx->static_backends);
 
-    my_free<Context>(ctx);
+    Logger logger = ctx->logger;
+    F_LOG_IF_ERR(logger, my_free<Context>(ctx), "failed to free context");
 }
+
+#if FIBRE_ENABLE_TEXT_LOGGING
+static std::string get_local_time() {
+    auto now(std::chrono::system_clock::now());
+    auto seconds_since_epoch(
+        std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()));
+
+    // Construct time_t using 'seconds_since_epoch' rather than 'now' since it is
+    // implementation-defined whether the value is rounded or truncated.
+    std::time_t now_t(
+        std::chrono::system_clock::to_time_t(
+            std::chrono::system_clock::time_point(seconds_since_epoch)));
+
+    char temp[10];
+    if (!std::strftime(temp, 10, "%H:%M:%S.", std::localtime(&now_t))) {
+        return "";
+    }
+
+    return std::string(temp) +
+        std::to_string((now.time_since_epoch() - seconds_since_epoch).count());
+}
+
+void fibre::log_to_stderr(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text) {
+    switch ((LogLevel)level) {
+    case LogLevel::kDebug:
+        //std::cerr << "\x1b[93;1m"; // yellow
+        break;
+    case LogLevel::kError:
+        std::cerr << "\x1b[91;1m"; // red
+        break;
+    default:
+        break;
+    }
+    std::cerr << get_local_time() << " [" << file << ":" << line << "] " << text << "\x1b[0m" << std::endl;
+}
+#else
+void fibre::log_to_stderr(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text) {
+    // ignore
+}
+#endif
 
 #if FIBRE_ALLOW_HEAP
 Domain* Context::create_domain(std::string specs) {
-    FIBRE_LOG(D) << "creating domain with path \"" << specs << "\"";
+    F_LOG_D(logger, "creating domain with path \"" << specs << "\"");
 
     Domain* domain = new Domain(); // deleted in close_domain
     domain->ctx = this;
@@ -163,7 +203,7 @@ Domain* Context::create_domain(std::string specs) {
         auto it = discoverers.find(name);
 
         if (it == discoverers.end()) {
-            FIBRE_LOG(W) << "transport layer \"" << name << "\" not implemented";
+            F_LOG_E(logger, "transport layer \"" << name << "\" not implemented");
         } else {
             domain->channel_discovery_handles[name] = nullptr;
             it->second->start_channel_discovery(domain,
@@ -189,7 +229,7 @@ void Context::close_domain(Domain* domain) {
 
 void Context::register_backend(std::string name, ChannelDiscoverer* backend) {
     if (discoverers.find(name) != discoverers.end()) {
-        FIBRE_LOG(W) << "Discoverer " << name << " already registered";
+        F_LOG_E(logger, "Discoverer " << name << " already registered");
         return; // TODO: report status
     }
     
@@ -199,7 +239,7 @@ void Context::register_backend(std::string name, ChannelDiscoverer* backend) {
 void Context::deregister_backend(std::string name) {
     auto it = discoverers.find(name);
     if (it == discoverers.end()) {
-        FIBRE_LOG(W) << "Discoverer " << name << " not registered";
+        F_LOG_E(logger, "Discoverer " << name << " not registered");
         return; // TODO: report status
     }
     
@@ -227,15 +267,15 @@ void Domain::stop_discovery() {
 #endif
 
 void Domain::add_channels(ChannelDiscoveryResult result) {
-    FIBRE_LOG(D) << "found channels!";
+    F_LOG_D(ctx->logger, "found channels!");
 
     if (result.status != kFibreOk) {
-        FIBRE_LOG(W) << "discoverer stopped";
+        F_LOG_E(ctx->logger, "discoverer stopped");
         return;
     }
 
     if (!result.rx_channel || !result.tx_channel) {
-        FIBRE_LOG(W) << "unidirectional operation not supported yet";
+        F_LOG_E(ctx->logger, "unidirectional operation not supported yet");
         return;
     }
 

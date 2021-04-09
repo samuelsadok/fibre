@@ -5,7 +5,6 @@
  */
 
 #include "libusb_transport.hpp"
-#include "../logging.hpp"
 #include "../print_utils.hpp"
 #include <fibre/fibre.hpp>
 
@@ -17,9 +16,6 @@
 #endif
 
 using namespace fibre;
-
-DEFINE_LOG_TOPIC(USB);
-USE_LOG_TOPIC(USB);
 
 // This probably has no noteworthy effect since we automatically restart
 // timed out operations anyway.
@@ -40,14 +36,14 @@ constexpr unsigned int kPollingIntervalMs = 1000;
  *        pointer must be non-null and initialized when this function is called.
  *        It must remain initialized until deinit() of this discoverer was called.
  */
-bool LibusbDiscoverer::init(EventLoop* event_loop) {
-    if (!event_loop)
-        return false;
+RichStatus LibusbDiscoverer::init(EventLoop* event_loop, Logger logger) {
+    F_RET_IF(!event_loop, "invalid argument");
     event_loop_ = event_loop;
+    logger_ = logger;
 
     if (libusb_init(&libusb_ctx_) != LIBUSB_SUCCESS) {
-        FIBRE_LOG(E) << "libusb_init() failed: " << sys_err();
-        return deinit(0), false;
+        deinit(0);
+        return F_MAKE_ERR("libusb_init() failed: " << sys_err());
     }
 
     // Fetch initial list of file-descriptors we have to monitor.
@@ -58,11 +54,11 @@ bool LibusbDiscoverer::init(EventLoop* event_loop) {
 
     if (!using_sparate_libusb_thread_) {
         // This code path is taken on Linux
-        FIBRE_LOG(D) << "Using externally provided event loop";
+        F_LOG_D(logger_, "Using externally provided event loop");
 
         // Check if libusb needs special time-based polling on this platform
         if (libusb_pollfds_handle_timeouts(libusb_ctx_) == 0) {
-            FIBRE_LOG(D) << "Using time-based polling";
+            F_LOG_D(logger_, "Using time-based polling");
         }
 
         // libusb maintains a (dynamic) list of file descriptors that need to be
@@ -85,7 +81,8 @@ bool LibusbDiscoverer::init(EventLoop* event_loop) {
         // different approach for Windows anyway.
         const struct libusb_pollfd** pollfds = libusb_get_pollfds(libusb_ctx_);
         if (!pollfds) {
-            return deinit(2), false;
+            deinit(2);
+            return F_MAKE_ERR("libusb_get_pollfds() failed");
         }
 
         for (size_t i = 0; pollfds[i]; ++i) {
@@ -95,7 +92,7 @@ bool LibusbDiscoverer::init(EventLoop* event_loop) {
         pollfds = nullptr;
 
     } else {
-        FIBRE_LOG(D) << "Using internal event loop thread";
+        F_LOG_D(logger_, "Using internal event loop thread");
 
         // This code path is taken on Windows (which does not support epoll)
         run_internal_event_loop_ = true;
@@ -106,7 +103,7 @@ bool LibusbDiscoverer::init(EventLoop* event_loop) {
 
     if (libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
         // This code path is taken on Linux
-        FIBRE_LOG(D) << "Using libusb native hotplug detection";
+        F_LOG_D(logger_, "Using libusb native hotplug detection");
 
         // Subscribe to hotplug events
         int result = libusb_hotplug_register_callback(libusb_ctx_,
@@ -117,28 +114,28 @@ bool LibusbDiscoverer::init(EventLoop* event_loop) {
                                  return ((LibusbDiscoverer*)user_data)->on_hotplug(dev, event);
                              }, this, &hotplug_callback_handle_);
         if (LIBUSB_SUCCESS != result) {
-            FIBRE_LOG(E) << "Error subscribing to hotplug events";
             hotplug_callback_handle_ = 0;
-            return deinit(3), false;
+            deinit(3);
+            return F_MAKE_ERR("Error subscribing to hotplug events");
         }
 
     } else {
         // This code path is taken on Windows
-        FIBRE_LOG(D) << "Using periodic polling to discover devices";
+        F_LOG_D(logger_, "Using periodic polling to discover devices");
 
         poll_devices_now(); // this will also start a timer to poll again periodically
     }
 
-    if (!pollfds && libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
-        // The hotplug callback handler above is not yet thread-safe. To make it thread-safe
-        // we'd need to post it on the application's event loop.
-        FIBRE_LOG(E) << "Hotplug detection with separate libusb thread will cause trouble.";
-    }
+    // The hotplug callback handler above is not yet thread-safe. To make it thread-safe
+    // we'd need to post it on the application's event loop.
+    F_LOG_IF(logger_,
+             !pollfds && libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG),
+             "Hotplug detection with separate libusb thread will cause trouble.");
 
-    return true;
+    return RichStatus::success();
 }
 
-bool LibusbDiscoverer::deinit(int stage) {
+RichStatus LibusbDiscoverer::deinit(int stage) {
     // TODO: verify that all devices are closed and hotplug detection is disabled
 
     if (stage > 3 && libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
@@ -194,7 +191,7 @@ bool LibusbDiscoverer::deinit(int stage) {
 
     event_loop_ = nullptr;
 
-    return true;
+    return RichStatus::success();
 }
 
 /**
@@ -215,7 +212,7 @@ bool LibusbDiscoverer::deinit(int stage) {
  *        the discovery is started.
  */
 void LibusbDiscoverer::start_channel_discovery(Domain* domain, const char* specs, size_t specs_len, ChannelDiscoveryContext** handle) {
-    FIBRE_LOG(D) << "starting discovery with filter \"" << std::string(specs, specs_len) << "\"";
+    F_LOG_D(logger_, "starting discovery with filter \"" << std::string(specs, specs_len) << "\"");
 
     InterfaceSpecs interface_specs;
 
@@ -252,17 +249,14 @@ void LibusbDiscoverer::start_channel_discovery(Domain* domain, const char* specs
  * The discovery must be considered still in progress until the callback is
  * invoked with kFibreCancelled.
  */
-int LibusbDiscoverer::stop_channel_discovery(ChannelDiscoveryContext* handle) {
+RichStatus LibusbDiscoverer::stop_channel_discovery(ChannelDiscoveryContext* handle) {
     auto it = std::find(subscriptions_.begin(), subscriptions_.end(), handle);
 
-    if (it == subscriptions_.end()) {
-        FIBRE_LOG(E) << "Not an active subscription";
-        return -1;
-    }
+    F_RET_IF(it == subscriptions_.end(), "Not an active subscription");
 
     subscriptions_.erase(it);
     delete handle;
-    return 0;
+    return RichStatus::success();
 }
 
 /**
@@ -278,22 +272,22 @@ void LibusbDiscoverer::internal_event_loop() {
 
 void LibusbDiscoverer::on_event_loop_iteration() {
     if (event_loop_timer_) {
-        FIBRE_LOG(D) << "cancelling event loop timer";
+        F_LOG_D(logger_, "cancelling event loop timer");
         event_loop_->cancel_timer(event_loop_timer_);
         event_loop_timer_ = nullptr;
     }
 
     timeval tv = { .tv_sec = 0, .tv_usec = 0 };
-    if (libusb_handle_events_timeout(libusb_ctx_, &tv) != 0) {
-        FIBRE_LOG(E) << "libusb_handle_events_timeout() failed";
-    }
+    F_LOG_IF(logger_, libusb_handle_events_timeout(libusb_ctx_, &tv) != 0,
+             "libusb_handle_events_timeout() failed");
 
     timeval timeout;
     if (libusb_get_next_timeout(libusb_ctx_, &timeout)) {
         float timeout_sec = (float)timeout.tv_sec + (float)timeout.tv_usec * 1e-6;
-        FIBRE_LOG(D) << "setting event loop timeout to " << timeout_sec << " s";
-        event_loop_timer_ = event_loop_->call_later(timeout_sec,
-            MEMBER_CB(this, on_event_loop_iteration));
+        F_LOG_D(logger_, "setting event loop timeout to " << timeout_sec << " s");
+        F_LOG_IF_ERR(logger_, event_loop_->call_later(timeout_sec,
+            MEMBER_CB(this, on_event_loop_iteration), &event_loop_timer_),
+            "call_later() failed");
     }
 }
 
@@ -323,7 +317,7 @@ int LibusbDiscoverer::on_hotplug(struct libusb_device *dev,
     uint8_t dev_number = libusb_get_device_address(dev);
     
     if (LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED == event) {
-        FIBRE_LOG(D) << "device arrived: bus " << (int)bus_number << ", " << (int)dev_number;
+        F_LOG_D(logger_, "device arrived: bus " << (int)bus_number << ", " << (int)dev_number);
 
         // add empty placeholder to the list of known devices
         known_devices_[bus_number << 8 | dev_number] = {
@@ -336,7 +330,7 @@ int LibusbDiscoverer::on_hotplug(struct libusb_device *dev,
         }
 
     } else if (LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT == event) {
-        FIBRE_LOG(D) << "device left: bus " << (int)bus_number << ", " << (int)dev_number;
+        F_LOG_D(logger_, "device left: bus " << (int)bus_number << ", " << (int)dev_number);
 
         auto it = known_devices_.find(bus_number << 8 | dev_number);
 
@@ -357,14 +351,14 @@ int LibusbDiscoverer::on_hotplug(struct libusb_device *dev,
         libusb_unref_device(dev);
 
     } else {
-        FIBRE_LOG(W) << "Unexpected event: " << event;
+        F_LOG_E(logger_, "Unexpected event: " << event);
     }
     
     return 0;
 }
 
 void LibusbDiscoverer::poll_devices_now() {
-    FIBRE_LOG(D) << "poll_devices_now() called.";
+    F_LOG_D(logger_, "poll_devices_now() called.");
 
     device_polling_timer_ = nullptr;
 
@@ -373,7 +367,7 @@ void LibusbDiscoverer::poll_devices_now() {
     std::unordered_map<uint16_t, libusb_device*> current_devices;
 
     if (n_devices < 0) {
-        FIBRE_LOG(W) << "libusb_get_device_list() failed.";
+        F_LOG_E(logger_, "libusb_get_device_list() failed.");
     } else {
         for (ssize_t i = 0; i < n_devices; ++i) {
             uint8_t bus_number = libusb_get_bus_number(list[i]);
@@ -418,8 +412,9 @@ void LibusbDiscoverer::poll_devices_now() {
 
     // It's possible that the discoverer was deinited during this function.
     if (event_loop_) {
-        device_polling_timer_ = event_loop_->call_later(kPollingIntervalMs * 0.001f,
-            MEMBER_CB(this, poll_devices_now));
+        F_LOG_IF_ERR(logger_, event_loop_->call_later(kPollingIntervalMs * 0.001f,
+            MEMBER_CB(this, poll_devices_now), &device_polling_timer_),
+            "call_later() failed");
     }
 }
 
@@ -438,7 +433,7 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDi
         struct libusb_device_descriptor dev_desc;
         int result = libusb_get_device_descriptor(device, &dev_desc);
         if (result != LIBUSB_SUCCESS) {
-            FIBRE_LOG(W) << "Failed to get device descriptor: " << result;
+            F_LOG_E(logger_, "Failed to get device descriptor: " << result);
         }
 
         mismatch = (subscription->interface_specs.vendor_id != -1 && dev_desc.idVendor != subscription->interface_specs.vendor_id)
@@ -452,7 +447,7 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDi
     struct libusb_config_descriptor* config_desc = nullptr;
 
     if (libusb_get_active_config_descriptor(device, &config_desc) != LIBUSB_SUCCESS) {
-        FIBRE_LOG(E) << "Failed to get active config descriptor: " << sys_err();
+        F_LOG_E(logger_, "Failed to get active config descriptor: " << sys_err());
     } else {
         for (uint8_t i = 0; i < config_desc->bNumInterfaces; ++i) {
             for (int j = 0; j < config_desc->interface[i].num_altsetting; ++j) {
@@ -487,14 +482,14 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDi
                 if (!my_dev.handle) {
                     int result = libusb_open(device, &my_dev.handle);
                     if (LIBUSB_SUCCESS != result) {
-                        FIBRE_LOG(E) << "Could not open USB device: " << result;
+                        F_LOG_E(logger_, "Could not open USB device: " << result);
                         continue;
                     }
                 }
 
                 int result = libusb_claim_interface(my_dev.handle, i);
                 if (LIBUSB_SUCCESS != result) {
-                    FIBRE_LOG(E) << "Could not claim interface " << i << " on USB device: " << result;
+                    F_LOG_E(logger_, "Could not claim interface " << i << " on USB device: " << result);
                     continue;
                 }
 
@@ -542,7 +537,7 @@ bool LibusbBulkEndpoint<TRes>::init(LibusbDiscoverer* parent, libusb_device_hand
 template<typename TRes>
 bool LibusbBulkEndpoint<TRes>::deinit() {
     if (completer_) {
-        FIBRE_LOG(E) << "Transfer on EP " << as_hex(endpoint_id_) << " still in progress. This is gonna be messy.";
+        F_LOG_E(parent_->logger_, "Transfer on EP " << as_hex(endpoint_id_) << " still in progress. This is gonna be messy.");
     }
 
     libusb_free_transfer(transfer_);
@@ -557,13 +552,13 @@ void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* h
     }
 
     if (completer_) {
-        FIBRE_LOG(E) << "transfer already in progress";
+        F_LOG_E(parent_->logger_, "transfer already in progress");
         completer.invoke({kStreamError, nullptr});
         return;
     }
 
     if (!handle_) {
-        FIBRE_LOG(E) << "device not open";
+        F_LOG_E(parent_->logger_, "device not open");
         completer.invoke({kStreamError, nullptr});
         return;
     }
@@ -579,7 +574,7 @@ void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* h
         ep->parent_->event_loop_->post(MEMBER_CB(ep, on_transfer_finished));
     };
 
-    //FIBRE_LOG(D) << "transfer of size " << buffer.size();
+    //F_LOG_D(parent_->logger_, "transfer of size " << buffer.size());
     libusb_fill_bulk_transfer(transfer_, handle_, endpoint_id_,
         buffer.begin(), buffer.size(),
         parent_->using_sparate_libusb_thread_ ? indirect_callback : direct_callback,
@@ -592,7 +587,7 @@ void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* h
 template<typename TRes>
 void LibusbBulkEndpoint<TRes>::cancel_transfer(TransferHandle transfer_handle) {
     if (!completer_) {
-        FIBRE_LOG(E) << "transfer not in progress";
+        F_LOG_E(parent_->logger_, "transfer not in progress");
         return;
     }
 
@@ -604,12 +599,12 @@ void LibusbBulkEndpoint<TRes>::submit_transfer() {
     int result = libusb_submit_transfer(transfer_);
     if (LIBUSB_SUCCESS == result) {
         // ok
-        FIBRE_LOG(T) << "started USB transfer on EP " << as_hex(endpoint_id_);
+        F_LOG_T(parent_->logger_, "started USB transfer on EP " << as_hex(endpoint_id_));
     } else if (LIBUSB_ERROR_NO_DEVICE == result) {
-        FIBRE_LOG(W) << "couldn't start USB transfer on EP " << as_hex(endpoint_id_) << ": " << libusb_error_name(result);
+        F_LOG_E(parent_->logger_, "couldn't start USB transfer on EP " << as_hex(endpoint_id_) << ": " << libusb_error_name(result));
         completer_.invoke_and_clear({kStreamClosed, nullptr});
     } else {
-        FIBRE_LOG(W) << "couldn't start USB transfer on EP " << as_hex(endpoint_id_) << ": " << libusb_error_name(result);
+        F_LOG_E(parent_->logger_, "couldn't start USB transfer on EP " << as_hex(endpoint_id_) << ": " << libusb_error_name(result));
         completer_.invoke_and_clear({kStreamError, nullptr});
     }
 }
@@ -658,13 +653,16 @@ void LibusbBulkEndpoint<TRes>::on_transfer_finished() {
         if (found) {
             status = kStreamError;
         } else {
-            FIBRE_LOG(D) << "device removed during transfer";
+            F_LOG_D(parent_->logger_, "device removed during transfer");
             status = kStreamClosed;
         }
     }
 
-    (status == kStreamError ? FIBRE_LOG(W) : FIBRE_LOG(T))
-        << "USB transfer on EP " << as_hex(endpoint_id_) << " finished with " << libusb_error_name(transfer_->status);
+    if (status == kStreamError) {
+        F_LOG_E(parent_->logger_, "USB transfer on EP " << as_hex(endpoint_id_) << " finished with " << libusb_error_name(transfer_->status));
+    } else {
+        F_LOG_T(parent_->logger_, "USB transfer on EP " << as_hex(endpoint_id_) << " finished with " << libusb_error_name(transfer_->status));
+    }
 
     if (status == kStreamClosed) {
         handle_ = nullptr; // Ensure that no new transfer is started
@@ -676,9 +674,7 @@ void LibusbBulkEndpoint<TRes>::on_transfer_finished() {
     // If libusb does hotplug detection itself then we don't need to handle
     // device removal here. Libusb will call the corresponding hotplug callback.
     if (status == kStreamClosed && !parent_->hotplug_callback_handle_) {
-        if (!parent_->using_sparate_libusb_thread_) {
-            FIBRE_LOG(E) << "It's not a good idea to unref the device from within this callback. This will probably hang.";
-        }
+        F_LOG_IF(parent_->logger_, !parent_->using_sparate_libusb_thread_, "It's not a good idea to unref the device from within this callback. This will probably hang.");
         parent_->on_hotplug(dev, LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT);
     }
 }

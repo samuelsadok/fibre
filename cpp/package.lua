@@ -74,7 +74,7 @@ function get_fibre_package(args)
     pkg.cflags += '-DFIBRE_ENABLE_EVENT_LOOP='..(args.enable_event_loop and '1' or '0')
     pkg.cflags += '-DFIBRE_ALLOW_HEAP='..(args.allow_heap and '1' or '0')
     pkg.cflags += '-DFIBRE_MAX_LOG_VERBOSITY='..(args.max_log_verbosity or '5')
-    pkg.cflags += '-DFIBRE_DEFAULT_LOG_VERBOSITY='..(args.default_log_verbosity or '2')
+    pkg.cflags += '-DFIBRE_ENABLE_TEXT_LOGGING='..(args.enable_text_logging or '1')
     pkg.cflags += '-DFIBRE_ENABLE_LIBUSB_BACKEND='..(args.enable_libusb_backend and '1' or '0')
     pkg.cflags += '-DFIBRE_ENABLE_TCP_SERVER_BACKEND='..(args.enable_tcp_server_backend and '1' or '0')
     pkg.cflags += '-DFIBRE_ENABLE_TCP_CLIENT_BACKEND='..(args.enable_tcp_client_backend and '1' or '0')
@@ -85,9 +85,6 @@ function get_fibre_package(args)
 
         -- TODO: only add pthread on linux and windows
         pkg.ldflags += '-lpthread'
-    end
-    if args.max_log_verbosity == nil or (args.max_log_verbosity > 0) then
-        pkg.code_files += 'logging.cpp'
     end
     if args.enable_client then
         pkg.code_files += 'legacy_object_client.cpp'

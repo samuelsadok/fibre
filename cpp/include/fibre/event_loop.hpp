@@ -2,6 +2,7 @@
 #define __FIBRE_EVENT_LOOP_HPP
 
 #include "callback.hpp"
+#include <fibre/rich_status.hpp>
 #include <stdint.h>
 
 namespace fibre {
@@ -24,7 +25,7 @@ public:
      * 
      * This function must be thread-safe.
      */
-    virtual bool post(Callback<void> callback) = 0;
+    virtual RichStatus post(Callback<void> callback) = 0;
 
     /**
      * @brief Registers the given file descriptor on this event loop.
@@ -39,7 +40,7 @@ public:
      *        triggered. This callback must remain valid until
      *        deregister_event() is called for the same file descriptor.
      */
-    virtual bool register_event(int fd, uint32_t events, Callback<void, uint32_t> callback) = 0;
+    virtual RichStatus register_event(int fd, uint32_t events, Callback<void, uint32_t> callback) = 0;
 
     /**
      * @brief Deregisters the given event.
@@ -47,7 +48,7 @@ public:
      * Once this function returns, the associated callback will no longer be
      * invoked and its resources can be freed.
      */
-    virtual bool deregister_event(int fd) = 0;
+    virtual RichStatus deregister_event(int fd) = 0;
 
     /**
      * @brief Registers a callback to be called at a later point in time.
@@ -57,7 +58,7 @@ public:
      * @param delay: The delay from now in seconds.
      *               TOOD: specify if OS sleep time is counted in.
      */
-    virtual struct EventLoopTimer* call_later(float delay, Callback<void> callback) = 0;
+    virtual RichStatus call_later(float delay, Callback<void> callback, EventLoopTimer** p_timer) = 0;
 
     /**
      * @brief Cancels a timer which was previously started by call_later().
@@ -66,7 +67,7 @@ public:
      * This also means that cancel_timer() must not be called from within the
      * callback of the timer itself.
      */
-    virtual bool cancel_timer(EventLoopTimer* timer) = 0;
+    virtual RichStatus cancel_timer(EventLoopTimer* timer) = 0;
 };
 
 }

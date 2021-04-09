@@ -17,8 +17,8 @@ Various preprocessor defines can be used to customize Fibre:
  - `FIBRE_ENABLE_CLIENT={0|1}` (_default 0_): Enable support for discovering and using objects exposed by remote peers.
  - `FIBRE_ENABLE_EVENT_LOOP={0|1}` (_default 0_): Enable the builtin event loop implementation. Not supported on all platforms.
  - `FIBRE_ALLOW_HEAP={0|1}` (_default 0_): Allow Fibre to allocate memory on the heap using `malloc` and `free`. If this option is disabled only one Fibre instance can be opened. Currently `FIBRE_ENABLE_CLIENT` (and several other options) cannot be used together with this option.
- - `FIBRE_MAX_LOG_VERBOSITY={0...5}` (_default 5_): The maximum log verbosity that will be compiled into the binary. In embedded systems it's recommended to set this to 0 to reduce binary size. On platforms that support environment variables the actual run time log verbosity can be changed by setting the environment variable `FIBRE_LOG={0...5}`.
- - `FIBRE_DEFAULT_LOG_VERBOSITY={0...5}` (_default 5_): The default log verbosity that will be used unless overridden by other means (for instance through the environment variables).
+ - `FIBRE_MAX_LOG_VERBOSITY={0...5}` (_default 5_): The maximum log verbosity that will be compiled into the binary. In embedded systems it's recommended to set this to 2 or lower to reduce binary size and log churn. The actual runtime log verbosity is specified by the application in the `libfibre_open()` or `fibre::open()` call.
+ - `FIBRE_ENABLE_TEXT_LOGGING={0|1}` (_default 1_): Enable text-based logging. If disabled, the log function is called without a text argument but other arguments (such as code location) are still provided. This can significantly reduce binary size.
  - `FIBRE_ENABLE_LIBUSB_BACKEND={0|1}` (_default 0_): Enable libusb backend for host side USB support. This requires `FIBRE_ALLOC_HEAP=1`.
  - `FIBRE_ENABLE_TCP_CLIENT_BACKEND={0|1}` (_default 0_): Enable TCP client backend. This requires `FIBRE_ALLOC_HEAP=1`.
  - `FIBRE_ENABLE_TCP_SERVER_BACKEND={0|1}` (_default 0_): Enable TCP server backend. This requires `FIBRE_ALLOC_HEAP=1`.

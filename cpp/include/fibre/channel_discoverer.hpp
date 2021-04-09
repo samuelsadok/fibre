@@ -3,6 +3,7 @@
 
 #include "async_stream.hpp"
 #include <fibre/callback.hpp>
+#include <fibre/rich_status.hpp>
 #include <fibre/status.hpp>
 
 namespace fibre {
@@ -26,7 +27,7 @@ public:
         Domain* domain,
         const char* specs, size_t specs_len,
         ChannelDiscoveryContext** handle) = 0;
-    virtual int stop_channel_discovery(ChannelDiscoveryContext* handle) = 0;
+    virtual RichStatus stop_channel_discovery(ChannelDiscoveryContext* handle) = 0;
 
 protected:
     bool try_parse_key(const char* begin, const char* end, const char* key, const char** val_begin, const char** val_end);

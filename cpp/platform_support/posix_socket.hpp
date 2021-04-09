@@ -1,12 +1,14 @@
 #ifndef __FIBRE_POSIX_SOCKET_HPP
 #define __FIBRE_POSIX_SOCKET_HPP
 
+#include <fibre/async_stream.hpp>
+#include <fibre/bufptr.hpp>
+#include <fibre/cpp_utils.hpp>
 #include <fibre/event_loop.hpp>
+#include <fibre/logging.hpp>
+#include <fibre/rich_status.hpp>
 #include <netinet/in.h>
 #include <string>
-#include <fibre/cpp_utils.hpp>
-#include <fibre/bufptr.hpp>
-#include <fibre/async_stream.hpp>
 
 namespace fibre {
 
@@ -47,7 +49,7 @@ struct ConnectionContext;
  * @returns: false if the lookup could not be started. `callback` will not be
  *           called.
  */
-bool start_resolving_address(EventLoop* event_loop,
+RichStatus start_resolving_address(EventLoop* event_loop, Logger logger,
     std::tuple<std::string, int> address, bool passive,
     AddressResolutionContext** handle,
     Callback<void, std::optional<cbufptr_t>> callback);
@@ -77,7 +79,7 @@ void cancel_resolving_address(AddressResolutionContext* handle);
  *        keep using it.
  *        If the connection failed, std::nullopt is passed.
  */
-bool start_connecting(EventLoop* event_loop, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, std::optional<socket_id_t>> on_connected);
+RichStatus start_connecting(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected);
 void stop_connecting(ConnectionContext* ctx);
 
 /**
@@ -98,7 +100,7 @@ void stop_connecting(ConnectionContext* ctx);
  *        If the attempt to listen fails permanently or is cancelled,
  *        std::nullopt is passed.
  */
-bool start_listening(EventLoop* event_loop, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, std::optional<socket_id_t>> on_connected);
+RichStatus start_listening(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected);
 void stop_listening(ConnectionContext* ctx);
 
 /**
@@ -122,12 +124,12 @@ public:
      *        The socket will internally be duplicated using dup() so it can be
      *        closed after this call.
      */
-    bool init(EventLoop* event_loop, socket_id_t socket_id);
+    RichStatus init(EventLoop* event_loop, Logger logger, socket_id_t socket_id);
 
     /**
      * @brief Deinits a socket that was initialized with init().
      */
-    bool deinit();
+    RichStatus deinit();
 
     void start_read(bufptr_t buffer, TransferHandle* handle, Callback<void, ReadResult> completer) final;
     void cancel_read(TransferHandle transfer_handle) final;
@@ -154,6 +156,7 @@ private:
 
     int socket_id_ = INVALID_SOCKET;
     EventLoop* event_loop_ = nullptr;
+    Logger logger_ = Logger::none();
     struct sockaddr_storage remote_addr_ = {0}; // updated after each RX event
     uint32_t mask_ = 0; // current event subscription mask
     bufptr_t rx_buf_{}; // valid while there is an RX request pending

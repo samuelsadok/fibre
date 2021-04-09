@@ -1,6 +1,5 @@
 
 #include "autogen/interfaces.hpp"
-#include <fibre/../../logging.hpp>
 #include <fibre/fibre.hpp>
 #include <algorithm>
 #include <iostream>
@@ -70,19 +69,28 @@ TestClass test_object;
 TestIntf1Wrapper<TestClass> test_object_wrapper{test_object};
 TestIntf1Intf* test_object_ptr = &test_object_wrapper;
 
+
+
 int main() {
     printf("Starting Fibre server...\n");
 
-    bool ok = fibre::launch_event_loop([](fibre::EventLoop* event_loop) {
+    fibre::Logger logger = fibre::Logger{fibre::log_to_stderr, fibre::get_log_verbosity()};
+
+    bool failed = F_LOG_IF_ERR(logger, fibre::launch_event_loop(logger, [&](fibre::EventLoop* event_loop) {
         printf("Hello from event loop...\n");
-        auto fibre_ctx = fibre::open(event_loop);
+
+        fibre::Context* fibre_ctx;
+        if (F_LOG_IF_ERR(logger, fibre::open(event_loop, logger, &fibre_ctx), "failed to open fibre")) {
+            return;
+        }
+
         fibre_ctx->create_domain("tcp-server:address=localhost,port=14220");
         // auto domain =
         // fibre_ctx->create_domain("tcp-server:address=localhost,port=14220");
         // domain->publish_function();
-    });
+    }), "event loop failed");
 
-    printf("test server terminated %s\n", ok ? "nominally" : "with an error");
+    printf("test server terminated %s\n", failed ? "with an error" : "nominally");
 
-    return ok ? 0 : 1;
+    return failed ? 1 : 0;
 }

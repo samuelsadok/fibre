@@ -1,15 +1,13 @@
 
 #include <fibre/libfibre.h>
 #include <fibre/fibre.hpp>
-#include "logging.hpp"
 #include "print_utils.hpp"
 #include "legacy_protocol.hpp" // TODO: remove this include
 #include "legacy_object_client.hpp" // TODO: remove this include
 #include <algorithm>
+#include <string.h>
 
-DEFINE_LOG_TOPIC(LIBFIBRE);
-USE_LOG_TOPIC(LIBFIBRE);
-
+using namespace fibre;
 
 struct LibFibreChannelDiscoveryCtx {
     fibre::Domain* domain;
@@ -56,33 +54,48 @@ fibre::ChannelDiscoveryContext* from_c(LibFibreChannelDiscoveryCtx* ptr) {
 }
 
 
-static const struct LibFibreVersion libfibre_version = { 0, 1, 4 };
+static const struct LibFibreVersion libfibre_version = { 0, 2, 0 };
 
 class FIBRE_PRIVATE ExternalEventLoop final : public fibre::EventLoop {
 public:
     ExternalEventLoop(LibFibreEventLoop impl) : impl_(impl) {}
 
-    bool post(fibre::Callback<void> callback) final {
-        return impl_.post && ((*impl_.post)(callback.get_ptr(), callback.get_ctx()) == 0);
+    RichStatus post(fibre::Callback<void> callback) final {
+        F_RET_IF(!impl_.post, "not implemented");
+        F_RET_IF((*impl_.post)(callback.get_ptr(), callback.get_ctx()) != 0,
+                  "user provided post() failed");
+        return RichStatus::success();
     }
 
-    bool register_event(int event_fd, uint32_t events, fibre::Callback<void, uint32_t> callback) final {
-        return impl_.register_event && ((*impl_.register_event)(event_fd, events, callback.get_ptr(), callback.get_ctx()) == 0);
+    RichStatus register_event(int event_fd, uint32_t events, fibre::Callback<void, uint32_t> callback) final {
+        F_RET_IF(!impl_.register_event, "not implemented");
+        F_RET_IF((*impl_.register_event)(event_fd, events, callback.get_ptr(), callback.get_ctx()) != 0,
+                 "user provided register_event() failed");
+        return RichStatus::success();
     }
 
-    bool deregister_event(int event_fd) final {
-        return impl_.deregister_event && ((*impl_.deregister_event)(event_fd) == 0);
+    RichStatus deregister_event(int event_fd) final {
+        F_RET_IF(!impl_.deregister_event, "not implemented");
+        F_RET_IF((*impl_.deregister_event)(event_fd) != 0,
+                 "user provided deregister_event() failed");
+        return RichStatus::success();
     }
 
-    struct fibre::EventLoopTimer* call_later(float delay, fibre::Callback<void> callback) final {
-        if (!impl_.call_later) {
-            return nullptr;
+    RichStatus call_later(float delay, fibre::Callback<void> callback, fibre::EventLoopTimer** p_timer) final {
+        F_RET_IF(!impl_.call_later, "not implemented");
+        fibre::EventLoopTimer* timer = (fibre::EventLoopTimer*)(*impl_.call_later)(delay, callback.get_ptr(), callback.get_ctx());
+        if (p_timer) {
+            *p_timer = timer;
         }
-        return (fibre::EventLoopTimer*)(*impl_.call_later)(delay, callback.get_ptr(), callback.get_ctx());
+        F_RET_IF(!timer, "user provided call_later() failed");
+        return RichStatus::success();
     }
 
-    bool cancel_timer(struct fibre::EventLoopTimer* timer) final {
-        return impl_.cancel_timer && ((*impl_.cancel_timer)((EventLoopTimer*)timer) == 0);
+    RichStatus cancel_timer(struct fibre::EventLoopTimer* timer) final {
+        F_RET_IF(impl_.cancel_timer, "not implemented");
+        F_RET_IF((*impl_.cancel_timer)((LibFibreEventLoopTimer*)timer) == 0,
+                 "user provided cancel_timer() failed");
+        return RichStatus::success();
     }
 
 private:
@@ -94,7 +107,7 @@ class ExternalDiscoverer : public fibre::ChannelDiscoverer {
         fibre::Domain* domain,
         const char* specs, size_t specs_len,
         fibre::ChannelDiscoveryContext** handle) final;
-    int stop_channel_discovery(fibre::ChannelDiscoveryContext* handle) final;
+    RichStatus stop_channel_discovery(fibre::ChannelDiscoveryContext* handle) final;
 public:
     on_start_discovery_cb_t on_start_discovery;
     on_stop_discovery_cb_t on_stop_discovery;
@@ -112,13 +125,13 @@ void ExternalDiscoverer::start_channel_discovery(fibre::Domain* domain, const ch
     }
 }
 
-int ExternalDiscoverer::stop_channel_discovery(fibre::ChannelDiscoveryContext* handle) {
+RichStatus ExternalDiscoverer::stop_channel_discovery(fibre::ChannelDiscoveryContext* handle) {
     LibFibreChannelDiscoveryCtx* ctx = to_c(handle);
     if (on_stop_discovery) {
         (*on_stop_discovery)(cb_ctx, to_c(ctx->domain));
     }
     delete ctx;
-    return 0;
+    return RichStatus::success();
 }
 
 namespace fibre {
@@ -182,20 +195,20 @@ void AsyncStreamLink::close(StreamStatus status) {
 
 }
 
-LibFibreStatus convert_status(fibre::StreamStatus status) {
+LibFibreStatus convert_status(StreamStatus status) {
     switch (status) {
-        case fibre::kStreamOk: return kFibreOk;
-        case fibre::kStreamCancelled: return kFibreCancelled;
-        case fibre::kStreamClosed: return kFibreClosed;
-        default: return kFibreInternalError; // TODO: this may not always be appropriate
+        case fibre::kStreamOk: return LibFibreStatus::kFibreOk;
+        case fibre::kStreamCancelled: return LibFibreStatus::kFibreCancelled;
+        case fibre::kStreamClosed: return LibFibreStatus::kFibreClosed;
+        default: return LibFibreStatus::kFibreInternalError; // TODO: this may not always be appropriate
     }
 }
 
 fibre::StreamStatus convert_status(LibFibreStatus status) {
     switch (status) {
-        case kFibreOk: return fibre::kStreamOk;
-        case kFibreCancelled: return fibre::kStreamCancelled;
-        case kFibreClosed: return fibre::kStreamClosed;
+        case LibFibreStatus::kFibreOk: return fibre::kStreamOk;
+        case LibFibreStatus::kFibreCancelled: return fibre::kStreamCancelled;
+        case LibFibreStatus::kFibreClosed: return fibre::kStreamClosed;
         default: return fibre::kStreamError; // TODO: this may not always be appropriate
     }
 }
@@ -250,14 +263,14 @@ struct LibFibreRxStream {
 
 void LibFibreDiscoveryCtx::on_found_object(fibre::Object* obj, fibre::Interface* intf) {
     if (on_found_object_) {
-        FIBRE_LOG(D) << "discovered object " << fibre::as_hex(reinterpret_cast<uintptr_t>(obj));
+        F_LOG_D(domain_->ctx->logger, "discovered object " << fibre::as_hex(reinterpret_cast<uintptr_t>(obj)));
         (*on_found_object_)(cb_ctx_, to_c(obj), to_c(intf));
     }
 }
 
 void LibFibreDiscoveryCtx::on_lost_object(fibre::Object* obj) {
     if (on_lost_object_) {
-        FIBRE_LOG(D) << "lost object " << fibre::as_hex(reinterpret_cast<uintptr_t>(obj));
+        F_LOG_D(domain_->ctx->logger, "lost object " << fibre::as_hex(reinterpret_cast<uintptr_t>(obj)));
         (*on_lost_object_)(cb_ctx_, to_c(obj));
     }
 }
@@ -266,13 +279,13 @@ const struct LibFibreVersion* libfibre_get_version() {
     return &libfibre_version;
 }
 
-LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop) {
+LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, LibFibreLogger logger) {
     LibFibreCtx* ctx = new LibFibreCtx();
     ctx->event_loop = new ExternalEventLoop(event_loop);
-    ctx->fibre_ctx = fibre::open(ctx->event_loop);
 
-    if (!ctx->fibre_ctx) {
-        FIBRE_LOG(E) << "fibre::open failed";
+    Logger fibre_logger = logger.log ? Logger{logger.log, (LogLevel)logger.verbosity} : Logger::none();
+
+    if (F_LOG_IF_ERR(fibre_logger, fibre::open(ctx->event_loop, fibre_logger, &ctx->fibre_ctx), "failed to open fibre")) {
         delete ctx->event_loop;
         delete ctx;
         return nullptr;
@@ -282,10 +295,11 @@ LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop) {
 }
 
 void libfibre_close(LibFibreCtx* ctx) {
-    if (!ctx) {
-        FIBRE_LOG(E) << "invalid argument";
+    if (!ctx) { // invalid argument but we can't log it
         return;
     }
+
+    Logger logger = ctx->fibre_ctx->logger;
 
     fibre::close(ctx->fibre_ctx);
     ctx->fibre_ctx = nullptr;
@@ -293,7 +307,7 @@ void libfibre_close(LibFibreCtx* ctx) {
     delete ctx->event_loop;
     delete ctx;
 
-    FIBRE_LOG(D) << "closed (" << fibre::as_hex((uintptr_t)ctx) << ")";
+    F_LOG_D(logger, "closed (" << fibre::as_hex((uintptr_t)ctx) << ")");
 }
 
 
@@ -308,20 +322,18 @@ void libfibre_register_backend(LibFibreCtx* ctx, const char* name, size_t name_l
 FIBRE_PUBLIC LibFibreDomain* libfibre_open_domain(LibFibreCtx* ctx,
     const char* specs, size_t specs_len) {
     if (!ctx) {
-        FIBRE_LOG(E) << "invalid context";
-        return nullptr;
+        return nullptr; // invalid argument
     } else {
-        FIBRE_LOG(D) << "opening domain";
+        F_LOG_D(ctx->fibre_ctx->logger, "opening domain");
         return to_c(ctx->fibre_ctx->create_domain({specs, specs_len}));
     }
 }
 
 void libfibre_close_domain(LibFibreDomain* domain) {
     if (!domain) {
-        FIBRE_LOG(E) << "invalid domain";
-        return;
+        return; // invalid argument
     }
-    FIBRE_LOG(D) << "closing domain";
+    F_LOG_D(from_c(domain)->ctx->logger, "closing domain");
 
     from_c(domain)->ctx->close_domain(from_c(domain));
 }
@@ -364,10 +376,9 @@ void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel
 void libfibre_start_discovery(LibFibreDomain* domain, LibFibreDiscoveryCtx** handle,
         on_found_object_cb_t on_found_object, on_lost_object_cb_t on_lost_object,
         on_stopped_cb_t on_stopped, void* cb_ctx) {
-    if (!domain) {
-        FIBRE_LOG(E) << "invalid argument";
+    if (!domain) { // invalid argument
         if (on_stopped) {
-            (*on_stopped)(cb_ctx, kFibreInvalidArgument);
+            (*on_stopped)(cb_ctx, LibFibreStatus::kFibreInvalidArgument);
         }
         return;
     }
@@ -389,8 +400,7 @@ void libfibre_start_discovery(LibFibreDomain* domain, LibFibreDiscoveryCtx** han
 
 void libfibre_stop_discovery(LibFibreDiscoveryCtx* handle) {
     if (!handle) {
-        FIBRE_LOG(E) << "bad handle";
-        return;
+        return; // invalid argument
     }
 
     handle->domain_->stop_discovery();
@@ -448,7 +458,7 @@ void libfibre_subscribe_to_interface(LibFibreInterface* interface,
 
 LibFibreStatus libfibre_get_attribute(LibFibreObject* parent_obj, LibFibreAttribute* attr, LibFibreObject** child_obj_ptr) {
     if (!parent_obj || !attr) {
-        return kFibreInvalidArgument;
+        return LibFibreStatus::kFibreInvalidArgument;
     }
 
     fibre::LegacyObject* parent_obj_cast = reinterpret_cast<fibre::LegacyObject*>(parent_obj);
@@ -461,8 +471,8 @@ LibFibreStatus libfibre_get_attribute(LibFibreObject* parent_obj, LibFibreAttrib
         }) != attributes.end();
 
     if (!is_member) {
-        FIBRE_LOG(W) << "attempt to fetch attribute from an object that does not implement it";
-        return kFibreInvalidArgument;
+        // attempt to fetch attribute from an object that does not implement it
+        return LibFibreStatus::kFibreInvalidArgument;
     }
 
     //LibFibreCtx* libfibre_ctx = reinterpret_cast<LibFibreCtx*>(parent_obj_cast->client->user_data_);
@@ -470,21 +480,13 @@ LibFibreStatus libfibre_get_attribute(LibFibreObject* parent_obj, LibFibreAttrib
 
     if (!attr_cast->object->known_to_application) {
         attr_cast->object->known_to_application = true;
-
-        //if (libfibre_ctx->on_construct_object) {
-        //    //FIBRE_LOG(D) << "constructing subobject " << fibre::as_hex(reinterpret_cast<uintptr_t>(child_obj));
-        //    (*libfibre_ctx->on_construct_object)(libfibre_ctx->cb_ctx,
-        //        reinterpret_cast<LibFibreObject*>(child_obj),
-        //        reinterpret_cast<LibFibreInterface*>(child_obj->intf.get()),
-        //        child_obj->intf->name.size() ? child_obj->intf->name.data() : nullptr, child_obj->intf->name.size());
-        //}
     }
 
     if (child_obj_ptr) {
         *child_obj_ptr = reinterpret_cast<LibFibreObject*>(child_obj);
     }
 
-    return kFibreOk;
+    return LibFibreStatus::kFibreOk;
 }
 
 /**
@@ -511,10 +513,9 @@ LibFibreStatus libfibre_call(LibFibreFunction* func, LibFibreCallContext** handl
                    && (!tx_len || tx_buf) // tx_buf valid
                    && (!rx_len || rx_buf) // rx_buf valid
                    && tx_end && rx_end // tx_end, rx_end valid
-                   && ((status != kFibreOk) || tx_len || rx_len || !handle); // progress
+                   && ((status != LibFibreStatus::kFibreOk) || tx_len || rx_len || !handle); // progress
     if (!valid_args) {
-        FIBRE_LOG(E) << "invalid argument";
-        return kFibreInvalidArgument;
+        return LibFibreStatus::kFibreInvalidArgument;
     }
 
     struct Ctx { libfibre_call_cb_t callback; void* ctx; };
@@ -528,7 +529,7 @@ LibFibreStatus libfibre_call(LibFibreFunction* func, LibFibreCallContext** handl
             unsigned char* rx_buf;
             size_t rx_len;
             auto status = ctx->callback(ctx->ctx, to_c(result.status), result.tx_end, result.rx_end, &tx_buf, &tx_len, &rx_buf, &rx_len);
-            if (status == kFibreBusy) {
+            if (status == LibFibreStatus::kFibreBusy) {
                 delete ctx;
                 return std::nullopt;
             } else {
@@ -540,7 +541,7 @@ LibFibreStatus libfibre_call(LibFibreFunction* func, LibFibreCallContext** handl
     auto response = from_c(func)->call(from_c(handle), {from_c(status), {tx_buf, tx_len}, {rx_buf, rx_len}}, cb);
 
     if (!response.has_value()) {
-        return kFibreBusy;
+        return LibFibreStatus::kFibreBusy;
     } else {
         delete ctx;
         *tx_end = response->tx_end;

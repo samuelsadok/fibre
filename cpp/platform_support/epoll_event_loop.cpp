@@ -1,6 +1,5 @@
 
 #include "epoll_event_loop.hpp"
-#include "../logging.hpp"
 
 #include <sys/epoll.h>
 #include <sys/types.h>
@@ -10,33 +9,30 @@
 
 using namespace fibre;
 
-DEFINE_LOG_TOPIC(EVENT_LOOP);
-USE_LOG_TOPIC(EVENT_LOOP);
-
-
-bool EpollEventLoop::start(Callback<void> on_started) {
-    if (epoll_fd_ >= 0) {
-        FIBRE_LOG(E) << "already started";
-        return false;
-    }
+RichStatus EpollEventLoop::start(Logger logger, Callback<void> on_started) {
+    F_RET_IF(epoll_fd_ >= 0, "already started");
 
     epoll_fd_ = epoll_create1(0);
-    if (epoll_fd_ < 0) {
-        FIBRE_LOG(E) << "epoll_create1() failed";
-        return false;
-    }
+    F_RET_IF(epoll_fd_ < 0, "epoll_create1() failed" << sys_err{});
+    logger_ = logger;
 
-    bool ok = true;
+    RichStatus status = RichStatus::success();
 
     post_fd_ = eventfd(0, 0);
+    
+    if (post_fd_ < 0) {
+        status = F_MAKE_ERR("failed to create an event for posting callbacks onto the event loop");
+        goto done0;
+    }
 
-    bool post_fd_ok = (post_fd_ >= 0)
-            && register_event(post_fd_, EPOLLIN, MEMBER_CB(this, run_callbacks))
-            && post(on_started);
-
-    if (!post_fd_ok) {
-        FIBRE_LOG(E) << "failed to create an event for posting callbacks onto the event loop";
-        ok = false;
+    if ((status = register_event(post_fd_, EPOLLIN, MEMBER_CB(this, run_callbacks))).is_error()) {
+        status = F_AMEND_ERR(status, "failed to register event");
+        goto done1;
+    }
+    
+    if ((status = post(on_started)).is_error()) {
+        status = F_AMEND_ERR(status, "post() failed");
+        goto done2;
     }
 
     // Run for as long as there are callbacks pending posted or there's at least
@@ -45,17 +41,16 @@ bool EpollEventLoop::start(Callback<void> on_started) {
         iterations_++;
 
         do {
-            FIBRE_LOG(D) << "epoll_wait...";
+            F_LOG_D(logger, "epoll_wait...");
             n_triggered_events_ = epoll_wait(epoll_fd_, triggered_events_, max_triggered_events_, -1);
-            FIBRE_LOG(D) << "epoll_wait unblocked by " << n_triggered_events_ << " events";
+            F_LOG_D(logger, "epoll_wait unblocked by " << n_triggered_events_ << " events");
             if (errno == EINTR) {
-                FIBRE_LOG(D) << "interrupted";
+                F_LOG_D(logger, "interrupted");
             }
         } while (n_triggered_events_ < 0 && errno == EINTR); // ignore syscall interruptions. This happens for instance during suspend.
 
         if (n_triggered_events_ <= 0) {
-            FIBRE_LOG(E) << "epoll_wait() failed with " <<  n_triggered_events_ << ": " << sys_err() << " - Terminating worker thread.";
-            ok = false;
+            status = F_MAKE_ERR("epoll_wait() failed with " <<  n_triggered_events_ << ": " << sys_err() << " - Terminating worker thread.");
             break;
         }
 
@@ -66,39 +61,36 @@ bool EpollEventLoop::start(Callback<void> on_started) {
                 try { // TODO: not sure if using "try" without throwing exceptions will do unwanted things with the stack
                     ctx->callback.invoke(triggered_events_[i].events);
                 } catch (...) {
-                    FIBRE_LOG(E) << "worker callback threw an exception.";
+                    F_LOG_E(logger, "worker callback threw an exception.");
                 }
             }
         }
     }
 
-    FIBRE_LOG(D) << "epoll loop exited";
+    F_LOG_D(logger, "epoll loop exited");
 
-    if ((post_fd_ >= 0) && !deregister_event(post_fd_)) {
-        FIBRE_LOG(E) << "deregister_event() failed";
-        ok = false;
+done2:
+    if (deregister_event(post_fd_).is_error()) {
+        status = F_MAKE_ERR("deregister_event() failed");
     }
 
-    if ((post_fd_ >= 0) && close(post_fd_) != 0) {
-        FIBRE_LOG(E) << "close() failed: " << sys_err();
-        ok = false;
+done1:
+    if (close(post_fd_) != 0) {
+        status = F_AMEND_ERR(status, "close() failed: " << sys_err());
     }
     post_fd_ = -1;
 
+done0:
     if (close(epoll_fd_) != 0) {
-        FIBRE_LOG(E) << "close() failed: " << sys_err();
-        ok = false;
+        status = F_AMEND_ERR(status, "close() failed: " << sys_err());
     }
     epoll_fd_ = -1;
 
-    return ok;
+    return status;
 }
 
-bool EpollEventLoop::post(Callback<void> callback) {
-    if (epoll_fd_ < 0) {
-        FIBRE_LOG(E) << "not started";
-        return false;
-    }
+RichStatus EpollEventLoop::post(Callback<void> callback) {
+    F_RET_IF(epoll_fd_ < 0, "not started");
 
     {
         std::unique_lock<std::mutex> lock(pending_callbacks_mutex_);
@@ -106,23 +98,14 @@ bool EpollEventLoop::post(Callback<void> callback) {
     }
 
     const uint64_t val = 1;
-    if (write(post_fd_, &val, sizeof(val)) != sizeof(val)) {
-        FIBRE_LOG(E) << "write() failed" << sys_err();
-        return false;
-    }
-    return true;
+    F_RET_IF(write(post_fd_, &val, sizeof(val)) != sizeof(val),
+             "write() failed: " << sys_err());
+    return RichStatus::success();
 }
 
-bool EpollEventLoop::register_event(int event_fd, uint32_t events, Callback<void, uint32_t> callback) {
-    if (epoll_fd_ < 0) {
-        FIBRE_LOG(E) << "not initialized";
-        return false;
-    }
-    
-    if (event_fd < 0) {
-        FIBRE_LOG(E) << "invalid argument";
-        return false;
-    }
+RichStatus EpollEventLoop::register_event(int event_fd, uint32_t events, Callback<void, uint32_t> callback) {
+    F_RET_IF(epoll_fd_ < 0, "not initialized");
+    F_RET_IF(event_fd < 0, "invalid argument");
 
     EventContext* ctx = new EventContext{callback};
     struct epoll_event ev = {
@@ -132,36 +115,28 @@ bool EpollEventLoop::register_event(int event_fd, uint32_t events, Callback<void
     context_map_[event_fd] = ctx;
 
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, event_fd, &ev) != 0) {
-        FIBRE_LOG(E) << "epoll_ctl(" << event_fd << "...) failed: " << sys_err();
         delete ctx;
-        return false;
+        return F_MAKE_ERR("epoll_ctl(" << event_fd << "...) failed: " << sys_err());
     }
 
-    FIBRE_LOG(D) << "registered epoll event " << event_fd;
+    F_LOG_D(logger_, "registered epoll event " << event_fd);
 
-    return true;
+    return RichStatus::success();
 }
 
-bool EpollEventLoop::deregister_event(int event_fd) {
-    if (epoll_fd_ < 0) {
-        FIBRE_LOG(E) << "not running";
-        return false;
-    }
+RichStatus EpollEventLoop::deregister_event(int event_fd) {
+    F_RET_IF(epoll_fd_ < 0, "not initialized");
 
-    int result = true;
+    RichStatus status = RichStatus::success();
 
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, event_fd, nullptr) != 0) {
-        FIBRE_LOG(E) << "epoll_ctl() failed: " << sys_err();
-        result = false;
+        status = F_MAKE_ERR("epoll_ctl() failed: " << sys_err());
     }
 
     EventContext* callback = context_map_[event_fd];
 
     auto it = context_map_.find(event_fd);
-    if (it == context_map_.end()) {
-        FIBRE_LOG(E) << "event context not found";
-        return false;
-    }
+    F_RET_IF(it == context_map_.end(), "event context not found");
 
     for (int i = 0; i < n_triggered_events_; ++i) {
         if ((EventContext*)(triggered_events_[i].data.ptr) == it->second) {
@@ -171,25 +146,25 @@ bool EpollEventLoop::deregister_event(int event_fd) {
 
     context_map_.erase(it);
     
-    return result;
+    return status;
 }
 
-struct EventLoopTimer* EpollEventLoop::call_later(float delay, Callback<void> callback) {
-    FIBRE_LOG(E) << "not implemented"; // TODO: implement
-    return nullptr;
+RichStatus EpollEventLoop::call_later(float delay, Callback<void> callback, EventLoopTimer** p_timer) {
+    if (p_timer) {
+        *p_timer = nullptr;
+    }
+    return F_MAKE_ERR("not implemented"); // TODO: implement
 }
 
-bool EpollEventLoop::cancel_timer(EventLoopTimer* timer) {
-    FIBRE_LOG(E) << "not implemented"; // TODO: implement
-    return false;
+RichStatus EpollEventLoop::cancel_timer(EventLoopTimer* timer) {
+    return F_MAKE_ERR("not implemented"); // TODO: implement
 }
 
 void EpollEventLoop::run_callbacks(uint32_t) {
     // TODO: warn if read fails
     uint64_t val;
-    if (read(post_fd_, &val, sizeof(val)) != sizeof(val)) {
-        FIBRE_LOG(E) << "failed to read from post file descriptor";
-    }
+    F_LOG_IF(logger_, read(post_fd_, &val, sizeof(val)) != sizeof(val),
+             "failed to read from post file descriptor");
 
     std::vector<Callback<void>> pending_callbacks;
 

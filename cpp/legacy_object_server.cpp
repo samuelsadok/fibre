@@ -2,11 +2,7 @@
 #include "legacy_object_server.hpp"
 #include "codecs.hpp"
 #include <fibre/fibre.hpp>
-#include "logging.hpp"
 #include <algorithm>
-
-DEFINE_LOG_TOPIC(LEGACY_OBJ);
-USE_LOG_TOPIC(LEGACY_OBJ);
 
 namespace fibre {
 
@@ -57,32 +53,30 @@ static constexpr size_t n_endpoints = sizeof(endpoint_table) / sizeof(endpoint_t
 
 
 // Returns part of the JSON interface definition.
-bool endpoint0_handler(cbufptr_t* input_buffer, bufptr_t* output_buffer) {
+RichStatus endpoint0_handler(cbufptr_t* input_buffer, bufptr_t* output_buffer) {
     // The request must contain a 32 bit integer to specify an offset
     std::optional<uint32_t> offset = read_le<uint32_t>(input_buffer);
     
     if (!offset.has_value()) {
         // Didn't receive any offset
-        return false;
+        return F_MAKE_ERR("offset missing");
     } else if (*offset == 0xffffffff) {
         // If the offset is special value 0xFFFFFFFF, send back the JSON version ID instead
-        return write_le<uint32_t>(json_version_id_, output_buffer);
+        return write_le<uint32_t>(json_version_id_, output_buffer) ? RichStatus::success() : F_MAKE_ERR("decoding failed");
     } else if (*offset >= embedded_json_length) {
         // Attempt to read beyond the buffer end - return empty response
-        return true;
+        return RichStatus::success();
     } else {
         // Return part of the json file
         size_t n_copy = std::min(output_buffer->size(), embedded_json_length - (size_t)*offset);
         memcpy(output_buffer->begin(), embedded_json + *offset, n_copy);
         *output_buffer = output_buffer->skip(n_copy);
-        return true;
+        return RichStatus::success();
     }
 }
 
-bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* input_buffer, bufptr_t* output_buffer) {
-    if (idx < 0 || idx >= n_endpoints) {
-        return false;
-    }
+RichStatus LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* input_buffer, bufptr_t* output_buffer) {
+    F_RET_IF(idx < 0 || idx >= n_endpoints, "invalid endpoint");
 
     if (idx == 0) {
         return endpoint0_handler(input_buffer, output_buffer);
@@ -91,9 +85,8 @@ bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* in
     EndpointDefinition& ep = endpoint_table[idx];
 
     if (ep.type == EndpointType::kRoProperty || ep.type == EndpointType::kRwProperty) {
-        if (ep.type == EndpointType::kRoProperty && input_buffer->size() != 0) {
-            return false; // size mismatch
-        }
+        F_RET_IF(ep.type == EndpointType::kRoProperty && input_buffer->size() != 0,
+                 "size mismatch");
 
         ServerObjectId obj = ep.type == EndpointType::kRoProperty ? ep.ro_property.object_id : ep.rw_property.object_id;
         ServerFunctionId fn = ep.type == EndpointType::kRoProperty ? ep.ro_property.read_function_id :
@@ -113,9 +106,7 @@ bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* in
 
         // invoke function
         auto* func = domain->get_server_function(fn);
-        if (!func) {
-            return false;
-        }
+        F_RET_IF(!func, "invalid function");
 
         uint8_t call_frame[256];
         std::optional<CallBufferRelease> call_buffer_release = func->impl.invoke(
@@ -126,19 +117,15 @@ bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* in
             {} // continuation
         );
 
-        if (!call_buffer_release.has_value()) {
-            FIBRE_LOG(W) << "legacy protocol used to call function that did not return synchronously";
-            return false;
-        }
+        F_RET_IF(!call_buffer_release.has_value(),
+                 "legacy protocol used to call function that did not return synchronously");
 
         *output_buffer = output_buffer->skip(call_buffer_release->tx_end - output_buffer->begin());
 
-        if (call_buffer_release->status != kFibreClosed) {
-            FIBRE_LOG(W) << "legacy protocol return error " << call_buffer_release->status << " but legacy protocol does not support error reporting";
-            return false;
-        }
+        F_RET_IF(call_buffer_release->status != kFibreClosed,
+                 "legacy protocol return error " << call_buffer_release->status << " but legacy protocol does not support error reporting");
 
-        return true;
+        return RichStatus::success();
 
     } else {
         // This endpoint access is part of a function call
@@ -162,9 +149,7 @@ bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* in
                     (ep.type == EndpointType::kFunctionTrigger && n_inputs_ == 0) // functions with no in args
                  || (ep.type == EndpointType::kFunctionInput && endpoint_table[idx - 1].type == EndpointType::kFunctionTrigger); // functions with some in args
 
-            if (!correct_first_ep_access) {
-                return false;
-            }
+            F_RET_IF(!correct_first_ep_access, "incorrect endpoint access");
 
             trigger_ep_ = ep.type == EndpointType::kFunctionTrigger ? idx : (idx - 1);
 
@@ -181,9 +166,8 @@ bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* in
 
 
         if (ep.type == EndpointType::kFunctionInput) {
-            if (input_buffer->size() != ep.function_input.size || output_buffer->size() != 0) {
-                return false; // size mismatch
-            }
+            F_RET_IF(input_buffer->size() != ep.function_input.size || output_buffer->size() != 0,
+                     "size mismatch");
 
             // Copy input buffer into scratch buffer
             std::copy_n(input_buffer->begin(), input_buffer->size(), rx_buf_ + rx_pos_);
@@ -194,15 +178,12 @@ bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* in
             expected_ep_ = (idx + 1 - trigger_ep_) % (n_inputs_ + 1) + trigger_ep_;
 
         } else if (ep.type == EndpointType::kFunctionTrigger) {
-            if (input_buffer->size() != 0 || output_buffer->size() != 0) {
-                return false; // size mismatch
-            }
+            F_RET_IF(input_buffer->size() != 0 || output_buffer->size() != 0,
+                     "size mismatch");
 
             // invoke function
             auto* func = domain->get_server_function(ep.function_trigger.function_id);
-            if (!func) {
-                return false;
-            }
+            F_RET_IF(!func, "invalid function");
 
             uint8_t call_frame[256];
             std::optional<CallBufferRelease> call_buffer_release = func->impl.invoke(
@@ -213,24 +194,19 @@ bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* in
                 {} // continuation
             );
 
-            if (!call_buffer_release.has_value()) {
-                FIBRE_LOG(W) << "legacy protocol used to call function that did not return synchronously";
-                return false;
-            }
+            F_RET_IF(!call_buffer_release.has_value(),
+                     "legacy protocol used to call function that did not return synchronously");
 
-            if (call_buffer_release->status != kFibreClosed) {
-                FIBRE_LOG(W) << "legacy protocol return error " << call_buffer_release->status << " but legacy protocol does not support error reporting";
-                return false;
-            }
+            F_RET_IF(call_buffer_release->status != kFibreClosed,
+                     "legacy protocol return error " << call_buffer_release->status << " but legacy protocol does not support error reporting");
 
             // advance progress (to first output ep or to 0 if there are no outputs)
             expected_ep_ = (trigger_ep_ + n_inputs_ + 1) % (trigger_ep_ + n_inputs_ + 1 + n_outputs_);
 
         } else if (ep.type == EndpointType::kFunctionOutput) {
             // copy to output buffer
-            if (input_buffer->size() != 0 || output_buffer->size() != ep.function_output.size) {
-                return false; // size mismatch
-            }
+            F_RET_IF(input_buffer->size() != 0 || output_buffer->size() != ep.function_output.size,
+                     "size mismatch");
 
             // Copy scratch buffer into output buffer
             std::copy_n(tx_buf_ + tx_pos_, output_buffer->size(), output_buffer->begin());
@@ -241,7 +217,7 @@ bool LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr_t* in
             expected_ep_ = (idx + 1) % (trigger_ep_ + n_inputs_ + 1 + n_outputs_);
         }
 
-        return true;
+        return RichStatus::success();
     }
 }
 

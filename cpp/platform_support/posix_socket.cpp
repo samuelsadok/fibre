@@ -1,6 +1,5 @@
 
 #include "posix_socket.hpp"
-#include "../logging.hpp"
 #include "../print_utils.hpp"
 
 #include <errno.h>
@@ -13,9 +12,6 @@
 #include <signal.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
-
-DEFINE_LOG_TOPIC(SOCKET);
-USE_LOG_TOPIC(SOCKET);
 
 #define MAX_CONCURRENT_CONNECTIONS 128
 
@@ -65,6 +61,7 @@ struct fibre::AddressResolutionContext {
     std::string address_str;
     std::string port_str;
     EventLoop* event_loop;
+    Logger logger = Logger::none();
     Callback<void, std::optional<cbufptr_t>> callback;
     int cmpl_fd;
     struct gaicb gaicb{};
@@ -73,13 +70,14 @@ struct fibre::AddressResolutionContext {
     void on_gai_completed(uint32_t);
 };
 
-bool fibre::start_resolving_address(EventLoop* event_loop, std::tuple<std::string, int> address, bool passive, AddressResolutionContext** handle, Callback<void, std::optional<cbufptr_t>> callback) {
+RichStatus fibre::start_resolving_address(EventLoop* event_loop, Logger logger, std::tuple<std::string, int> address, bool passive, AddressResolutionContext** handle, Callback<void, std::optional<cbufptr_t>> callback) {
     // deleted in on_gai_completed()
     AddressResolutionContext* ctx = new AddressResolutionContext();
 
     ctx->address_str = std::get<0>(address);
     ctx->port_str = std::to_string(std::get<1>(address));
     ctx->event_loop = event_loop;
+    ctx->logger = logger;
     ctx->callback = callback;
 
     ctx->hints = {
@@ -119,14 +117,13 @@ bool fibre::start_resolving_address(EventLoop* event_loop, std::tuple<std::strin
     ctx->cmpl_fd = eventfd(0, 0);
     event_loop->register_event(ctx->cmpl_fd, EPOLLIN, MEMBER_CB(ctx, on_gai_completed));
 
-    FIBRE_LOG(D) << "starting address resolution for " << ctx->address_str;
+    F_LOG_D(logger, "starting address resolution for " << ctx->address_str);
     if (getaddrinfo_a(GAI_NOWAIT, ctx->list, 1, &sig) != 0) {
-        FIBRE_LOG(E) << "getaddrinfo_a() failed";
         delete ctx;
-        return false;
+        return F_MAKE_ERR("getaddrinfo_a() failed");
     }
 
-    return true;
+    return RichStatus::success();
 }
 
 void fibre::cancel_resolving_address(AddressResolutionContext* handle) {
@@ -134,17 +131,14 @@ void fibre::cancel_resolving_address(AddressResolutionContext* handle) {
 }
 
 void AddressResolutionContext::on_gai_completed(uint32_t) {
-    if (!event_loop->deregister_event(cmpl_fd)) {
-        FIBRE_LOG(W) << "failed to deregister event";
-    }
+    F_LOG_IF_ERR(logger, event_loop->deregister_event(cmpl_fd),
+                 "failed to deregister event");
 
-    FIBRE_LOG(D) << "address resolution complete";
-    if (gai_error(&gaicb) != 0) {
-        FIBRE_LOG(W) << "failed to resolve " << address_str << ": " << sys_err();
-    } else {
+    F_LOG_D(logger, "address resolution complete");
+    if (!F_LOG_IF(logger, gai_error(&gaicb), "failed to resolve " << address_str << ": " << sys_err())) {
         // this returns multiple addresses
         for (struct addrinfo* addr = gaicb.ar_result; addr; addr = addr->ai_next) {
-            FIBRE_LOG(D) << "resolved IP: " << *(struct sockaddr_storage*)addr->ai_addr;
+            F_LOG_D(logger, "resolved IP: " << *(struct sockaddr_storage*)addr->ai_addr);
             cbufptr_t buf = {(const uint8_t*)addr->ai_addr, (size_t)addr->ai_addrlen};
             callback.invoke(buf);
         }
@@ -156,35 +150,39 @@ void AddressResolutionContext::on_gai_completed(uint32_t) {
 
 struct fibre::ConnectionContext {
     EventLoop* event_loop;
+    Logger logger = Logger::none();
     socket_id_t socket_id;
-    Callback<void, std::optional<socket_id_t>> callback;
+    Callback<void, RichStatus, socket_id_t> callback;
 
     void on_connection_complete(uint32_t mask);
     void on_accept(uint32_t mask);
 };
 
-bool fibre::start_connecting(EventLoop* event_loop, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, std::optional<socket_id_t>> on_connected) {
+RichStatus fibre::start_connecting(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected) {
     auto the_addr = reinterpret_cast<const struct sockaddr*>(addr.begin());
 
     ConnectionContext* context = new ConnectionContext();
     context->event_loop = event_loop;
+    context->logger = logger;
     context->socket_id = socket(the_addr->sa_family, type | SOCK_NONBLOCK, protocol);
     context->callback = on_connected;
 
+    RichStatus status;
+
     if (IS_INVALID_SOCKET(context->socket_id)) {
-        FIBRE_LOG(E) << "failed to open socket: " << sock_err();
+        status = F_MAKE_ERR("failed to open socket: " << sock_err());
         goto fail0;
     }
    
     if (connect(context->socket_id, the_addr, addr.size()) == 0) {
         if (errno != EINPROGRESS) {
-            FIBRE_LOG(E) << "connect() failed: " << sock_err();
+            status = F_MAKE_ERR("connect() failed: " << sock_err());
             goto fail1;
         }
     }
 
-    if (!event_loop->register_event(context->socket_id, EPOLLOUT, MEMBER_CB(context, on_connection_complete))) {
-            FIBRE_LOG(E) << "failed to register event: " << sock_err();
+    if ((status = event_loop->register_event(context->socket_id, EPOLLOUT, MEMBER_CB(context, on_connection_complete))).is_error()) {
+        status = F_AMEND_ERR(status, "failed to register event: " << sock_err());
         goto fail1;
     }
 
@@ -192,59 +190,55 @@ bool fibre::start_connecting(EventLoop* event_loop, cbufptr_t addr, int type, in
         *ctx = context;
     }
 
-    return true;
+    return RichStatus::success();
 
 fail1:
     close(context->socket_id);
 fail0:
     delete context;
-    return false;
+    return status;
 }
 
 void fibre::stop_connecting(ConnectionContext* ctx) {
-    if (!ctx->event_loop->deregister_event(ctx->socket_id)) {
-        FIBRE_LOG(W) << "failed to deregister event";
-    }
-    if (close(ctx->socket_id) != 0) {
-        FIBRE_LOG(W) << "failed to close socket";
-    }
+    F_LOG_IF_ERR(ctx->logger, ctx->event_loop->deregister_event(ctx->socket_id),
+                 "failed to deregister event");
+    F_LOG_IF(ctx->logger, close(ctx->socket_id) != 0, "failed to close socket");
     ctx->socket_id = INVALID_SOCKET;
-    ctx->callback.invoke_and_clear(std::nullopt);
+    ctx->callback.invoke_and_clear(RichStatus::success(), INVALID_SOCKET);
     delete ctx;
 }
 
 void fibre::ConnectionContext::on_connection_complete(uint32_t mask) {
-    bool failed;
+    RichStatus status = RichStatus::success();
     int error_code;
     socklen_t error_code_size = sizeof(error_code);
     if (getsockopt(socket_id, SOL_SOCKET, SO_ERROR, &error_code, &error_code_size) != 0) {
-        FIBRE_LOG(W) << "connection failed (unknown error)";
-        failed = true;
+        status = F_MAKE_ERR("connection failed (unknown error)");
     } else if (error_code != 0) {
-        FIBRE_LOG(W) << "connection failed: " << sock_err{error_code};
-        failed = true;
-    } else {
-        failed = false;
+        status = F_MAKE_ERR("connection failed: " << sock_err{error_code});
     }
     
     event_loop->deregister_event(socket_id);
-    callback.invoke(failed ? std::nullopt : std::make_optional(socket_id));
+    callback.invoke(status, status.is_error() ? INVALID_SOCKET : socket_id);
     close(socket_id); // The callback must duplicate the socket id if it intends
                       // to keep using it.
     delete this;
 }
 
-bool fibre::start_listening(EventLoop* event_loop, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, std::optional<socket_id_t>> on_connected) {
+RichStatus fibre::start_listening(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected) {
     auto the_addr = reinterpret_cast<const struct sockaddr*>(addr.begin());
     int flag = 1;
 
     ConnectionContext* context = new ConnectionContext();
     context->event_loop = event_loop;
+    context->logger = logger;
     context->socket_id = socket(the_addr->sa_family, type | SOCK_NONBLOCK, protocol);
     context->callback = on_connected;
 
+    RichStatus status;
+
     if (IS_INVALID_SOCKET(context->socket_id)) {
-        FIBRE_LOG(E) << "failed to open socket: " << sock_err();
+        status = F_MAKE_ERR("failed to open socket: " << sock_err());
         goto fail0;
     }
 
@@ -252,33 +246,33 @@ bool fibre::start_listening(EventLoop* event_loop, cbufptr_t addr, int type, int
     // This helps reusing ports that were previously not closed cleanly and
     // are therefore still lingering in the TIME_WAIT state.
     if (setsockopt(context->socket_id, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag))) {
-        FIBRE_LOG(E) << "failed to make socket reuse addresses: " << sock_err();
+        status = F_MAKE_ERR("failed to make socket reuse addresses: " << sock_err());
         goto fail1;
     }
    
     if (bind(context->socket_id, the_addr, addr.size())) {
-        FIBRE_LOG(E) << "failed to bind socket: " << sock_err();
+        status = F_MAKE_ERR("failed to bind socket: " << sock_err());
         goto fail1;
     }
 
     // make this socket a passive socket
     if (listen(context->socket_id, MAX_CONCURRENT_CONNECTIONS) != 0) {
-        FIBRE_LOG(E) << "failed to listen on TCP: " << sys_err();
+        status = F_MAKE_ERR("failed to listen on TCP: " << sys_err());
         goto fail1;
     }
 
-    if (!event_loop->register_event(context->socket_id, EPOLLIN, MEMBER_CB(context, on_accept))) {
-            FIBRE_LOG(E) << "failed to register event: " << sock_err();
+    if ((status = event_loop->register_event(context->socket_id, EPOLLIN, MEMBER_CB(context, on_accept))).is_error()) {
+        status = F_AMEND_ERR(status, "failed to register event: " << sock_err());
         goto fail1;
     }
 
-    return true;
+    return RichStatus::success();
 
 fail1:
     close(context->socket_id);
 fail0:
     delete context;
-    return false;
+    return status;
 }
 
 void fibre::stop_listening(ConnectionContext* ctx) {
@@ -289,60 +283,50 @@ void fibre::ConnectionContext::on_accept(uint32_t mask) {
     struct sockaddr_storage remote_addr;
     socklen_t slen = sizeof(remote_addr);
 
-    FIBRE_LOG(D) << "incoming TCP connection";
+    F_LOG_D(logger, "incoming TCP connection");
     int new_socket_id = accept(socket_id, reinterpret_cast<struct sockaddr *>(&remote_addr), &slen);
     if (IS_INVALID_SOCKET(new_socket_id)) {
-        FIBRE_LOG(E) << "accept() returned invalid socket: " << sock_err();
+        F_LOG_E(logger, "accept() returned invalid socket: " << sock_err());
         return; // ignore and wait for next incoming connection
     }
 
-    callback.invoke(std::make_optional(new_socket_id));
+    callback.invoke(RichStatus::success(), new_socket_id);
     close(new_socket_id); // The callback must duplicate the socket id if it intends
                           // to keep using it.
 }
 
-bool PosixSocket::init(EventLoop* event_loop, socket_id_t socket_id) {
-    if (!IS_INVALID_SOCKET(socket_id_)) {
-        FIBRE_LOG(E) << "already initialized";
-        return false;
-    }
+RichStatus PosixSocket::init(EventLoop* event_loop, Logger logger, socket_id_t socket_id) {
+    F_RET_IF(!IS_INVALID_SOCKET(socket_id_), "already initialized");
 
     socket_id = dup(socket_id);
-    if (IS_INVALID_SOCKET(socket_id)) {
-        FIBRE_LOG(E) << "failed to duplicate socket: " << sock_err();
-        return false;
-    }
+    F_RET_IF(IS_INVALID_SOCKET(socket_id), "failed to duplicate socket: " << sock_err());
 
     //if (!event_loop->register_event(socket_id, 0, MEMBER_CB(this, on_event))) {
-    //    FIBRE_LOG(E) << "failed to register socket event";
+    //    F_LOG_E(logger_, "failed to register socket event");
     //    close(socket_id);
     //    return false;
     //}
 
     event_loop_ = event_loop;
+    logger_ = logger;
     socket_id_ = socket_id;
-    return true;
+    return RichStatus::success();
 }
 
-bool PosixSocket::deinit() {
-    if (IS_INVALID_SOCKET(socket_id_)) {
-        FIBRE_LOG(E) << "not initialized";
-        return false;
-    }
+RichStatus PosixSocket::deinit() {
+    F_RET_IF(IS_INVALID_SOCKET(socket_id_), "not initialized");
 
-    bool result = true;
     if (::close(socket_id_)) {
-        FIBRE_LOG(E) << "close() failed: " << sock_err();
-        result = false;
+        F_LOG_E(logger_, "close() failed: " << sock_err());
     }
 
     socket_id_ = INVALID_SOCKET;
-    return result;
+    return RichStatus::success();
 }
 
 void PosixSocket::start_read(bufptr_t buffer, TransferHandle* handle, Callback<void, ReadResult> completer) {
     if (rx_callback_) {
-        FIBRE_LOG(E) << "RX request already pending";
+        F_LOG_E(logger_, "RX request already pending");
         completer.invoke({kStreamError});
         return;
     }
@@ -363,9 +347,9 @@ void PosixSocket::start_read(bufptr_t buffer, TransferHandle* handle, Callback<v
 
 void PosixSocket::cancel_read(TransferHandle transfer_handle) {
     if (transfer_handle != reinterpret_cast<TransferHandle>(this)) {
-        FIBRE_LOG(E) << "invalid handle";
+        F_LOG_E(logger_, "invalid handle");
     } else if (!rx_callback_) {
-        FIBRE_LOG(E) << "no RX pending";
+        F_LOG_E(logger_, "no RX pending");
     } else {
         rx_callback_.invoke_and_clear({kStreamCancelled, rx_buf_.begin()});
     }
@@ -373,7 +357,7 @@ void PosixSocket::cancel_read(TransferHandle transfer_handle) {
 
 void PosixSocket::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) {
     if (tx_callback_) {
-        FIBRE_LOG(E) << "TX request already pending";
+        F_LOG_E(logger_, "TX request already pending");
         completer.invoke({kStreamError});
         return;
     }
@@ -394,9 +378,9 @@ void PosixSocket::start_write(cbufptr_t buffer, TransferHandle* handle, Callback
 
 void PosixSocket::cancel_write(TransferHandle transfer_handle) {
     if (transfer_handle != reinterpret_cast<TransferHandle>(this)) {
-        FIBRE_LOG(E) << "invalid handle";
+        F_LOG_E(logger_, "invalid handle");
     } else if (!tx_callback_) {
-        FIBRE_LOG(E) << "no TX pending";
+        F_LOG_E(logger_, "no TX pending");
     } else {
         tx_callback_.invoke_and_clear({kStreamCancelled, tx_buf_.begin()});
     }
@@ -405,7 +389,7 @@ void PosixSocket::cancel_write(TransferHandle transfer_handle) {
 std::optional<ReadResult> PosixSocket::read_sync(bufptr_t buffer) {
     if (buffer.size() == 0) {
         // Empty buffers mess with our socket-close detection
-        FIBRE_LOG(W) << "empty buffer not permitted";
+        F_LOG_E(logger_, "empty buffer not permitted");
     }
 
     socklen_t slen = sizeof(remote_addr_);
@@ -418,20 +402,20 @@ std::optional<ReadResult> PosixSocket::read_sync(bufptr_t buffer) {
         if (err.error_number == EAGAIN || err.error_number == EWOULDBLOCK) {
             return std::nullopt;
         } else {
-            FIBRE_LOG(E) << "Socket read failed: " << err;
+            F_LOG_E(logger_, "Socket read failed: " << err);
             return {{kStreamError, buffer.end()}}; // the function might have written to the buffer
         }
 
     } else if ((size_t)n_received > buffer.size()) {
-        FIBRE_LOG(E) << "received too many bytes";
+        F_LOG_E(logger_, "received too many bytes");
         return {{kStreamError, buffer.end()}};
 
     } else if (n_received == 0) {
-        FIBRE_LOG(D) << "socket closed (RX half)";
+        F_LOG_D(logger_, "socket closed (RX half)");
         return {{kStreamClosed, buffer.begin()}};
 
     } else {
-        FIBRE_LOG(D) << "Received " << n_received << " bytes from " << remote_addr_;
+        F_LOG_D(logger_, "Received " << n_received << " bytes from " << remote_addr_);
         return {{kStreamOk, buffer.begin() + n_received}};
     }
 }
@@ -439,7 +423,7 @@ std::optional<ReadResult> PosixSocket::read_sync(bufptr_t buffer) {
 std::optional<WriteResult> PosixSocket::write_sync(cbufptr_t buffer) {
     if (buffer.size() == 0) {
         // Empty buffers mess with our socket-close detection
-        FIBRE_LOG(W) << "empty buffer not permitted";
+        F_LOG_E(logger_, "empty buffer not permitted");
     }
 
     int n_sent = sendto(socket_id_, buffer.begin(), buffer.size(), MSG_DONTWAIT,
@@ -450,20 +434,20 @@ std::optional<WriteResult> PosixSocket::write_sync(cbufptr_t buffer) {
         if (err.error_number == EAGAIN || err.error_number == EWOULDBLOCK) {
             return std::nullopt;
         } else {
-            FIBRE_LOG(E) << "Socket write failed: " << err;
+            F_LOG_E(logger_, "Socket write failed: " << err);
             return {{kStreamError, buffer.end()}}; // the function might have written to the buffer
         }
 
     } else if ((size_t)n_sent > buffer.size()) {
-        FIBRE_LOG(E) << "sent too many bytes";
+        F_LOG_E(logger_, "sent too many bytes");
         return {{kStreamError, buffer.end()}};
 
     } else if (n_sent == 0) {
-        FIBRE_LOG(D) << "socket closed (TX half)";
+        F_LOG_D(logger_, "socket closed (TX half)");
         return {{kStreamClosed, buffer.begin()}};
 
     } else {
-        FIBRE_LOG(D) << "Sent " << n_sent << " bytes to " << remote_addr_;
+        F_LOG_D(logger_, "Sent " << n_sent << " bytes to " << remote_addr_);
         return {{kStreamOk, buffer.begin() + n_sent}};
     }
 }
@@ -511,7 +495,7 @@ void PosixSocket::on_event(uint32_t mask) {
     }
 
     if (mask & ~(EPOLLIN | EPOLLOUT)) {
-        FIBRE_LOG(E) << "unknown event mask: " << as_hex(mask);
+        F_LOG_E(logger_, "unknown event mask: " << as_hex(mask));
     }
 
     update_subscription();

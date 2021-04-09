@@ -1,37 +1,28 @@
 
 #include "posix_tcp_backend.hpp"
 #include "posix_socket.hpp"
-#include "../logging.hpp"
 #include <fibre/fibre.hpp>
 #include <signal.h>
 #include <unistd.h>
 #include <algorithm>
 #include <string.h>
 
-DEFINE_LOG_TOPIC(TCP);
-USE_LOG_TOPIC(TCP);
-
 using namespace fibre;
 
-bool PosixTcpBackend::init(EventLoop* event_loop) {
-    if (event_loop_) {
-        FIBRE_LOG(E) << "already initialized";
-        return false;
-    }
+RichStatus PosixTcpBackend::init(EventLoop* event_loop, Logger logger) {
+    F_RET_IF(event_loop_, "already initialized");
+    F_RET_IF(!event_loop, "invalid argument");
     event_loop_ = event_loop;
-    return true;
+    logger_ = logger;
+    return RichStatus::success();
 }
 
-bool PosixTcpBackend::deinit() {
-    if (!event_loop_) {
-        FIBRE_LOG(E) << "not initialized";
-        return false;
-    }
-    if (n_discoveries_) {
-        FIBRE_LOG(W) << "some discoveries still ongoing";
-    }
+RichStatus PosixTcpBackend::deinit() {
+    F_RET_IF(!event_loop_, "not initialized");
+    F_LOG_IF(logger_, n_discoveries_, "some discoveries still ongoing");
     event_loop_ = nullptr;
-    return true;
+    logger_ = Logger::none();
+    return RichStatus::success();
 }
 
 void PosixTcpBackend::start_channel_discovery(Domain* domain, const char* specs, size_t specs_len, ChannelDiscoveryContext** handle) {
@@ -40,19 +31,19 @@ void PosixTcpBackend::start_channel_discovery(Domain* domain, const char* specs,
     int port;
 
     if (!event_loop_) {
-        FIBRE_LOG(E) << "not initialized";
+        F_LOG_E(logger_, "not initialized");
         //on_found_channels.invoke({kFibreInvalidArgument, nullptr, nullptr, 0});
         return; // TODO: error reporting
     }
 
     if (!try_parse_key(specs, specs + specs_len, "address", &address_begin, &address_end)) {
-        FIBRE_LOG(E) << "no address specified";
+        F_LOG_E(logger_, "no address specified");
         //on_found_channels.invoke({kFibreInvalidArgument, nullptr, nullptr, 0});
         return; // TODO: error reporting
     }
 
     if (!try_parse_key(specs, specs + specs_len, "port", &port)) {
-        FIBRE_LOG(E) << "no port specified";
+        F_LOG_E(logger_, "no port specified");
         //on_found_channels.invoke({kFibreInvalidArgument, nullptr, nullptr, 0});
         return; // TODO: error reporting
     }
@@ -63,29 +54,28 @@ void PosixTcpBackend::start_channel_discovery(Domain* domain, const char* specs,
     ctx->parent = this;
     ctx->address = {{address_begin, address_end}, port};
     ctx->domain = domain;
+    ctx->addr_resolution_ctx = nullptr;
     ctx->resolve_address();
 }
 
-int PosixTcpBackend::stop_channel_discovery(ChannelDiscoveryContext* handle) {
+RichStatus PosixTcpBackend::stop_channel_discovery(ChannelDiscoveryContext* handle) {
     // TODO
     n_discoveries_--;
-    return 0;
+    return RichStatus::success();
 }
 
 void PosixTcpBackend::TcpChannelDiscoveryContext::resolve_address() {
-    if (addr_resolution_ctx) {
-        FIBRE_LOG(E) << "already resolving";
+    if (F_LOG_IF(parent->logger_, addr_resolution_ctx, "already resolving")) {
         return;
     }
-
-    if (!start_resolving_address(parent->event_loop_, address, false, &addr_resolution_ctx, MEMBER_CB(this, on_found_address))) {
-        FIBRE_LOG(E) << "cannot start address resolution";
-        return;
-    }
+    F_LOG_IF_ERR(parent->logger_,
+            start_resolving_address(parent->event_loop_, parent->logger_,
+            address, false, &addr_resolution_ctx, MEMBER_CB(this, on_found_address)),
+            "cannot start address resolution");
 }
 
 void PosixTcpBackend::TcpChannelDiscoveryContext::on_found_address(std::optional<cbufptr_t> addr) {
-    FIBRE_LOG(D) << "found address";
+    F_LOG_D(parent->logger_, "found address");
 
     if (addr.has_value()) {
         // Resolved an address. If it wasn't already known, try to connect to it.
@@ -95,7 +85,11 @@ void PosixTcpBackend::TcpChannelDiscoveryContext::on_found_address(std::optional
 
         if (!is_known) {
             AddrContext ctx = {.addr = vec};
-            if (parent->start_opening_connections(parent->event_loop_, *addr, SOCK_STREAM, IPPROTO_TCP, &ctx.connection_ctx, MEMBER_CB(this, on_connected))) {
+            if (!F_LOG_IF_ERR(parent->logger_,
+                    parent->start_opening_connections(parent->event_loop_,
+                        parent->logger_, *addr, SOCK_STREAM, IPPROTO_TCP,
+                        &ctx.connection_ctx, MEMBER_CB(this, on_connected)),
+                    "failed to connect")) {
                 known_addresses.push_back(ctx);
             } else {
                 // TODO
@@ -106,27 +100,35 @@ void PosixTcpBackend::TcpChannelDiscoveryContext::on_found_address(std::optional
         addr_resolution_ctx = nullptr;
         if (known_addresses.size() == 0) {
             // No addresses could be found. Try again using exponential backoff.
-            parent->event_loop_->call_later(lookup_period, MEMBER_CB(this, resolve_address));
+            // TODO: cancel timer on shutdown
+            F_LOG_IF_ERR(parent->logger_,
+                         parent->event_loop_->call_later(lookup_period, MEMBER_CB(this, resolve_address), nullptr),
+                         "failed to set timer");
             lookup_period = std::min(lookup_period * 3.0f, 3600.0f); // exponential backoff with at most 1h period
         } else {
             // Some addresses are known from this lookup or from a previous
             // lookup. Resolve addresses again in 1h.
-            parent->event_loop_->call_later(3600.0, MEMBER_CB(this, resolve_address));
+            // TODO: cancel timer on shutdown
+            F_LOG_IF_ERR(parent->logger_,
+                         parent->event_loop_->call_later(3600.0, MEMBER_CB(this, resolve_address), nullptr),
+                         "failed to set timer");
         }
     }
 }
 
-void PosixTcpBackend::TcpChannelDiscoveryContext::on_connected(std::optional<socket_id_t> socket_id) {
-    if (socket_id.has_value()) {
+void PosixTcpBackend::TcpChannelDiscoveryContext::on_connected(RichStatus status, socket_id_t socket_id) {
+    if (!status.is_error()) {
         auto socket = new PosixSocket{}; // TODO: free
-        if (socket->init(parent->event_loop_, *socket_id)) {
+        status = socket->init(parent->event_loop_, parent->logger_, socket_id);
+        if (!status.is_error()) {
             domain->add_channels({kFibreOk, socket, socket, SIZE_MAX});
             return;
         }
         delete socket;
     }
 
-    FIBRE_LOG(D) << "not connected";
+    F_LOG_IF_ERR(parent->logger_, status, "failed to connect - will retry");
+
     // Try to reconnect soon
     lookup_period = 1.0f;
     resolve_address();

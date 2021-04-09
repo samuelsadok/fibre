@@ -9,6 +9,7 @@
 //#include <algorithm>
 
 #include <fibre/event_loop.hpp>
+#include <fibre/logging.hpp>
 
 namespace fibre {
 
@@ -31,13 +32,13 @@ public:
      * The function returns when the event loop becomes empty or if a platform
      * error occurs.
      */
-    bool start(Callback<void> on_started);
+    RichStatus start(Logger logger, Callback<void> on_started);
 
-    bool post(Callback<void> callback) final;
-    bool register_event(int fd, uint32_t events, Callback<void, uint32_t> callback) final;
-    bool deregister_event(int fd) final;
-    struct EventLoopTimer* call_later(float delay, Callback<void> callback) final;
-    bool cancel_timer(EventLoopTimer* timer) final;
+    RichStatus post(Callback<void> callback) final;
+    RichStatus register_event(int fd, uint32_t events, Callback<void, uint32_t> callback) final;
+    RichStatus deregister_event(int fd) final;
+    RichStatus call_later(float delay, Callback<void> callback, EventLoopTimer** p_timer) final;
+    RichStatus cancel_timer(EventLoopTimer* timer) final;
 
 private:
     struct EventContext {
@@ -48,6 +49,7 @@ private:
     void run_callbacks(uint32_t);
 
     int epoll_fd_ = -1;
+    Logger logger_ = Logger::none();
     int post_fd_ = -1;
     unsigned int iterations_ = 0;
 

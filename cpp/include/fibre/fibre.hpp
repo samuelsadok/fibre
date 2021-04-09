@@ -6,6 +6,8 @@
 #include <fibre/cpp_utils.hpp>
 #include <fibre/event_loop.hpp>
 #include <fibre/channel_discoverer.hpp>
+#include <fibre/rich_status.hpp>
+#include <fibre/logging.hpp>
 #include <string>
 #include <memory>
 
@@ -49,6 +51,7 @@ struct StaticBackend {
 struct Context {
     size_t n_domains = 0;
     EventLoop* event_loop;
+    Logger logger = Logger::none();
 
     std::tuple<
 #if FIBRE_ENABLE_LIBUSB_BACKEND
@@ -148,11 +151,26 @@ private:
  * 
  * If FIBRE_ALLOW_HEAP=0 only one Fibre context can be open at a time.
  * 
+ * @param logger: A logger that receives debug/warning/error events from Fibre.
+ *        If compiled with FIBRE_ENABLE_TEXT_LOGGING=0 the text parameter is
+ *        always NULL.
+ *        If you don't have special logging needs consider passing
+ *        `fibre::log_to_stderr`.
  * @returns: A non-null pointer on success, null otherwise.
  */
-Context* open(EventLoop* event_loop);
+RichStatus open(EventLoop* event_loop, Logger logger, Context** p_ctx);
 
 void close(Context*);
+
+/**
+ * @brief Logs an event to stderr.
+ * 
+ * If Fibre is compiled with FIBRE_ENABLE_TEXT_LOGGING=1 this function logs the
+ * event to stderr. Otherwise it does nothing.
+ */
+void log_to_stderr(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
+
+LogLevel get_log_verbosity();
 
 /**
  * @brief Launches an event loop on the current thread.
@@ -171,7 +189,7 @@ void close(Context*);
  *           not implemented on this operating system or if another error
  *           occurred.
  */
-bool launch_event_loop(Callback<void, EventLoop*> on_started);
+RichStatus launch_event_loop(Logger logger, Callback<void, EventLoop*> on_started);
 
 }
 

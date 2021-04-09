@@ -80,6 +80,8 @@ DeregisterEventSignature = CFUNCTYPE(c_int, c_int)
 CallLaterSignature = CFUNCTYPE(c_void_p, c_float, CFUNCTYPE(None, c_void_p), POINTER(c_int))
 CancelTimerSignature = CFUNCTYPE(c_int, c_void_p)
 
+LogSignature = CFUNCTYPE(None, c_char_p, c_uint, c_int, c_size_t, c_size_t, c_char_p)
+
 OnFoundObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p)
 OnLostObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p)
 OnStoppedSignature = CFUNCTYPE(None, c_void_p, c_int)
@@ -121,16 +123,22 @@ class LibFibreEventLoop(Structure):
         ("cancel_timer", CancelTimerSignature),
     ]
 
+class LibFibreLogger(Structure):
+    _fields_ = [
+        ("verbosity", c_int),
+        ("log", LogSignature),
+    ]
+
 libfibre_get_version = lib.libfibre_get_version
 libfibre_get_version.argtypes = []
 libfibre_get_version.restype = POINTER(LibFibreVersion)
 
 version = libfibre_get_version().contents
-if (version.major, version.minor) != (0, 1):
+if (version.major, version.minor) != (0, 2):
     raise Exception("Incompatible libfibre version: {}".format(version))
 
 libfibre_open = lib.libfibre_open
-libfibre_open.argtypes = [LibFibreEventLoop]
+libfibre_open.argtypes = [LibFibreEventLoop, LibFibreLogger]
 libfibre_open.restype = c_void_p
 
 libfibre_close = lib.libfibre_close
@@ -736,6 +744,7 @@ class LibFibre():
 
         # We must keep a reference to these function objects so they don't get
         # garbage collected.
+        self.c_log = LogSignature(self._log)
         self.c_post = PostSignature(self._post)
         self.c_register_event = RegisterEventSignature(self._register_event)
         self.c_deregister_event = DeregisterEventSignature(self._deregister_event)
@@ -764,8 +773,18 @@ class LibFibre():
         event_loop.call_later = self.c_call_later
         event_loop.cancel_timer = self.c_cancel_timer
 
-        self.ctx = c_void_p(libfibre_open(event_loop))
+        logger = LibFibreLogger()
+        logger.verbosity = int(os.environ.get('FIBRE_LOG', '2'))
+        logger.log = self.c_log
+
+        self.ctx = c_void_p(libfibre_open(event_loop, logger))
         assert(self.ctx)
+
+    def _log(self, file, line, level, info0, info1, text):
+        file = string_at(file).decode('utf-8')
+        text = string_at(text).decode('utf-8')
+        color = "\x1b[91;1m" if level <= 2 else ""
+        print(color + "[" + file.rpartition('/')[-1] + ":" + str(line) + "]: " + text + "\x1b[0m", file=sys.stderr)
 
     def _post(self, callback, ctx):
         self.loop.call_soon_threadsafe(callback, ctx)

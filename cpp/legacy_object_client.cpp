@@ -2,14 +2,10 @@
 #include "legacy_object_client.hpp"
 #include "legacy_protocol.hpp"
 #include <fibre/simple_serdes.hpp>
-#include "logging.hpp"
 #include "print_utils.hpp"
 #include "crc.hpp"
 #include <variant>
 #include <algorithm>
-
-DEFINE_LOG_TOPIC(LEGACY_OBJ);
-USE_LOG_TOPIC(LEGACY_OBJ);
 
 using namespace fibre;
 
@@ -56,7 +52,7 @@ bool json_comp(const char* begin, const char* end, char c) {
     return begin < end && *begin == c;
 }
 
-json_value json_parse(const char** begin, const char* end) {
+json_value json_parse(const char** begin, const char* end, Logger logger) {
     // skip whitespace
 
     if (*begin >= end) {
@@ -81,14 +77,14 @@ json_value json_parse(const char** begin, const char* end) {
             expect_comma = true;
 
             // Parse key-value pair
-            json_value key = json_parse(begin, end);
+            json_value key = json_parse(begin, end, logger);
             if (json_is_err(key)) return key;
             json_skip_whitespace(begin, end);
             if (!json_comp(*begin, end, ':')) {
                 return json_make_error(*begin, "expected :");
             }
             (*begin)++;
-            json_value val = json_parse(begin, end);
+            json_value val = json_parse(begin, end, logger);
             if (json_is_err(val)) return val;
             dict.push_back({std::make_shared<json_value>(key), std::make_shared<json_value>(val)});
 
@@ -116,7 +112,7 @@ json_value json_parse(const char** begin, const char* end) {
             expect_comma = true;
 
             // Parse item
-            json_value val = json_parse(begin, end);
+            json_value val = json_parse(begin, end, logger);
             if (json_is_err(val)) return val;
             list.push_back(std::make_shared<json_value>(val));
 
@@ -198,12 +194,12 @@ size_t get_codec_size(std::string codec) {
     return (it == codecs.end()) ? 0 : it->second;
 }
 
-std::vector<LegacyFibreArg> parse_arglist(const json_value& list_val) {
+std::vector<LegacyFibreArg> parse_arglist(const json_value& list_val, Logger logger) {
     std::vector<LegacyFibreArg> arglist;
 
     for (auto& arg : json_is_list(list_val) ? json_as_list(list_val) : json_list()) {
         if (!json_is_dict(*arg)) {
-            FIBRE_LOG(W) << "arglist is invalid";
+            F_LOG_E(logger, "arglist is invalid");
             continue;
         }
         auto dict = json_as_dict(*arg);
@@ -213,7 +209,7 @@ std::vector<LegacyFibreArg> parse_arglist(const json_value& list_val) {
         json_value type_val = json_dict_find(dict, "type");
 
         if (!json_is_str(name_val) || !json_is_int(id_val) || ((int)(size_t)json_as_int(id_val) != json_as_int(id_val)) || !json_is_str(type_val)) {
-            FIBRE_LOG(W) << "arglist is invalid";
+            F_LOG_E(logger, "arglist is invalid");
             continue;
         }
 
@@ -232,7 +228,7 @@ std::vector<LegacyFibreArg> parse_arglist(const json_value& list_val) {
 }
 
 void LegacyObjectClient::start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_lost_root_object) {
-    FIBRE_LOG(D) << "start";
+    F_LOG_D(protocol_->domain_->ctx->logger, "start");
     on_found_root_object_ = on_found_root_object;
     on_lost_root_object_ = on_lost_root_object;
     json_.clear();
@@ -255,7 +251,7 @@ std::shared_ptr<FibreInterface> LegacyObjectClient::get_property_interfaces(std:
     size_t app_codec_size = codec == "endpoint_ref" ? sizeof(uintptr_t) : size;
 
     if (!size || !app_codec_size) {
-        FIBRE_LOG(W) << "unknown size for codec " << codec;
+        F_LOG_E(protocol_->domain_->ctx->logger, "unknown size for codec " << codec);
     }
     
     intf.name = std::string{} + "fibre.Property<" + (write ? "readwrite" : "readonly") + " " + codec + ">";
@@ -271,7 +267,7 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
     
 
     if (!json_is_list(list_val)) {
-        FIBRE_LOG(W) << "interface members must be a list";
+        F_LOG_E(protocol_->domain_->ctx->logger, "interface members must be a list");
         return nullptr;
     }
 
@@ -286,7 +282,7 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
 
     for (auto& item: json_as_list(list_val)) {
         if (!json_is_dict(*item)) {
-            FIBRE_LOG(W) << "expected dict";
+            F_LOG_E(protocol_->domain_->ctx->logger, "expected dict");
             continue;
         }
         auto dict = json_as_dict(*item);
@@ -307,8 +303,8 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
             intf.functions.emplace(name, LegacyFunction{
                 (size_t)json_as_int(id),
                 obj_ptr.get(),
-                parse_arglist(json_dict_find(dict, "inputs")),
-                parse_arglist(json_dict_find(dict, "outputs"))
+                parse_arglist(json_dict_find(dict, "inputs"), protocol_->domain_->ctx->logger),
+                parse_arglist(json_dict_find(dict, "outputs"), protocol_->domain_->ctx->logger)
             });
 
         } else if (json_is_str(type) && json_as_str(type) == "json") {
@@ -336,7 +332,7 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
             intf.attributes[name] = {subobj_ptr};
 
         } else {
-            FIBRE_LOG(W) << "unsupported codec";
+            F_LOG_E(protocol_->domain_->ctx->logger, "unsupported codec");
         }
     }
 
@@ -361,7 +357,7 @@ void LegacyObjectClient::on_received_json(EndpointOperationResult result) {
     } else if (result.status == kStreamClosed) {
         return;
     } else if (result.status != kStreamOk) {
-        FIBRE_LOG(W) << "JSON read operation failed"; // TODO: add retry logic
+        F_LOG_E(protocol_->domain_->ctx->logger, "JSON read operation failed"); // TODO: add retry logic
         return;
     }
 
@@ -373,22 +369,22 @@ void LegacyObjectClient::on_received_json(EndpointOperationResult result) {
 
     } else {
 
-        FIBRE_LOG(D) << "received JSON of length " << json_.size();
-        //FIBRE_LOG(D) << "JSON: " << str{json_.data(), json_.data() + json_.size()};
+        F_LOG_D(protocol_->domain_->ctx->logger, "received JSON of length " << json_.size());
+        //F_LOG_D(protocol_->domain_->ctx->logger, "JSON: " << str{json_.data(), json_.data() + json_.size()});
 
         const char *begin = reinterpret_cast<const char*>(json_.data());
-        auto val = json_parse(&begin, begin + json_.size());
+        auto val = json_parse(&begin, begin + json_.size(), protocol_->domain_->ctx->logger);
 
         if (json_is_err(val)) {
             size_t pos = json_as_err(val).ptr - reinterpret_cast<const char*>(json_.data());
-            FIBRE_LOG(E) << "JSON parsing error: " << json_as_err(val).str << " at position " << pos;
+            F_LOG_E(protocol_->domain_->ctx->logger, "JSON parsing error: " << json_as_err(val).str << " at position " << pos);
             return;
         } else if (!json_is_list(val)) {
-            FIBRE_LOG(E) << "JSON data must be a list";
+            F_LOG_E(protocol_->domain_->ctx->logger, "JSON data must be a list");
             return;
         }
 
-        FIBRE_LOG(D) << "sucessfully parsed JSON";
+        F_LOG_D(protocol_->domain_->ctx->logger, "sucessfully parsed JSON");
         root_obj_ = load_object(val);
         json_crc_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(PROTOCOL_VERSION, json_.data(), json_.size());
         if (root_obj_) {
@@ -481,9 +477,9 @@ void LegacyCallContext::resume_from_protocol(EndpointOperationResult result) {
                 return; // app will resume asynchronously
             } else if (std::get<0>(continuation).status != kFibreOk) {
                 if (app_result->status != kFibreClosed || app_result->rx_buf.size() || app_result->tx_buf.size()) {
-                    FIBRE_LOG(W) << "app tried to continue a closed call";
+                    F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "app tried to continue a closed call");
                 }
-                FIBRE_LOG(T) << "closing call";
+                F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "closing call");
                 return;
             } else {
                 res = *app_result;
@@ -531,7 +527,7 @@ bool LegacyObjectClient::transcode(cbufptr_t src, bufptr_t dst, std::string src_
             }
         }
 
-        FIBRE_LOG(D) << "placing transcoded ptr " << reinterpret_cast<uintptr_t>(obj_ptr);
+        F_LOG_D(protocol_->domain_->ctx->logger, "placing transcoded ptr " << reinterpret_cast<uintptr_t>(obj_ptr));
         *reinterpret_cast<uintptr_t*>(dst.begin()) = reinterpret_cast<uintptr_t>(obj_ptr);
 
     } else {
@@ -549,7 +545,7 @@ bool LegacyObjectClient::transcode(cbufptr_t src, bufptr_t dst, std::string src_
 std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWithProtocol, LegacyCallContext::InternalError> LegacyCallContext::get_next_task(std::variant<ResultFromApp, ResultFromProtocol> continue_from) {
     if (progress == 0) {
         if (continue_from.index() != 0) {
-            FIBRE_LOG(E) << "expected continuation from app";
+            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "expected continuation from app");
             return InternalError{};
         }
 
@@ -571,7 +567,7 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
 
     } else if (progress <= func_->inputs.size() + 1 + func_->outputs.size()) {
         if (continue_from.index() != 1) {
-            FIBRE_LOG(E) << "expected continuation from protocol";
+            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "expected continuation from protocol");
             return InternalError{};
         }
 
@@ -580,7 +576,7 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
         if (result_from_protocol.status == kStreamClosed) {
             return ContinueWithApp{kFibreHostUnreachable, app_tx_end_, app_rx_buf_.begin()};
         } else if (result_from_protocol.status != kStreamOk) {
-            FIBRE_LOG(W) << "protocol failed with " << result_from_protocol.status << " - propagating error to application";
+            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "protocol failed with " << result_from_protocol.status << " - propagating error to application");
             return ContinueWithApp{kFibreHostUnreachable, app_tx_end_, app_rx_buf_.begin()};
         }
 
@@ -591,14 +587,14 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
 
     } else if (progress == func_->inputs.size() + 2 + func_->outputs.size()) {
         if (continue_from.index() != 0) {
-            FIBRE_LOG(E) << "expected continuation from app";
+            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "expected continuation from app");
             return InternalError{};
         }
 
         ResultFromApp result_from_app = std::get<0>(continue_from);
 
         if (result_from_app.status != kFibreOk && result_from_app.status != kFibreClosed) {
-            FIBRE_LOG(W) << "application failed with " << result_from_app.status << " - dropping this call";
+            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "application failed with " << result_from_app.status << " - dropping this call");
             return InternalError{};
         }
 
@@ -610,13 +606,13 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
         // Transcode from application codec to protocol codec
 
         obj_ = *reinterpret_cast<LegacyObject**>(tx_buf_.data());
-        FIBRE_LOG(T) << "object is " << as_hex(reinterpret_cast<uintptr_t>(obj_));
-        FIBRE_LOG(T) << "tx buf is " << as_hex(cbufptr_t{tx_buf_});
+        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "object is " << as_hex(reinterpret_cast<uintptr_t>(obj_)));
+        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "tx buf is " << as_hex(cbufptr_t{tx_buf_}));
 
         std::vector<uint8_t> transcoded;
         size_t transcoded_size = calc_sum(func_->inputs.begin(), func_->inputs.end(),
             [](LegacyFibreArg& arg) { return arg.protocol_size; });
-        FIBRE_LOG(T) << "transcoding " << func_->inputs.size() << " inputs from " << tx_buf_.size() << " B to " << transcoded_size << " B";
+        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "transcoding " << func_->inputs.size() << " inputs from " << tx_buf_.size() << " B to " << transcoded_size << " B");
         transcoded.resize(transcoded_size);
         
         tx_pos_ = sizeof(uintptr_t);
@@ -639,11 +635,11 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
 
         std::vector<uint8_t> transcoded;
         for (auto& arg: func_->outputs) {
-            FIBRE_LOG(T) << "arg size " << arg.app_size;
+            F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "arg size " << arg.app_size);
         }
         size_t transcoded_size = calc_sum(func_->outputs.begin(), func_->outputs.end(),
             [](LegacyFibreArg& arg) { return arg.app_size; });
-        FIBRE_LOG(T) << "transcoding " << func_->outputs.size() << " outputs from " << rx_buf_.size() << " B to " << transcoded_size << " B";
+        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "transcoding " << func_->outputs.size() << " outputs from " << rx_buf_.size() << " B to " << transcoded_size << " B");
         transcoded.resize(transcoded_size);
         
         rx_pos_ = 0;
@@ -661,7 +657,7 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
         rx_buf_ = transcoded;
         rx_pos_ = 0;
 
-        FIBRE_LOG(T) << "rx buf is " << as_hex(cbufptr_t{rx_buf_});
+        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "rx buf is " << as_hex(cbufptr_t{rx_buf_}));
     }
 
     progress++;

@@ -6,8 +6,8 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <fibre/backport/variant.hpp>
 #include <fibre/callback.hpp>
-#include <fibre/cpp_utils.hpp> // std::variant and std::optional C++ backport
 #include <fibre/fibre.hpp>
 
 struct json_value;

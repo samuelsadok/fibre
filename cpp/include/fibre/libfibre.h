@@ -88,8 +88,8 @@ struct LibFibreVersion {
 typedef int (*post_cb_t)(void (*callback)(void*), void* cb_ctx);
 typedef int (*register_event_cb_t)(int fd, uint32_t events, void (*callback)(void*, uint32_t), void* cb_ctx);
 typedef int (*deregister_event_cb_t)(int fd);
-typedef struct EventLoopTimer* (*call_later_cb_t)(float delay, void (*callback)(void*), void* cb_ctx);
-typedef int (*cancel_timer_cb_t)(struct EventLoopTimer* timer);
+typedef struct LibFibreEventLoopTimer* (*call_later_cb_t)(float delay, void (*callback)(void*), void* cb_ctx);
+typedef int (*cancel_timer_cb_t)(struct LibFibreEventLoopTimer* timer);
 
 struct LibFibreEventLoop {
     /**
@@ -129,6 +129,13 @@ struct LibFibreEventLoop {
      * timer previously enqueued with call_later().
      */
     cancel_timer_cb_t cancel_timer;
+};
+
+struct LibFibreLogger {
+    int verbosity;
+
+    // TODO: document (see fibre.hpp for now)
+    void(*log)(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
 };
 
 /**
@@ -286,12 +293,15 @@ FIBRE_PUBLIC const struct LibFibreVersion* libfibre_get_version();
  * @brief Opens and initializes a Fibre context.
  * 
  * @param event_loop: The event loop on which libfibre will run. Some function
-          of the event loop can be left unimplemented (set to NULL) depending on
-          the platform and the backends used (TODO: elaborate).
-          The event loop must be single threaded and all calls to libfibre must
-          happen on the event loop thread.
+ *        of the event loop can be left unimplemented (set to NULL) depending on
+ *        the platform and the backends used (TODO: elaborate).
+ *        The event loop must be single threaded and all calls to libfibre must
+ *        happen on the event loop thread.
+ * @param logger: A struct that contains a log function an a log verbosity.
+ *        This function is used by libfibre to log debug and error information.
+ *        The log function can be null, in which case all log output is discarded.
  */
-FIBRE_PUBLIC struct LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop);
+FIBRE_PUBLIC struct LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, LibFibreLogger logger);
 
 /**
  * @brief Closes a context that was previously opened with libfibre_open().

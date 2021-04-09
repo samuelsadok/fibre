@@ -19,12 +19,12 @@ constexpr ServerObjectDefinition make_obj(const T* obj) {
 }
 
 template<typename T>
-T decode(Domain* domain, cbufptr_t* inbuf, bool* success) {
-    std::optional<T> result = fibre::Codec<T>::decode(domain, inbuf);
+T decode(Domain* domain, cbufptr_t* inbuf, RichStatus* status) {
+    RichStatusOr<T> result = fibre::Codec<T>::decode(domain, inbuf);
     if (result.has_value()) {
-        return *result;
+        return result.value();
     } else {
-        *success = false;
+        *status = result.status();
         return T{};
     }
 }
@@ -109,11 +109,12 @@ struct Wrappers<std::tuple<TIn...>, std::tuple<TOut...>> {
      */
     template<size_t ... Is, size_t ... Js>
     static Status sync_func_wrapper_impl(void* ptr, Domain* domain, cbufptr_t inbuf, bufptr_t* outbuf, std::index_sequence<Is...>, std::index_sequence<Js...>) {
-        bool success = true;
+        RichStatus status;
         std::tuple<TIn...> inputs = {
-            decode<TIn>(domain, &inbuf, &success) ...
+            decode<TIn>(domain, &inbuf, &status) ...
         };
-        if (!success) {
+        F_LOG_IF_ERR(domain->ctx->logger, status, "decoding failed");
+        if (status.is_error()) {
             return kFibreInsufficientData; // TODO: decoders could fail for other reasons than insufficient data
         }
         auto func = (std::tuple<TOut...> (*)(TIn...))ptr;

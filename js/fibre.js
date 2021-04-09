@@ -1,4 +1,8 @@
 
+//import { fileURLToPath } from 'url';
+//import { dirname } from 'path';
+//const __dirname = dirname(fileURLToPath(import.meta.url));
+
 import wasm from './libfibre-wasm.js';
 
 function assert(expression) {
@@ -259,8 +263,8 @@ class RemoteAttribute {
 
 export class RemoteFunction extends Function {
     constructor(libfibre, handle, inputArgs, outputArgs) {
-        let closure = function(...args) { 
-            return closure._call(this, ...args);
+        let closure = function(...args) {
+            return closure._call(...args);
         }
         closure._libfibre = libfibre;
         closure._handle = handle;
@@ -387,7 +391,7 @@ export class RemoteFunction extends Function {
 }
 
 class LibFibre {
-    constructor(wasm) {
+    constructor(wasm, log_verbosity) {
         this.wasm = wasm;
 
         // The following functions are JavaScript callbacks that get invoked from C
@@ -395,6 +399,20 @@ class LibFibre {
         // be passed to C code.
         // Function signature codes are documented here:
         // https://github.com/aheejin/emscripten/blob/master/site/source/docs/porting/connecting_cpp_and_javascript/Interacting-with-code.rst#calling-javascript-functions-as-function-pointers-from-c
+
+        this._log = wasm.addFunction((file, line, level, info0, info1, text) => {
+            file = this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, file);
+            text = this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, text);
+            if (level <= 2) {
+                console.error("[" + file + ":" + line + "] " + text);
+            } else if (level <= 3) {
+                console.warn("[" + file + ":" + line + "] " + text);
+            } else if (level <= 4) {
+                console.log("[" + file + ":" + line + "] " + text);
+            } else {
+                console.debug("[" + file + ":" + line + "] " + text);
+            }
+        }, 'viiiiii');
 
         this._onPost = wasm.addFunction((cb, cbCtx) => {
             // TODO
@@ -429,7 +447,8 @@ class LibFibre {
 
         this._onFoundObject = wasm.addFunction((ctx, obj, intf) => {
             const discovery = this._deref(ctx);
-            discovery.onFoundObject(this._loadJsObj(obj, intf, 'anonymous_root_interface')); // TODO: load interface name from libfibre
+            const jsObj = this._loadJsObj(obj, intf, 'anonymous_root_interface')
+            discovery.onFoundObject(jsObj); // TODO: load interface name from libfibre
         }, 'viii')
 
         this._onLostObject = wasm.addFunction((ctx, obj) => {
@@ -464,7 +483,10 @@ class LibFibre {
             }
             let jsFunc = new RemoteFunction(this, func, jsInputParams, jsOutputParams);
             Object.defineProperty(jsIntf.prototype, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameLength), {
-                value: jsFunc,
+                get: function() {
+                    const obj = this;
+                    return function(...args) { return jsFunc(obj, ...args); };
+                },
                 enumerable: true
             });
         }, 'viiiiiiii')
@@ -498,7 +520,7 @@ class LibFibre {
             minor: version_array[1],
             patch: version_array[2]
         };
-        if ((this.version.major, this.version.minor) != (0, 1)) {
+        if ((this.version.major, this.version.minor) != (0, 2)) {
             throw Error("incompatible libfibre version " + JSON.stringify(this.version));
         }
 
@@ -518,21 +540,33 @@ class LibFibre {
             event_loop_array[2] = 0; // deregister_event
             event_loop_array[3] = this._onCallLater;
             event_loop_array[4] = this._onCancelTimer;
+
+            const logger = wasm.malloc(4 * 2);
+            try {
+                const logger_array = (new Uint32Array(wasm.Module.HEAPU8.buffer, logger, 2));
+                logger_array[0] = log_verbosity;
+                logger_array[1] = this._log;
+
+                this._handle = this.wasm.Module._libfibre_open(event_loop, logger);
+
+            } finally {
+                wasm.free(logger);
+            }
         } finally {
             wasm.free(event_loop);
         }
 
-        this._handle = this.wasm.Module._libfibre_open(event_loop);
+        if (typeof navigator === 'object' && navigator.usb) {
+            this.usbDiscoverer = new WebUsbDiscoverer(this);
 
-        this.usbDiscoverer = new WebUsbDiscoverer(this);
-
-        let buf = [this.wasm.malloc(4), 4];
-        try {
-            let len = this.wasm.stringToUTF8Array("usb", this.wasm.Module.HEAPU8, buf[0], buf[1]);
-            this.wasm.Module._libfibre_register_backend(this._handle, buf[0], len,
-                this._onStartDiscovery, this._onStopDiscovery, this._allocRef(this.usbDiscoverer));
-        } finally {
-            this.wasm.free(buf[0]);
+            let buf = [this.wasm.malloc(4), 4];
+            try {
+                let len = this.wasm.stringToUTF8Array("usb", this.wasm.Module.HEAPU8, buf[0], buf[1]);
+                this.wasm.Module._libfibre_register_backend(this._handle, buf[0], len,
+                    this._onStartDiscovery, this._onStopDiscovery, this._allocRef(this.usbDiscoverer));
+            } finally {
+                this.wasm.free(buf[0]);
+            }
         }
     }
 
@@ -728,7 +762,7 @@ class Domain {
     }
 }
 
-export function fibreOpen() {
+export function fibreOpen(log_verbosity = 4) {
     return new Promise(async (resolve) => {
         let Module = {
             preRun: [function() {Module.ENV.FIBRE_LOG = "4"}], // enable logging
@@ -736,13 +770,22 @@ export function fibreOpen() {
                 const isWebpack = typeof __webpack_require__ === 'function';
                 const wasmPath = isWebpack ? (await import("!!file-loader!./libfibre-wasm.wasm")).default
                     : "./libfibre-wasm.wasm";
-                const response = fetch(wasmPath, { credentials: 'same-origin' });
-                const result = await WebAssembly.instantiateStreaming(response, info);
+
+                let result;
+                if (typeof navigator === 'object') {
+                    // Running in browser
+                    const response = fetch(wasmPath, { credentials: 'same-origin' });
+                    result = await WebAssembly.instantiateStreaming(response, info);
+                } else {
+                    // Running in bare NodeJS
+                    const fsPromises = (await import('fs/promises')).default;
+                    const response = await fsPromises.readFile('/Data/Projects/fibre/js/libfibre-wasm.wasm');
+                    result = await WebAssembly.instantiate(response, info);
+                }
                 receiveInstance(result['instance']);
                 return {};
             }
         };
-        
         Module = await wasm(Module);
         await Module.ready;
         wasm.addFunction = Module.addFunction;
@@ -752,7 +795,7 @@ export function fibreOpen() {
         wasm.free = Module._free;
         wasm.Module = Module;
         
-        resolve(new LibFibre(wasm));
+        resolve(new LibFibre(wasm, log_verbosity));
     });
 }
 
@@ -760,7 +803,6 @@ class WebUsbDiscoverer {
     constructor(libfibre) {
         this._libfibre = libfibre;
         this._domains = [];
-
         if (navigator.usb.onconnect != null) {
             console.warn("There was already a subscriber for usb.onconnect.");
         }

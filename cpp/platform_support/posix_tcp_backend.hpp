@@ -1,9 +1,10 @@
 #ifndef __FIBRE_POSIX_TCP_BACKEND_HPP
 #define __FIBRE_POSIX_TCP_BACKEND_HPP
 
-#include <fibre/event_loop.hpp>
 #include "posix_socket.hpp"
 #include <fibre/channel_discoverer.hpp>
+#include <fibre/event_loop.hpp>
+#include <fibre/logging.hpp>
 #include <string>
 #include <netdb.h>
 
@@ -17,11 +18,11 @@ namespace fibre {
  */
 class PosixTcpBackend : public ChannelDiscoverer {
 public:
-    bool init(EventLoop* event_loop);
-    bool deinit();
+    RichStatus init(EventLoop* event_loop, Logger logger);
+    RichStatus deinit();
 
     void start_channel_discovery(Domain* domain, const char* specs, size_t specs_len, ChannelDiscoveryContext** handle) final;
-    int stop_channel_discovery(ChannelDiscoveryContext* handle) final;
+    RichStatus stop_channel_discovery(ChannelDiscoveryContext* handle) final;
 
 private:
     struct TcpChannelDiscoveryContext {
@@ -40,14 +41,15 @@ private:
         std::vector<AddrContext> known_addresses;
         void resolve_address();
         void on_found_address(std::optional<cbufptr_t> addr);
-        void on_connected(std::optional<socket_id_t> socket_id);
+        void on_connected(RichStatus status, socket_id_t socket_id);
         void on_disconnected();
     };
 
-    virtual bool start_opening_connections(EventLoop* event_loop, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, std::optional<socket_id_t>> on_connected) = 0;
+    virtual RichStatus start_opening_connections(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected) = 0;
     virtual void cancel_opening_connections(ConnectionContext* ctx) = 0;
 
     EventLoop* event_loop_ = nullptr;
+    Logger logger_ = Logger::none();
     size_t n_discoveries_ = 0;
 };
 
@@ -55,8 +57,8 @@ class PosixTcpClientBackend : public PosixTcpBackend {
 public:
     constexpr static const char* get_name() { return "tcp-client"; }
 
-    bool start_opening_connections(EventLoop* event_loop, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, std::optional<socket_id_t>> on_connected) final {
-        return start_connecting(event_loop, addr, type, protocol, ctx, on_connected);
+    RichStatus start_opening_connections(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected) final {
+        return start_connecting(event_loop, logger, addr, type, protocol, ctx, on_connected);
     }
     void cancel_opening_connections(ConnectionContext* ctx) final {
         stop_connecting(ctx);
@@ -67,8 +69,8 @@ class PosixTcpServerBackend : public PosixTcpBackend {
 public:
     constexpr static const char* get_name() { return "tcp-server"; }
 
-    bool start_opening_connections(EventLoop* event_loop, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, std::optional<socket_id_t>> on_connected) final {
-        return start_listening(event_loop, addr, type, protocol, ctx, on_connected);
+    RichStatus start_opening_connections(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected) final {
+        return start_listening(event_loop, logger, addr, type, protocol, ctx, on_connected);
     }
     void cancel_opening_connections(ConnectionContext* ctx) final {
         stop_listening(ctx);

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <fibre/bufptr.hpp>
+#include <fibre/rich_status.hpp>
 
 namespace fibre {
 
@@ -32,7 +33,7 @@ struct LegacyObjectServer {
         output_size_ = 0;
     }
 
-    bool endpoint_handler(Domain* domain, int idx, cbufptr_t* input_buffer, bufptr_t* output_buffer);
+    RichStatus endpoint_handler(Domain* domain, int idx, cbufptr_t* input_buffer, bufptr_t* output_buffer);
 };
 
 extern const uint16_t json_crc_;

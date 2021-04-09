@@ -4,15 +4,11 @@
 
 #include "protocol.hpp"
 #include "crc.hpp"
-#include "logging.hpp"
 #include "print_utils.hpp"
 #include <fibre/async_stream.hpp>
 #include <memory>
 #include <stdlib.h>
 #include <algorithm>
-
-DEFINE_LOG_TOPIC(LEGACY_PROTOCOL);
-USE_LOG_TOPIC(LEGACY_PROTOCOL);
 
 using namespace fibre;
 
@@ -217,7 +213,7 @@ void LegacyProtocolPacketBased::start_endpoint_operation(uint16_t endpoint_id, c
     }
 
     if (tx_handle_) {
-        FIBRE_LOG(D) << "Endpoint operation already in progress. Enqueuing this one.";
+        F_LOG_D(domain_->ctx->logger, "Endpoint operation already in progress. Enqueuing this one.");
 
         // A TX operation is already in progress. Enqueue this one.
         pending_operations_.push_back(op);
@@ -365,15 +361,15 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
     TransferHandle dummy;
 
     if (result.status == kStreamClosed) {
-        FIBRE_LOG(D) << "RX stream closed.";
+        F_LOG_D(domain_->ctx->logger, "RX stream closed.");
         on_rx_closed(kStreamClosed);
         return;
     } else if (result.status == kStreamCancelled) {
-        FIBRE_LOG(W) << "RX operation cancelled.";
+        F_LOG_E(domain_->ctx->logger, "RX operation cancelled.");
         on_rx_closed(kStreamCancelled);
         return;
     } else if (result.status != kStreamOk) {
-        FIBRE_LOG(W) << "RX error. Not restarting.";
+        F_LOG_E(domain_->ctx->logger, "RX error. Not restarting.");
         // TODO: we should distinguish between permanent and temporary errors.
         // If we try to restart after a permanent error we might end up in a
         // busy loop.
@@ -382,12 +378,12 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
     }
 
     cbufptr_t rx_buf = cbufptr_t{rx_buf_, result.end};
-    //FIBRE_LOG(D) << "got packet of length " << (result.end - rx_buf_) /*<< ": " << as_hex(rx_buf)*/;
+    //F_LOG_D(domain_->ctx->logger, "got packet of length " << (result.end - rx_buf_) /*<< ": " << as_hex(rx_buf)*/);
 
     std::optional<uint16_t> seq_no = read_le<uint16_t>(&rx_buf);
 
     if (!seq_no.has_value()) {
-        FIBRE_LOG(W) << "packet too short";
+        F_LOG_E(domain_->ctx->logger, "packet too short");
 
     } else if (*seq_no & 0x8000) {
 
@@ -396,13 +392,13 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
         auto it = expected_acks_.find(*seq_no & 0x7fff);
 
         if (it == expected_acks_.end()) {
-            FIBRE_LOG(W) << "received unexpected ACK: " << (*seq_no & 0x7fff);
+            F_LOG_E(domain_->ctx->logger, "received unexpected ACK: " << (*seq_no & 0x7fff));
         } else {
             size_t n_copy = std::min((size_t)(result.end - rx_buf.begin()), it->second.rx_buf.size());
             memcpy(it->second.rx_buf.begin(), rx_buf.begin(), n_copy);
             it->second.rx_buf = it->second.rx_buf.skip(n_copy);
             it->second.rx_done = true;
-            FIBRE_LOG(T) << "received ACK: " << (*seq_no & 0x7fff);
+            F_LOG_T(domain_->ctx->logger, "received ACK: " << (*seq_no & 0x7fff));
 
             // It's possible that the RX operation completes before the TX operation
             if (it->second.tx_done) {
@@ -413,14 +409,14 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
         }
 
 #else
-        FIBRE_LOG(W) << "received ack but client support is not compiled in";
+        F_LOG_E(domain_->ctx->logger, "received ack but client support is not compiled in");
 #endif
 
     } else {
 
 #if FIBRE_ENABLE_SERVER
         if (rx_buf.size() < 6) {
-            FIBRE_LOG(W) << "packet too short";
+            F_LOG_E(domain_->ctx->logger, "packet too short");
             rx_channel_->start_read(rx_buf_, &dummy, MEMBER_CB(this, on_read_finished));
             return;
         }
@@ -446,11 +442,11 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
         uint16_t expected_trailer = endpoint_id ? fibre::json_crc_ : PROTOCOL_VERSION;
         uint16_t actual_trailer = *(rx_buf.end() - 2) | (*(rx_buf.end() - 1) << 8);
         if (expected_trailer != actual_trailer) {
-            FIBRE_LOG(D) << "trailer mismatch for endpoint " << endpoint_id << ": expected " << as_hex(expected_trailer) << ", got " << as_hex(actual_trailer);
+            F_LOG_D(domain_->ctx->logger, "trailer mismatch for endpoint " << endpoint_id << ": expected " << as_hex(expected_trailer) << ", got " << as_hex(actual_trailer));
             rx_channel_->start_read(rx_buf_, &dummy, MEMBER_CB(this, on_read_finished));
             return;
         }
-        FIBRE_LOG(D) << "trailer ok for endpoint " << endpoint_id;
+        F_LOG_D(domain_->ctx->logger, "trailer ok for endpoint " << endpoint_id);
 
         // TODO: if more bytes than the MTU were requested, should we abort or just return as much as possible?
 
@@ -469,11 +465,11 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
             size_t actual_response_length = expected_response_length - output_buffer.size() + 2;
             write_le<uint16_t>(*seq_no | 0x8000, tx_buf_);
 
-            FIBRE_LOG(D) << "send packet: " << as_hex(cbufptr_t{tx_buf_, actual_response_length});
+            F_LOG_D(domain_->ctx->logger, "send packet: " << as_hex(cbufptr_t{tx_buf_, actual_response_length}));
             tx_channel_->start_write({tx_buf_, actual_response_length}, &tx_handle_, MEMBER_CB(this, on_write_finished));
         }
 #else
-        FIBRE_LOG(W) << "received request but server support is not compiled in";
+        F_LOG_E(domain_->ctx->logger, "received request but server support is not compiled in");
 #endif
     }
 
