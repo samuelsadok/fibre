@@ -37,39 +37,45 @@ struct LegacyFibreArg {
 
 struct LegacyObject;
 
-struct LegacyFunction : Function {
-    LegacyFunction(std::vector<LegacyFibreArg> inputs, std::vector<LegacyFibreArg> outputs)
-        : ep_num(0), obj_(nullptr), inputs(inputs), outputs(outputs) {}
-    LegacyFunction(size_t ep_num, LegacyObject* obj, std::vector<LegacyFibreArg> inputs, std::vector<LegacyFibreArg> outputs)
-        : ep_num(ep_num), obj_(obj), inputs(inputs), outputs(outputs) {}
+struct LegacyFunction final : Function {
+    LegacyFunction(LegacyObjectClient* client, std::string name, size_t ep_num, LegacyObject* obj, std::vector<LegacyFibreArg> inputs, std::vector<LegacyFibreArg> outputs)
+        : Function{}, client(client), name(name), ep_num(ep_num), obj_(obj), inputs_(inputs), outputs_(outputs) {}
 
     std::optional<CallBufferRelease>
     call(void**, CallBuffers, Callback<std::optional<CallBuffers>, CallBufferRelease>) final;
+    FunctionInfo* get_info() final;
+    void free_info(FunctionInfo* info) final;
 
+    LegacyObjectClient* client;
+    std::string name;
     size_t ep_num; // 0 for property read/write/exchange functions
     LegacyObject* obj_; // null for property read/write/exchange functions (all other functions are associated with one object only)
-    std::vector<LegacyFibreArg> inputs;
-    std::vector<LegacyFibreArg> outputs;
+    std::vector<LegacyFibreArg> inputs_;
+    std::vector<LegacyFibreArg> outputs_;
 };
 
-struct FibreInterface;
+struct LegacyInterface;
 class LegacyObjectClient;
 
 struct LegacyFibreAttribute {
+    std::string name;
     std::shared_ptr<LegacyObject> object;
 };
 
-struct FibreInterface {
+struct LegacyInterface final : Interface {
     std::string name;
-    std::unordered_map<std::string, LegacyFunction> functions;
-    std::unordered_map<std::string, LegacyFibreAttribute> attributes;
+    std::vector<std::shared_ptr<LegacyFunction>> functions;
+    std::vector<LegacyFibreAttribute> attributes;
+
+    InterfaceInfo* get_info() final;
+    void free_info(InterfaceInfo* info) final;
+    RichStatusOr<Object*> get_attribute(Object* parent_obj, size_t attr_id) final;
 };
 
 struct LegacyObject {
     LegacyObjectClient* client;
     size_t ep_num;
-    std::shared_ptr<FibreInterface> intf;
-    bool known_to_application;
+    std::shared_ptr<LegacyInterface> intf;
 };
 
 struct LegacyCallContext {
@@ -133,7 +139,7 @@ public:
     LegacyProtocolPacketBased* protocol_;
 
 private:
-    std::shared_ptr<FibreInterface> get_property_interfaces(std::string codec, bool write);
+    std::shared_ptr<LegacyInterface> get_property_interfaces(std::string codec, bool write);
     std::shared_ptr<LegacyObject> load_object(json_value list_val);
     void receive_more_json();
     void on_received_json(EndpointOperationResult result);
@@ -143,8 +149,8 @@ private:
     EndpointOperationHandle op_handle_ = 0;
     std::vector<uint8_t> json_;
     //std::vector<LegacyCallContext*> pending_calls_;
-    std::unordered_map<std::string, std::shared_ptr<FibreInterface>> rw_property_interfaces;
-    std::unordered_map<std::string, std::shared_ptr<FibreInterface>> ro_property_interfaces;
+    std::unordered_map<std::string, std::shared_ptr<LegacyInterface>> rw_property_interfaces;
+    std::unordered_map<std::string, std::shared_ptr<LegacyInterface>> ro_property_interfaces;
 };
 
 }

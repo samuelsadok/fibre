@@ -61,7 +61,6 @@ struct LibFibreCallContext;
 struct LibFibreObject;
 struct LibFibreInterface;
 struct LibFibreFunction;
-struct LibFibreAttribute;
 struct LibFibreTxStream;
 struct LibFibreRxStream;
 struct LibFibreDomain;
@@ -83,6 +82,48 @@ struct LibFibreVersion {
     uint16_t major;
     uint16_t minor;
     uint16_t patch;
+};
+
+struct LibFibreAttributeInfo {
+    const char* name; //!< ASCII-encoded name of the attribute. Remains valid
+                      //!< for as long as the containing `LibFibreAttributeInfo`
+                      //!< is valid.
+    size_t name_length; //!< Length of `name`.
+    LibFibreInterface* intf; //!< Interface implemented by this attribute.
+                             //!< Remains valid for at least as long as the
+                             //!< containing interface remains valid.
+};
+
+struct LibFibreFunctionInfo {
+    const char* name; //!< ASCII-encoded name of the function. Remains valid
+                      //!< for as long as the containing `LibFibreFunctionInfo`
+                      //!< is valid.
+    size_t name_length; //!< Length of `name`.
+    const char** input_names; //!< Names of the input arguments.
+                              //!< Null-terminated list of null-terminated
+                              //!< ASCII-encoded strings. The list and the
+                              //!< string buffers are only valid for as long as
+                              //!< the containing `LibFibreFunctionInfo` is
+                              //!< valid.
+    const char** input_codecs; //!< Names of the input codecs. The same
+                               //!< conventions as for `input_names` apply.
+    const char** output_names; //!< Names of the output names. The same
+                               //!< conventions as for `input_names` apply.
+    const char** output_codecs; //!< Names of the output codecs. The same
+                                //! conventions as for `input_names` apply.
+};
+
+struct LibFibreInterfaceInfo {
+    const char* name; //!< ASCII-encoded name of the interface. Remains valid
+                      //!< for as long as the containing `LibFibreInterfaceInfo`
+                      //!< is valid.
+    size_t name_length; //!< Length of `name`.
+    LibFibreAttributeInfo* attributes; //!< List of attributes contained by the
+                                       //!< interface.
+    size_t n_attributes; //!< Length of `attributes`.
+    LibFibreFunction** functions; //!< List of functions implemented by the
+                                  //!< interface.
+    size_t n_functions; //!< Length of `functions`.
 };
 
 typedef int (*post_cb_t)(void (*callback)(void*), void* cb_ctx);
@@ -166,32 +207,6 @@ typedef void (*on_found_object_cb_t)(void*, LibFibreObject* obj, LibFibreInterfa
 typedef void (*on_lost_object_cb_t)(void*, LibFibreObject* obj);
 
 typedef void (*on_stopped_cb_t)(void*, LibFibreStatus);
-
-typedef void (*on_attribute_added_cb_t)(void*, LibFibreAttribute*, const char* name, size_t name_length, LibFibreInterface*, const char* intf_name, size_t intf_name_length);
-typedef void (*on_attribute_removed_cb_t)(void*, LibFibreAttribute*);
-
-/**
- * @brief on_function_added callback type for libfibre_subscribe_to_interface().
- * 
- * @param ctx: The user data that was passed to libfibre_subscribe_to_interface().
- * @param func: A handle for the function. Remains valid until the corresponding
- *        call to on_function_removed().
- * @param name: The ASCII-encoded name of the function.
- * @param name_length: Length in bytes of the name.
- * @param input_names: A null-terminated list of null-terminated ASCII-encoded
- *        strings. Each string corresponds to the name of one input argument.
- *        The list and the string buffers are only valid for the duration of the
- *        callback. They must not be freed by the application.
- * @param input_codecs: A null-terminated list of null-terminated ASCII-encoded
- *        strings. Each string names the codec of one input argument.
- *        The list and the string buffers are only valid for the duration of the
- *        callback. They must not be freed by the application.
- * @param output_names: Analogous to input_names.
- * @param output_codecs: Analogous to output names.
- */
-typedef void (*on_function_added_cb_t)(void* ctx, LibFibreFunction* func, const char* name, size_t name_length, const char** input_names, const char** input_codecs, const char** output_names, const char** output_codecs);
-
-typedef void (*on_function_removed_cb_t)(void*, LibFibreFunction*);
 
 /**
  * @brief Callback type for libfibre_call().
@@ -383,36 +398,40 @@ FIBRE_PUBLIC void libfibre_start_discovery(LibFibreDomain* domain,
 FIBRE_PUBLIC void libfibre_stop_discovery(LibFibreDiscoveryCtx* handle);
 
 /**
- * @brief Subscribes to changes on the interface.
+ * @brief Returns information about a function.
  * 
- * All functions and attributes which are already part of the interface by the
- * time this function is called are also announced to the subscriber.
+ * The returned object must eventually be freed by calling 
+ * `libfibre_free_function_info()`.
  * 
- * @param interface: An interface handle that was obtained in the callback of
- *        libfibre_start_discovery().
- * @param on_attribute_added: Invoked when an attribute is added to the
- *        interface.
- * @param on_attribute_removed: Invoked when an attribute is removed from the
- *        interface, including when the interface is being torn down. This is
- *        called exactly once for every call to on_attribute_added().
- * @param on_function_added: Invoked when a function is added to the
- *        interface. The input_names, input_codecs, output_names and
- *        output_codecs arguments are null terminated lists of null terminated
- *        strings. The name buffer and the four lists are only valid for the
- *        duration of the callback and must not be freed by the application.
- *        The function handle remains valid until the corresponding call to
- *        on_function_removed().
- * @param on_function_removed: Invoked when a function is removed from the
- *        interface, including when the interface is being torn down. This is
- *        called exactly once for every call to on_function_added().
- * @param cb_ctx: Arbitrary user data passed to the callbacks.
+ * @param func: A function handle that was obtained from
+ *        libfibre_get_interface_info().
+ * @returns: A pointer to a struct containing information about the function.
+ *           Null if the information could not be retrieved.
  */
-FIBRE_PUBLIC void libfibre_subscribe_to_interface(LibFibreInterface* interface,
-    on_attribute_added_cb_t on_attribute_added,
-    on_attribute_removed_cb_t on_attribute_removed,
-    on_function_added_cb_t on_function_added,
-    on_function_removed_cb_t on_function_removed,
-    void* cb_ctx);
+FIBRE_PUBLIC LibFibreFunctionInfo* libfibre_get_function_info(LibFibreFunction* func);
+
+/**
+ * @brief Frees a function info object created by libfibre_get_function_info().
+ */
+FIBRE_PUBLIC void libfibre_free_function_info(LibFibreFunctionInfo* info);
+
+/**
+ * @brief Returns information about an interface.
+ * 
+ * The returned object must eventually be freed by calling 
+ * `libfibre_free_interface_info()`.
+ * 
+ * @param intf: An interface handle that was obtained in the callback of
+ *        libfibre_start_discovery().
+ * @returns: A pointer to a struct containing information about the interface.
+ *           Null if the information could not be retrieved.
+ */
+FIBRE_PUBLIC LibFibreInterfaceInfo* libfibre_get_interface_info(LibFibreInterface* intf);
+
+/**
+ * @brief Frees an interface info object created by libfibre_get_interface_info().
+ */
+FIBRE_PUBLIC void libfibre_free_interface_info(LibFibreInterfaceInfo* info);
 
 /**
  * @brief Returns the object that corresponds the the specified attribute of
@@ -425,18 +444,21 @@ FIBRE_PUBLIC void libfibre_subscribe_to_interface(LibFibreInterface* interface,
  * TODO: Specify whether the returned object handle must be identical for
  * repeated calls.
  * 
+ * @param intf: The interface under which to look up the attribute. Currently
+ *        each object only implements a single interface but this might change
+ *        in the future.
  * @param parent_obj: An object handle that was obtained in the callback of
  *        libfibre_start_discovery() or from a previous call to
  *        libfibre_get_attribute().
- * @param attr: An attribute handle that was obtained in the on_attribute_added()
- *        callback of libfibre_subscribe_to_interface().
+ * @param attr_id: The attribute index pertaining to the attribute list returned
+ *        by `libfibre_load_interface()`.
  * @param child_obj_ptr: If and only if the function succeeds, the variable that
  *        this argument points to is set to the requested subobject. The returned
  *        object handle is only guaranteed to remain valid for as long as the
  *        parent object handle is valid.
  * @returns: kFibreOk or kFibreInvalidArgument
  */
-FIBRE_PUBLIC LibFibreStatus libfibre_get_attribute(LibFibreObject* parent_obj, LibFibreAttribute* attr, LibFibreObject** child_obj_ptr);
+FIBRE_PUBLIC LibFibreStatus libfibre_get_attribute(LibFibreInterface* intf, LibFibreObject* parent_obj, size_t attr_id, LibFibreObject** child_obj_ptr);
 
 /**
  * @brief Starts a remote coroutine call or continues or cancels an ongoing call.
@@ -475,8 +497,8 @@ FIBRE_PUBLIC LibFibreStatus libfibre_get_attribute(LibFibreObject* parent_obj, L
  *  - rx_end is larger than the corresponding rx_buf
  *  - The status is different from kFibreOk
  * 
- * @param func: A function handle that was obtained in the on_function_added()
- *        callback of libfibre_subscribe_to_interface().
+ * @param func: A function handle that was obtained in the `functions` list of
+ *        of the libfibre_get_interface_info() result.
  * @param handle: The variable being pointed to by this argument identifies the
  *        coroutine call. If the variable is NULL it will be set to a new opaque
  *        handle. If the variable is not NULL the active function call is

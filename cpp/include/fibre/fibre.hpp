@@ -33,13 +33,50 @@ struct CallBufferRelease {
     uint8_t* rx_end;
 };
 
-struct Function {
+struct FunctionInfo {
+    std::string name;
+    std::vector<std::tuple<std::string, std::string>> inputs;
+    std::vector<std::tuple<std::string, std::string>> outputs;
+};
+
+class Function {
+public:
+    Function() {}
+    Function(const Function&) = delete; // functions must not move around in memory
+
     virtual std::optional<CallBufferRelease>
     call(void**, CallBuffers, Callback<std::optional<CallBuffers>, CallBufferRelease>) = 0;
+
+    virtual FunctionInfo* get_info() = 0;
+    virtual void free_info(FunctionInfo* info) = 0;
 };
 
 struct Object;
-struct Interface;
+
+struct InterfaceInfo;
+
+class Interface {
+public:
+    Interface() {}
+    Interface(const Interface&) = delete; // interfaces must not move around in memory
+
+    virtual InterfaceInfo* get_info() = 0;
+    virtual void free_info(InterfaceInfo* info) = 0;
+    virtual RichStatusOr<Object*> get_attribute(Object* parent_obj, size_t attr_id) = 0;
+};
+
+struct AttributeInfo {
+    std::string name;
+    Interface* intf;
+};
+
+struct InterfaceInfo {
+    std::string name;
+    std::vector<Function*> functions;
+    std::vector<AttributeInfo> attributes;
+};
+
+
 class Domain;
 
 template<typename T>

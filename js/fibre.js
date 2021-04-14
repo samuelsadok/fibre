@@ -229,44 +229,25 @@ class RxStream {
 }
 
 export class RemoteInterface {
-    constructor(libfibre, intfName) {
+    constructor(libfibre, intfName, handle) {
         this._libfibre = libfibre;
         this._refCount = 0;
         this._children = [];
         this._intfName = intfName;
+        this._intfHandle = handle;
         this._onLost = new Promise((resolve) => this._onLostResolve = resolve);
     }
 }
 
 const _staleObject = {};
 
-class RemoteAttribute {
-    constructor(libfibre, handle, subintf, subintfName) {
-        this._libfibre = libfibre;
-        this._handle = handle;
-        this._subintf = subintf;
-        this._subintfName = subintfName;
-    }
-
-    get(obj) {
-        const objHandle = this._libfibre._withOutputArg((objHandlePtr) => 
-            this._libfibre.wasm.Module._libfibre_get_attribute(obj._handle, this._handle, objHandlePtr));
-        if (objHandle in obj._children) {
-            return this._libfibre._objMap[objHandle];
-        } else {
-            const child = this._libfibre._loadJsObj(objHandle, this._subintf, this._subintfName);
-            obj._children.push(objHandle);
-            return child;
-        }
-    }
-}
-
 export class RemoteFunction extends Function {
-    constructor(libfibre, handle, inputArgs, outputArgs) {
+    constructor(libfibre, name, handle, inputArgs, outputArgs) {
         let closure = function(...args) {
             return closure._call(...args);
         }
         closure._libfibre = libfibre;
+        closure._name = name;
         closure._handle = handle;
         closure._inputArgs = inputArgs;
         closure._outputArgs = outputArgs;
@@ -447,52 +428,13 @@ class LibFibre {
 
         this._onFoundObject = wasm.addFunction((ctx, obj, intf) => {
             const discovery = this._deref(ctx);
-            const jsObj = this._loadJsObj(obj, intf, 'anonymous_root_interface')
+            const jsObj = this._loadJsObj(obj, intf)
             discovery.onFoundObject(jsObj); // TODO: load interface name from libfibre
         }, 'viii')
 
         this._onLostObject = wasm.addFunction((ctx, obj) => {
             const discovery = this._deref(ctx);
             this._releaseJsObj(obj);
-        }, 'vii')
-
-        this._onAttributeAdded = wasm.addFunction((ctx, attr, name, nameNength, subintf, subintfName, subintfNameLength) => {
-            let jsIntf = this._intfMap[ctx];
-            assert(jsIntf);
-            let jsAttr = new RemoteAttribute(this, attr, subintf, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, subintfName, subintfNameLength));
-            Object.defineProperty(jsIntf.prototype, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameNength), {
-                get: function () { return jsAttr.get(this); },
-                enumerable: true
-            });
-        }, 'viiiiiii')
-
-        this._onAttributeRemoved = wasm.addFunction((ctx, attr) => {
-            console.log("attribute removed"); // TODO
-        }, 'vii')
-
-        this._onFunctionAdded = wasm.addFunction((ctx, func, name, nameLength, inputNames, inputCodecs, outputNames, outputCodecs) => {
-            const jsIntf = this._intfMap[ctx];
-            let jsInputParams;
-            let jsOutputParams;
-            try {
-                jsInputParams = [...this._decodeArgList(inputNames, inputCodecs)];
-                jsOutputParams = [...this._decodeArgList(outputNames, outputCodecs)];
-            } catch (err) {
-                console.warn(err.message);
-                return;
-            }
-            let jsFunc = new RemoteFunction(this, func, jsInputParams, jsOutputParams);
-            Object.defineProperty(jsIntf.prototype, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameLength), {
-                get: function() {
-                    const obj = this;
-                    return function(...args) { return jsFunc(obj, ...args); };
-                },
-                enumerable: true
-            });
-        }, 'viiiiiiii')
-
-        this._onFunctionRemoved = wasm.addFunction((ctx, func) => {
-            console.log("function removed"); // TODO
         }, 'vii')
 
         this._onCallCompleted = wasm.addFunction((ctx, status, txEnd, rxEnd, txBufPtr, txLenPtr, rxBufPtr, rxLenPtr) => {
@@ -528,6 +470,7 @@ class LibFibre {
         this._intfMap = {};
         this._refMap = {};
         this._objMap = {};
+        this._funcMap = {};
         this._domainMap = {};
         this._txStreamMap = {};
         this._rxStreamMap = {};
@@ -670,34 +613,116 @@ class LibFibre {
         }
     }
 
-    _loadJsIntf(intfHandle, intfName) {
-        if (intfHandle in this._intfMap) {
-            return this._intfMap[intfHandle];
+    _loadJsFunc(funcHandle) {
+        let func;
+        if (funcHandle in this._funcMap) {
+            func = this._funcMap[funcHandle];
         } else {
-            class RemoteObject extends RemoteInterface {
-                constructor(libfibre, handle) {
-                    super(libfibre, intfName);
-                    this._handle = handle;
-                }
-            };
-            let jsIntf = RemoteObject;
-            this._intfMap[intfHandle] = jsIntf;
-            this.wasm.Module._libfibre_subscribe_to_interface(intfHandle,
-                this._onAttributeAdded,
-                this._onAttributeRemoved,
-                this._onFunctionAdded,
-                this._onFunctionRemoved,
-                intfHandle);
-            return jsIntf;
+            const funcInfo = this.wasm.Module._libfibre_get_function_info(funcHandle);
+            try {
+                const funcInfoView = (new Uint32Array(wasm.Module.HEAPU8.buffer, funcInfo, 6));
+                const name = funcInfoView[0];
+                const nameLength = funcInfoView[1];
+                const inputNames = funcInfoView[2];
+                const inputCodecs = funcInfoView[3];
+                const outputNames = funcInfoView[4];
+                const outputCodecs = funcInfoView[5];
+
+                func = new RemoteFunction(this,
+                    this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameLength),
+                    funcHandle,
+                    [...this._decodeArgList(inputNames, inputCodecs)],
+                    [...this._decodeArgList(outputNames, outputCodecs)]);
+            } finally {
+                this.wasm.Module._libfibre_free_function_info(funcInfo);
+            }
+
+            this._funcMap[funcHandle] = func;
         }
+
+        // TODO: refcount
+        return func;
     }
 
-    _loadJsObj(objHandle, intfHandle, intfName) {
+    _loadJsIntf(intfHandle) {
+        let jsIntf;
+        if (intfHandle in this._intfMap) {
+            jsIntf = this._intfMap[intfHandle];
+        } else {
+            assert(intfHandle);
+            const intfInfo = this.wasm.Module._libfibre_get_interface_info(intfHandle);
+
+            try {
+                const intfInfoView = (new Uint32Array(wasm.Module.HEAPU8.buffer, intfInfo, 6));
+                const name = intfInfoView[0];
+                const nameLength = intfInfoView[1];
+                const nAttributes = intfInfoView[3];
+                const attributes = (new Uint32Array(wasm.Module.HEAPU8.buffer, intfInfoView[2], 3 * nAttributes));
+                const nFunctions = intfInfoView[5];
+                const functions = (new Uint32Array(wasm.Module.HEAPU8.buffer, intfInfoView[4], nFunctions));
+
+                let jsName = this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameLength);
+                class RemoteObject extends RemoteInterface {
+                    constructor(libfibre, handle) {
+                        super(libfibre);
+                        this._handle = handle;
+                    }
+                };
+
+                jsIntf = RemoteObject;
+                jsIntf._intfName = jsName;
+                jsIntf._intfHandle = intfHandle;
+                
+                // Attach functions to JS interface
+                for (let i = 0; i < nFunctions; ++i) {
+                    const func = this._loadJsFunc(functions[i]);
+                    Object.defineProperty(jsIntf.prototype, func._name, {
+                        get: function() {
+                            const obj = this;
+                            return function(...args) { return func(obj, ...args); };
+                        },
+                        enumerable: true
+                    });
+                }
+
+                // Attach attributes to JS interface
+                for (let i = 0; i < nAttributes; ++i) {
+                    const name = attributes[i * 3 + 0];
+                    const nameLength = attributes[i * 3 + 1];
+                    const intfHandle = attributes[i * 3 + 2];
+                    Object.defineProperty(jsIntf.prototype, this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, name, nameLength), {
+                        get: function () {
+                            const obj = this;
+                            const [childHandle] = this._libfibre._withOutputArg((objHandlePtr) => 
+                                assert(this._libfibre.wasm.Module._libfibre_get_attribute(jsIntf._intfHandle, obj._handle, i, objHandlePtr) == FIBRE_STATUS_OK));
+                            if (childHandle in obj._children) {
+                                return this._libfibre._objMap[childHandle];
+                            } else {
+                                const child = this._libfibre._loadJsObj(childHandle, intfHandle);
+                                obj._children.push(childHandle);
+                                return child;
+                            }
+                        },
+                        enumerable: true
+                    });
+                }
+
+            } finally {
+                this.wasm.Module._libfibre_free_interface_info(intfInfo);
+            }
+
+            this._intfMap[intfHandle] = jsIntf;
+        }
+
+        return jsIntf;
+    }
+
+    _loadJsObj(objHandle, intfHandle) {
         let jsObj;
         if (objHandle in this._objMap) {
             jsObj = this._objMap[objHandle];
         } else {
-            const jsIntf = this._loadJsIntf(intfHandle, intfName);
+            const jsIntf = this._loadJsIntf(intfHandle);
             jsObj = new jsIntf(this, objHandle);
             this._objMap[objHandle] = jsObj;
         }
@@ -765,7 +790,6 @@ class Domain {
 export function fibreOpen(log_verbosity = 4) {
     return new Promise(async (resolve) => {
         let Module = {
-            preRun: [function() {Module.ENV.FIBRE_LOG = "4"}], // enable logging
             instantiateWasm: async (info, receiveInstance) => {
                 const isWebpack = typeof __webpack_require__ === 'function';
                 const wasmPath = isWebpack ? (await import("!!file-loader!./libfibre-wasm.wasm")).default

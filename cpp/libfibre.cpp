@@ -407,83 +407,113 @@ void libfibre_stop_discovery(LibFibreDiscoveryCtx* handle) {
     delete handle;
 }
 
+struct FunctionInfoContainer {
+    Function* func;
+    FunctionInfo* cpp;
+    LibFibreFunctionInfo c;
+};
 
-void libfibre_subscribe_to_interface(LibFibreInterface* interface,
-        on_attribute_added_cb_t on_attribute_added,
-        on_attribute_removed_cb_t on_attribute_removed,
-        on_function_added_cb_t on_function_added,
-        on_function_removed_cb_t on_function_removed,
-        void* cb_ctx)
-{
-    auto intf = reinterpret_cast<fibre::FibreInterface*>(interface); // corresponding reverse cast in LibFibreDiscoveryCtx::complete() and libfibre_subscribe_to_interface()
+LibFibreFunctionInfo* libfibre_get_function_info(LibFibreFunction* func) {
+    auto cpp_info = from_c(func)->get_info();
+    auto info = new FunctionInfoContainer{
+        .func = from_c(func),
+        .cpp = cpp_info,
+        .c = LibFibreFunctionInfo{
+            .name = cpp_info->name.c_str(),
+            .name_length = cpp_info->name.size(),
+            .input_names = new const char*[cpp_info->inputs.size() + 1],
+            .input_codecs = new const char*[cpp_info->inputs.size() + 1],
+            .output_names = new const char*[cpp_info->outputs.size() + 1],
+            .output_codecs = new const char*[cpp_info->outputs.size() + 1],
+        }
+    };
 
-    for (auto& func: intf->functions) {
-        std::vector<const char*> input_names = {"obj"};
-        std::vector<const char*> input_codecs = {"object_ref"};
-        std::vector<const char*> output_names;
-        std::vector<const char*> output_codecs;
-        for (auto& arg: func.second.inputs) {
-            input_names.push_back(arg.name.data());
-            input_codecs.push_back(arg.app_codec.data());
-        }
-        for (auto& arg: func.second.outputs) {
-            output_names.push_back(arg.name.data());
-            output_codecs.push_back(arg.app_codec.data());
-        }
-        input_names.push_back(nullptr);
-        input_codecs.push_back(nullptr);
-        output_names.push_back(nullptr);
-        output_codecs.push_back(nullptr);
-
-        if (on_function_added) {
-            (*on_function_added)(cb_ctx,
-                to_c(&func.second),
-                func.first.data(), func.first.size(),
-                input_names.data(), input_codecs.data(),
-                output_names.data(), output_codecs.data());
-        }
+    for (size_t i = 0; i < info->cpp->inputs.size(); ++i) {
+        info->c.input_names[i] = std::get<0>(info->cpp->inputs[i]).c_str();
+        info->c.input_codecs[i] = std::get<1>(info->cpp->inputs[i]).c_str();
     }
-
-    for (auto& attr: intf->attributes) {
-        if (on_attribute_added) {
-            (*on_attribute_added)(cb_ctx,
-                reinterpret_cast<LibFibreAttribute*>(&attr.second), // corresponding reverse cast in libfibre_get_attribute()
-                attr.first.data(), attr.first.size(),
-                reinterpret_cast<LibFibreInterface*>(attr.second.object->intf.get()), // corresponding reverse cast in libfibre_subscribe_to_interface()
-                attr.second.object->intf->name.size() ? attr.second.object->intf->name.data() : nullptr, attr.second.object->intf->name.size()
-            );
-        }
+    for (size_t i = 0; i < info->cpp->outputs.size(); ++i) {
+        info->c.output_names[i] = std::get<0>(info->cpp->outputs[i]).c_str();
+        info->c.output_codecs[i] = std::get<1>(info->cpp->outputs[i]).c_str();
     }
+    info->c.input_names[info->cpp->inputs.size()] = nullptr;
+    info->c.input_codecs[info->cpp->inputs.size()] = nullptr;
+    info->c.output_names[info->cpp->outputs.size()] = nullptr;
+    info->c.output_codecs[info->cpp->outputs.size()] = nullptr;
+
+    return &info->c;
 }
 
-LibFibreStatus libfibre_get_attribute(LibFibreObject* parent_obj, LibFibreAttribute* attr, LibFibreObject** child_obj_ptr) {
-    if (!parent_obj || !attr) {
+void libfibre_free_function_info(LibFibreFunctionInfo* info) {
+    const size_t offset = (uintptr_t)&((FunctionInfoContainer*)nullptr)->c;
+    auto container = (FunctionInfoContainer*)((uintptr_t)info - offset);
+    delete [] container->c.input_names;
+    delete [] container->c.input_codecs;
+    delete [] container->c.output_names;
+    delete [] container->c.output_codecs;
+    container->func->free_info(container->cpp);
+    delete container;
+}
+
+struct InterfaceInfoContainer {
+    Interface* intf;
+    InterfaceInfo* cpp;
+    LibFibreInterfaceInfo c;
+};
+
+LibFibreInterfaceInfo* libfibre_get_interface_info(LibFibreInterface* intf) {
+    auto cpp_info = from_c(intf)->get_info();
+    auto info = new InterfaceInfoContainer{
+        .intf = from_c(intf),
+        .cpp = cpp_info,
+        .c = LibFibreInterfaceInfo{
+            .name = cpp_info->name.c_str(),
+            .name_length = cpp_info->name.size(),
+            .attributes = new LibFibreAttributeInfo[cpp_info->attributes.size()],
+            .n_attributes = cpp_info->attributes.size(),
+            .functions = new LibFibreFunction*[cpp_info->functions.size()],
+            .n_functions = cpp_info->functions.size(),
+        }
+    };
+
+    for (size_t i = 0; i < info->cpp->functions.size(); ++i) {
+        info->c.functions[i] = to_c(info->cpp->functions[i]);
+    }
+
+    for (size_t i = 0; i < info->cpp->attributes.size(); ++i) {
+        info->c.attributes[i] = {
+            .name = info->cpp->attributes[i].name.c_str(),
+            .name_length = info->cpp->attributes[i].name.size(),
+            .intf = to_c(info->cpp->attributes[i].intf)
+        };
+    }
+
+    return &info->c;
+}
+
+void libfibre_free_interface_info(LibFibreInterfaceInfo* info) {
+    const size_t offset = (uintptr_t)&((InterfaceInfoContainer*)nullptr)->c;
+    auto container = (InterfaceInfoContainer*)((uintptr_t)info - offset);
+    delete [] container->c.attributes;
+    delete [] container->c.functions;
+    container->intf->free_info(container->cpp);
+    delete container;
+}
+
+LibFibreStatus libfibre_get_attribute(LibFibreInterface* intf, LibFibreObject* parent_obj, size_t attr_id, LibFibreObject** child_obj_ptr) {
+    if (!intf || !parent_obj) {
         return LibFibreStatus::kFibreInvalidArgument;
     }
 
-    fibre::LegacyObject* parent_obj_cast = reinterpret_cast<fibre::LegacyObject*>(parent_obj);
-    fibre::LegacyFibreAttribute* attr_cast = reinterpret_cast<fibre::LegacyFibreAttribute*>(attr); // corresponding reverse cast in libfibre_subscribe_to_interface()
-    auto& attributes = parent_obj_cast->intf->attributes;
+    RichStatusOr<Object*> child = from_c(intf)->get_attribute(from_c(parent_obj), attr_id);
 
-    bool is_member = std::find_if(attributes.begin(), attributes.end(),
-        [&](std::pair<const std::string, fibre::LegacyFibreAttribute>& kv) {
-            return &kv.second == attr_cast;
-        }) != attributes.end();
-
-    if (!is_member) {
-        // attempt to fetch attribute from an object that does not implement it
+    if (!child.has_value()) {
+        // TODO: log error
         return LibFibreStatus::kFibreInvalidArgument;
-    }
-
-    //LibFibreCtx* libfibre_ctx = reinterpret_cast<LibFibreCtx*>(parent_obj_cast->client->user_data_);
-    fibre::LegacyObject* child_obj = attr_cast->object.get();
-
-    if (!attr_cast->object->known_to_application) {
-        attr_cast->object->known_to_application = true;
     }
 
     if (child_obj_ptr) {
-        *child_obj_ptr = reinterpret_cast<LibFibreObject*>(child_obj);
+        *child_obj_ptr = to_c(child.value());
     }
 
     return LibFibreStatus::kFibreOk;

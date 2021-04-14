@@ -86,11 +86,6 @@ OnFoundObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p)
 OnLostObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p)
 OnStoppedSignature = CFUNCTYPE(None, c_void_p, c_int)
 
-OnAttributeAddedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p, c_size_t, c_void_p, c_void_p, c_size_t)
-OnAttributeRemovedSignature = CFUNCTYPE(None, c_void_p, c_void_p)
-OnFunctionAddedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p, c_size_t, POINTER(c_char_p), POINTER(c_char_p), POINTER(c_char_p), POINTER(c_char_p))
-OnFunctionRemovedSignature = CFUNCTYPE(None, c_void_p, c_void_p)
-
 OnCallCompletedSignature = CFUNCTYPE(c_int, c_void_p, c_int, c_void_p, c_void_p, POINTER(c_void_p), POINTER(c_size_t), POINTER(c_void_p), POINTER(c_size_t))
 OnTxCompletedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_int, c_void_p)
 OnRxCompletedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_int, c_void_p)
@@ -129,6 +124,33 @@ class LibFibreLogger(Structure):
         ("log", LogSignature),
     ]
 
+class LibFibreFunctionInfo(Structure):
+    _fields_ = [
+        ("name", c_char_p),
+        ("name_length", c_size_t),
+        ("input_names", POINTER(c_char_p)),
+        ("input_codecs", POINTER(c_char_p)),
+        ("output_names", POINTER(c_char_p)),
+        ("output_codecs", POINTER(c_char_p)),
+    ]
+
+class LibFibreAttributeInfo(Structure):
+    _fields_ = [
+        ("name", c_char_p),
+        ("name_length", c_size_t),
+        ("intf", c_void_p),
+    ]
+
+class LibFibreInterfaceInfo(Structure):
+    _fields_ = [
+        ("name", c_char_p),
+        ("name_length", c_size_t),
+        ("attributes", POINTER(LibFibreAttributeInfo)),
+        ("n_attributes", c_size_t),
+        ("functions", POINTER(c_void_p)),
+        ("n_functions", c_size_t),
+    ]
+
 libfibre_get_version = lib.libfibre_get_version
 libfibre_get_version.argtypes = []
 libfibre_get_version.restype = POINTER(LibFibreVersion)
@@ -161,12 +183,24 @@ libfibre_stop_discovery = lib.libfibre_stop_discovery
 libfibre_stop_discovery.argtypes = [c_void_p]
 libfibre_stop_discovery.restype = None
 
-libfibre_subscribe_to_interface = lib.libfibre_subscribe_to_interface
-libfibre_subscribe_to_interface.argtypes = [c_void_p, OnAttributeAddedSignature, OnAttributeRemovedSignature, OnFunctionAddedSignature, OnFunctionRemovedSignature, c_void_p]
-libfibre_subscribe_to_interface.restype = None
+libfibre_get_function_info = lib.libfibre_get_function_info
+libfibre_get_function_info.argtypes = [c_void_p]
+libfibre_get_function_info.restype = POINTER(LibFibreFunctionInfo)
+
+libfibre_free_function_info = lib.libfibre_free_function_info
+libfibre_free_function_info.argtypes = [POINTER(LibFibreFunctionInfo)]
+libfibre_free_function_info.restype = None
+
+libfibre_get_interface_info = lib.libfibre_get_interface_info
+libfibre_get_interface_info.argtypes = [c_void_p]
+libfibre_get_interface_info.restype = POINTER(LibFibreInterfaceInfo)
+
+libfibre_free_interface_info = lib.libfibre_free_interface_info
+libfibre_free_interface_info.argtypes = [POINTER(LibFibreInterfaceInfo)]
+libfibre_free_interface_info.restype = None
 
 libfibre_get_attribute = lib.libfibre_get_attribute
-libfibre_get_attribute.argtypes = [c_void_p, c_void_p, POINTER(c_void_p)]
+libfibre_get_attribute.argtypes = [c_void_p, c_void_p, c_size_t, POINTER(c_void_p)]
 libfibre_get_attribute.restype = c_int
 
 libfibre_call = lib.libfibre_call
@@ -522,8 +556,9 @@ class RemoteFunction(object):
     """
     Represents a callable function that maps to a function call on a remote object.
     """
-    def __init__(self, libfibre, func_handle, inputs, outputs):
+    def __init__(self, libfibre, name, func_handle, inputs, outputs):
         self._libfibre = libfibre
+        self._name = name
         self._func_handle = func_handle
         self._inputs = inputs
         self._outputs = outputs
@@ -598,54 +633,6 @@ class RemoteFunction(object):
             " -> " + print_arglist(self._outputs) if len(self._outputs) == 1 else
             " -> (" + print_arglist(self._outputs) + ")")
 
-class RemoteAttribute(object):
-    def __init__(self, libfibre, attr_handle, intf_handle, intf_name, magic_getter, magic_setter):
-        self._libfibre = libfibre
-        self._attr_handle = attr_handle
-        self._intf_handle = intf_handle
-        self._intf_name = intf_name
-        self._magic_getter = magic_getter
-        self._magic_setter = magic_setter
-
-    def _get_obj(self, instance):
-        assert(not instance._obj_handle is None)
-
-        obj_handle = c_void_p(0)
-        status = libfibre_get_attribute(instance._obj_handle, self._attr_handle, byref(obj_handle))
-        if status != kFibreOk:
-            raise _get_exception(status)
-        
-        obj = self._libfibre._load_py_obj(obj_handle.value, self._intf_handle)
-        if obj in instance._children:
-            self._libfibre._release_py_obj(obj_handle.value)
-        else:
-            # the object will be released when the parent is released
-            instance._children.add(obj)
-
-        return obj
-
-    def __get__(self, instance, owner):
-        if not instance:
-            return self
-
-        if self._magic_getter:
-            if threading.current_thread() == libfibre_thread:
-                # read() behaves asynchronously when run on the fibre thread
-                # which means it returns an awaitable which _must_ be awaited
-                # (otherwise it's a bug). However hasattr(...) internally calls
-                # __get__ and does not await the result. Thus the safest thing
-                # is to just disallow __get__ from run as an async method.
-                raise Exception("Cannot use magic getter on Fibre thread. Use _[prop_name]_propery.read() instead.")
-            return self._get_obj(instance).read()
-        else:
-            return self._get_obj(instance)
-
-    def __set__(self, instance, val):
-        if self._magic_setter:
-            return self._get_obj(instance).exchange(val)
-        else:
-            raise Exception("this attribute cannot be written to")
-
 class EmptyInterface():
     def __str__(self):
         return "[lost object]"
@@ -659,7 +646,6 @@ class RemoteObject(object):
     __sealed__ = False
 
     def __init__(self, libfibre, obj_handle):
-        self.__class__._refcount += 1
         self._refcount = 0
         self._children = set()
 
@@ -671,9 +657,69 @@ class RemoteObject(object):
         self.__sealed__ = True
 
     def __setattr__(self, key, value):
+        obj = self._get_without_magic(key)
+        if not obj is None and obj.__class__._magic_setter:
+            obj.__class__._functions[obj.__class__._magic_setter](obj, value)
+            return
+
         if self.__sealed__ and not hasattr(self, key):
             raise AttributeError("Attribute {} not found".format(key))
         object.__setattr__(self, key, value)
+
+    def _get_without_magic(self, key):
+        idx, intf = self._attributes.get(key, (None, None))
+        if intf is None:
+            return None
+
+        assert(not self._obj_handle is None)
+
+        obj_handle = c_void_p(0)
+        status = libfibre_get_attribute(self.__class__._handle, self._obj_handle, idx, byref(obj_handle))
+        if status != kFibreOk:
+            raise _get_exception(status)
+        
+        assert(obj_handle.value)
+        obj = self._libfibre._load_py_obj(obj_handle.value, intf._handle)
+        if obj in self._children:
+            self._libfibre._release_py_obj(obj_handle.value)
+        else:
+            # the object will be released when the parent is released
+            self._children.add(obj)
+
+        return obj
+
+    def __getattr__(self, key):
+        obj = self._get_without_magic(key)
+        if not obj is None:
+            if obj.__class__._magic_getter:
+                if threading.current_thread() == libfibre_thread:
+                    # read() behaves asynchronously when run on the fibre thread
+                    # which means it returns an awaitable which _must_ be awaited
+                    # (otherwise it's a bug). However hasattr(...) internally calls
+                    # __get__ and does not await the result. Thus the safest thing
+                    # is to just disallow __get__ from run as an async method.
+                    raise Exception("Cannot use magic getter on Fibre thread. Use _[prop_name]_propery.read() instead.")
+                return obj.__class__._functions[obj.__class__._magic_getter](obj)
+            else:
+                return obj
+
+        if key.startswith('_') and key.endswith('_property'):
+            obj = self._get_without_magic(key[1:-9])
+            if not obj is None:
+                return obj
+
+        func = self._functions.get(key, None)
+        if not func is None:
+            return func.__get__(self, None)
+
+        return object.__getattr__(self, key)
+
+    def __dir__(self):
+        props = ["_" + k + "_property" for k, (idx, intf) in self._attributes.items() if intf._name.startswith("fibre.Property<") and intf._name.endswith(">")]
+        return sorted(set(super(object, self).__dir__()
+                        + list(self._functions.keys())
+                        + list(self._attributes.keys())
+                        + props))
 
     #def __del__(self):
     #    print("unref")
@@ -687,25 +733,19 @@ class RemoteObject(object):
             if depth <= 0:
                 return "..."
             lines = []
-            for key in dir(self.__class__):
-                if key.startswith('_'):
-                    continue
-                class_member = getattr(self.__class__, key)
-                if isinstance(class_member, RemoteFunction):
-                    lines.append(indent + class_member._dump(key))
-                elif isinstance(class_member, RemoteAttribute):
-                    val = getattr(self, key)
-                    if isinstance(val, RemoteObject) and not class_member._magic_getter:
-                        lines.append(indent + key + (": " if depth == 1 else ":\n") + val._dump(indent + "  ", depth - 1))
-                    else:
-                        if isinstance(val, RemoteObject) and class_member._magic_getter:
-                            val_str = get_user_name(val)
-                        else:
-                            val_str = str(val)
-                        property_type = str(class_member._get_obj(self).__class__.read._outputs[0][1])
-                        lines.append(indent + key + ": " + val_str + " (" + property_type + ")")
+            for key, func in self.__class__._functions.items():
+                lines.append(indent + func._dump(key))
+            for key, (idx, intf) in self.__class__._attributes.items():
+                val = getattr(self, key)
+                if isinstance(val, RemoteObject) and not intf._magic_getter:
+                    lines.append(indent + key + (": " if depth == 1 else ":\n") + val._dump(indent + "  ", depth - 1))
                 else:
-                    lines.append(indent + key + ": " + str(type(val)))
+                    if isinstance(val, RemoteObject) and intf._magic_getter:
+                        val_str = get_user_name(val)
+                    else:
+                        val_str = str(val)
+                    property_type = str(intf._functions[intf._magic_getter]._outputs[0][1])
+                    lines.append(indent + key + ": " + val_str + " (" + property_type + ")")
         except:
             return "[failed to dump object]"
 
@@ -730,10 +770,6 @@ class RemoteObject(object):
         for child in children:
             libfibre._release_py_obj(child._obj_handle)
 
-        self.__class__._refcount -= 1
-        if self.__class__._refcount == 0:
-            libfibre.interfaces.pop(self.__class__._handle)
-
         self.__class__ = EmptyInterface # ensure that this object has no more attributes
         on_lost.set_result(True)
 
@@ -753,10 +789,6 @@ class LibFibre():
         self.c_on_found_object = OnFoundObjectSignature(self._on_found_object)
         self.c_on_lost_object = OnLostObjectSignature(self._on_lost_object)
         self.c_on_discovery_stopped = OnStoppedSignature(self._on_discovery_stopped)
-        self.c_on_attribute_added = OnAttributeAddedSignature(self._on_attribute_added)
-        self.c_on_attribute_removed = OnAttributeRemovedSignature(self._on_attribute_removed)
-        self.c_on_function_added = OnFunctionAddedSignature(self._on_function_added)
-        self.c_on_function_removed = OnFunctionRemovedSignature(self._on_function_removed)
         self.c_on_call_completed = OnCallCompletedSignature(self._on_call_completed)
         
         self.timer_map = {}
@@ -764,6 +796,7 @@ class LibFibre():
         self.interfaces = {} # key: libfibre handle, value: python class
         self.discovery_processes = {} # key: ID, value: python dict
         self._objects = {} # key: libfibre handle, value: python class
+        self._functions = {} # key: libfibre handle, value: python class
         self._calls = {} # key: libfibre handle, value: Call object
 
         event_loop = LibFibreEventLoop()
@@ -816,7 +849,27 @@ class LibFibre():
         self.timer_map.pop(timer_id).cancel()
         return 0
 
-    def _load_py_intf(self, name, intf_handle):
+    def _load_py_func(self, func_handle):
+        if not func_handle in self._functions:
+            info_ptr = libfibre_get_function_info(func_handle)
+            info = info_ptr.contents
+            
+            try:
+                name = string_at(info.name, info.name_length).decode('utf-8')
+                inputs = list(decode_arg_list(info.input_names, info.input_codecs))
+                outputs = list(decode_arg_list(info.output_names, info.output_codecs))
+                py_func = RemoteFunction(self, name, func_handle, inputs, outputs)
+            finally:
+                libfibre_free_function_info(info_ptr)
+
+            self._functions[func_handle] = py_func
+        else:
+            py_func = self._functions[func_handle]
+
+        return py_func
+
+
+    def _load_py_intf(self, intf_handle):
         """
         Creates a new python type for the specified libfibre interface handle or
         returns the existing python type if one was already create before.
@@ -825,19 +878,52 @@ class LibFibre():
         from libfibre, such as functions/attributes being added/removed.
         """
         if intf_handle in self.interfaces:
-            return self.interfaces[intf_handle]
+            py_intf = self.interfaces[intf_handle]
+
         else:
-            if name is None:
-                name = "anonymous_interface_" + str(intf_handle)
-            py_intf = self.interfaces[intf_handle] = type(name, (RemoteObject,), {'_handle': intf_handle, '_refcount': 0})
-            #exit(1)
-            libfibre_subscribe_to_interface(intf_handle, self.c_on_attribute_added, self.c_on_attribute_removed, self.c_on_function_added, self.c_on_function_removed, intf_handle)
-            return py_intf
+            info_ptr = libfibre_get_interface_info(intf_handle)
+            info = info_ptr.contents
+
+            try:
+                name = string_at(info.name, info.name_length).decode('utf-8')
+
+                attributes = {}
+                for i in range(info.n_attributes):
+                    attr = info.attributes[i]
+                    attributes[string_at(attr.name, attr.name_length).decode('utf-8')] = (i, self._load_py_intf(attr.intf))
+
+                functions = {}
+                for i in range(info.n_functions):
+                    func = self._load_py_func(info.functions[i])
+                    functions[func._name] = func
+
+            finally:
+                libfibre_free_interface_info(info_ptr)
+
+            py_intf = self.interfaces[intf_handle] = type(name, (RemoteObject,), {
+                '_name': name,
+                '_handle': intf_handle,
+                '_attributes': attributes,
+                '_functions': functions,
+                '_magic_getter': 'read' if (name.startswith('fibre.Property<') and name.endswith('>')) else None,
+                '_magic_setter': 'exchange' if (name.startswith('fibre.Property<readwrite ') and name.endswith('>')) else None,
+                '_refcount': 0
+            })
+
+        py_intf._refcount += 1
+        return py_intf
+
+    def _release_py_intf(self, intf_handle):
+        py_intf = self.interfaces[intf_handle]
+        py_intf._refcount -= 1
+        if py_intf._refcount <= 0:
+            for idx, intf in py_intf._attributes.values():
+                self._release_py_intf(intf._handle)
+            self.interfaces.pop(intf_handle)
 
     def _load_py_obj(self, obj_handle, intf_handle):
         if not obj_handle in self._objects:
-            name = None # TODO: load from libfibre
-            py_intf = self._load_py_intf(name, intf_handle)
+            py_intf = self._load_py_intf(intf_handle)
             py_obj = py_intf(self, obj_handle)
             self._objects[obj_handle] = py_obj
         else:
@@ -854,7 +940,9 @@ class LibFibre():
         py_obj._refcount -= 1
         if py_obj._refcount <= 0:
             self._objects.pop(obj_handle)
+            intf_handle = py_obj.__class__._handle
             py_obj._destroy()
+            self._release_py_intf(intf_handle)
 
     def _on_found_object(self, ctx, obj, intf):
         py_obj = self._load_py_obj(obj, intf)
@@ -870,31 +958,6 @@ class LibFibre():
     
     def _on_discovery_stopped(self, ctx, result):
         print("discovery stopped")
-
-    def _on_attribute_added(self, ctx, attr, name, name_length, subintf, subintf_name, subintf_name_length):
-        name = string_at(name, name_length).decode('utf-8')
-        subintf_name = None if subintf_name is None else string_at(subintf_name, subintf_name_length).decode('utf-8')
-        intf = self.interfaces[ctx]
-
-        magic_getter = not subintf_name is None and subintf_name.startswith("fibre.Property<") and subintf_name.endswith(">")
-        magic_setter = not subintf_name is None and subintf_name.startswith("fibre.Property<readwrite ") and subintf_name.endswith(">")
-
-        setattr(intf, name, RemoteAttribute(self, attr, subintf, subintf_name, magic_getter, magic_setter))
-        if magic_getter or magic_setter:
-            setattr(intf, "_" + name + "_property", RemoteAttribute(self, attr, subintf, subintf_name, False, False))
-
-    def _on_attribute_removed(self, ctx, attr):
-        print("attribute removed") # TODO
-
-    def _on_function_added(self, ctx, func, name, name_length, input_names, input_codecs, output_names, output_codecs):
-        name = string_at(name, name_length).decode('utf-8')
-        inputs = list(decode_arg_list(input_names, input_codecs))
-        outputs = list(decode_arg_list(output_names, output_codecs))
-        intf = self.interfaces[ctx]
-        setattr(intf, name, RemoteFunction(self, func, inputs, outputs))
-
-    def _on_function_removed(self, ctx, func):
-        print("function removed") # TODO
 
     def _on_call_completed(self, ctx, status, tx_end, rx_end, tx_buf, tx_len, rx_buf, rx_len):
         call = self._calls.pop(ctx)
@@ -1023,7 +1086,7 @@ def _run_event_loop():
     #  - have libfibre_close() report the destruction of all objects
 
     while len(libfibre._objects):
-        libfibre._objects.pop(list(libfibre._objects.keys())[0])._destroy()
+        libfibre._release_py_obj(list(libfibre._objects.keys())[0])
     assert(len(libfibre.interfaces) == 0)
 
     libfibre = None

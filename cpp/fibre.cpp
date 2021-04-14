@@ -219,7 +219,9 @@ Domain* Context::create_domain(std::string specs) {
 }
 
 void Context::close_domain(Domain* domain) {
+    F_LOG_D(logger, "closing domain");
     for (auto& it: domain->channel_discovery_handles) {
+        F_LOG_D(logger, "stopping discoverer");
         discoverers[it.first]->stop_channel_discovery(it.second);
     }
     domain->channel_discovery_handles.clear();

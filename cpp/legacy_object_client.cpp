@@ -235,7 +235,7 @@ void LegacyObjectClient::start(Callback<void, LegacyObjectClient*, std::shared_p
     receive_more_json();
 }
 
-std::shared_ptr<FibreInterface> LegacyObjectClient::get_property_interfaces(std::string codec, bool write) {
+std::shared_ptr<LegacyInterface> LegacyObjectClient::get_property_interfaces(std::string codec, bool write) {
     auto& dict = write ? rw_property_interfaces : ro_property_interfaces;
 
     auto it = dict.find(codec);
@@ -243,9 +243,9 @@ std::shared_ptr<FibreInterface> LegacyObjectClient::get_property_interfaces(std:
         return it->second;
     }
 
-    auto intf_ptr = std::make_shared<FibreInterface>();
+    auto intf_ptr = std::make_shared<LegacyInterface>();
     dict[codec] = intf_ptr;
-    FibreInterface& intf = *intf_ptr;
+    LegacyInterface& intf = *intf_ptr;
     size_t size = get_codec_size(codec);
     std::string app_codec = codec == "endpoint_ref" ? "object_ref" : codec;
     size_t app_codec_size = codec == "endpoint_ref" ? sizeof(uintptr_t) : size;
@@ -255,9 +255,11 @@ std::shared_ptr<FibreInterface> LegacyObjectClient::get_property_interfaces(std:
     }
     
     intf.name = std::string{} + "fibre.Property<" + (write ? "readwrite" : "readonly") + " " + codec + ">";
-    intf.functions.emplace("read", LegacyFunction{0, nullptr, {}, {{"value", codec, app_codec, size, app_codec_size, 0}}});
+    intf.functions.push_back(std::shared_ptr<LegacyFunction>(new LegacyFunction{this,
+        "read", 0, nullptr, {}, {{"value", codec, app_codec, size, app_codec_size, 0}}}));
     if (write) {
-        intf.functions.emplace("exchange", LegacyFunction{0, nullptr, {{"newval", codec, app_codec, size, app_codec_size, 0}}, {{"oldval", codec, app_codec, size, app_codec_size, 0}}});
+        intf.functions.push_back(std::shared_ptr<LegacyFunction>(new LegacyFunction{this,
+            "exchange", 0, nullptr, {{"newval", codec, app_codec, size, app_codec_size, 0}}, {{"oldval", codec, app_codec, size, app_codec_size, 0}}}));
     }
     
     return intf_ptr;
@@ -274,11 +276,10 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
     LegacyObject obj{
         .client = this,
         .ep_num = 0,
-        .intf = std::make_shared<FibreInterface>(),
-        .known_to_application = false
+        .intf = std::make_shared<LegacyInterface>(),
     };
     auto obj_ptr = std::make_shared<LegacyObject>(obj);
-    FibreInterface& intf = *obj_ptr->intf;
+    LegacyInterface& intf = *obj_ptr->intf;
 
     for (auto& item: json_as_list(list_val)) {
         if (!json_is_dict(*item)) {
@@ -293,19 +294,20 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
 
         if (json_is_str(type) && json_as_str(type) == "object") {
             std::shared_ptr<LegacyObject> subobj = load_object(json_dict_find(dict, "members"));
-            intf.attributes[name] = {subobj};
+            intf.attributes.push_back({name, subobj});
 
         } else if (json_is_str(type) && json_as_str(type) == "function") {
             json_value id = json_dict_find(dict, "id");
             if (!json_is_int(id) || ((int)(size_t)json_as_int(id) != json_as_int(id))) {
                 continue;
             }
-            intf.functions.emplace(name, LegacyFunction{
+            intf.functions.push_back(std::shared_ptr<LegacyFunction>(new LegacyFunction{this,
+                name,
                 (size_t)json_as_int(id),
                 obj_ptr.get(),
                 parse_arglist(json_dict_find(dict, "inputs"), protocol_->domain_->ctx->logger),
-                parse_arglist(json_dict_find(dict, "outputs"), protocol_->domain_->ctx->logger)
-            });
+                parse_arglist(json_dict_find(dict, "outputs"), protocol_->domain_->ctx->logger),
+            }));
 
         } else if (json_is_str(type) && json_as_str(type) == "json") {
             // Ignore
@@ -325,11 +327,10 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
                 .client = this,
                 .ep_num = (size_t)json_as_int(id),
                 .intf = get_property_interfaces(type_str, can_write),
-                .known_to_application = false
             };
             auto subobj_ptr = std::make_shared<LegacyObject>(subobj);
             objects_.push_back(subobj_ptr);
-            intf.attributes[name] = {subobj_ptr};
+            intf.attributes.push_back({name, subobj_ptr});
 
         } else {
             F_LOG_E(protocol_->domain_->ctx->logger, "unsupported codec");
@@ -394,6 +395,27 @@ void LegacyObjectClient::on_received_json(EndpointOperationResult result) {
 }
 
 
+FunctionInfo* LegacyFunction::get_info() {
+    FunctionInfo* info = new FunctionInfo{
+        .name = name,
+        .inputs = {{"obj", "object_ref"}},
+        .outputs = {}
+    };
+    
+    for (auto& arg: inputs_) {
+        info->inputs.push_back({arg.name, arg.app_codec});
+    }
+    for (auto& arg: outputs_) {
+        info->outputs.push_back({arg.name, arg.app_codec});
+    }
+
+    return info;
+}
+
+void LegacyFunction::free_info(FunctionInfo* info) {
+    delete info;
+}
+
 std::optional<CallBufferRelease> LegacyFunction::call(void** call_handle,
         CallBuffers buffers,
         Callback<std::optional<CallBuffers>, CallBufferRelease> callback) {
@@ -401,17 +423,17 @@ std::optional<CallBufferRelease> LegacyFunction::call(void** call_handle,
     LegacyCallContext* ctx;
 
     if (!*call_handle) {
-        // Instantiate new call
+        // Instantiate new call (TODO: free)
         ctx = new LegacyCallContext();
         ctx->func_ = this;
 
         size_t total_tx_decoded_size = sizeof(uintptr_t);
-        for (auto& arg: inputs) {
+        for (auto& arg: inputs_) {
             total_tx_decoded_size += arg.app_size;
         }
 
         size_t total_rx_encoded_size = 0;
-        for (auto& arg: outputs) {
+        for (auto& arg: outputs_) {
             total_rx_encoded_size += arg.protocol_size;
         }
 
@@ -477,9 +499,9 @@ void LegacyCallContext::resume_from_protocol(EndpointOperationResult result) {
                 return; // app will resume asynchronously
             } else if (std::get<0>(continuation).status != kFibreOk) {
                 if (app_result->status != kFibreClosed || app_result->rx_buf.size() || app_result->tx_buf.size()) {
-                    F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "app tried to continue a closed call");
+                    F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "app tried to continue a closed call");
                 }
-                F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "closing call");
+                F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "closing call");
                 return;
             } else {
                 res = *app_result;
@@ -545,7 +567,7 @@ bool LegacyObjectClient::transcode(cbufptr_t src, bufptr_t dst, std::string src_
 std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWithProtocol, LegacyCallContext::InternalError> LegacyCallContext::get_next_task(std::variant<ResultFromApp, ResultFromProtocol> continue_from) {
     if (progress == 0) {
         if (continue_from.index() != 0) {
-            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "expected continuation from app");
+            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "expected continuation from app");
             return InternalError{};
         }
 
@@ -565,9 +587,9 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
             return ContinueWithApp{result_from_app.status, app_tx_end_, app_rx_buf_.begin()};
         }
 
-    } else if (progress <= func_->inputs.size() + 1 + func_->outputs.size()) {
+    } else if (progress <= func_->inputs_.size() + 1 + func_->outputs_.size()) {
         if (continue_from.index() != 1) {
-            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "expected continuation from protocol");
+            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "expected continuation from protocol");
             return InternalError{};
         }
 
@@ -576,7 +598,7 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
         if (result_from_protocol.status == kStreamClosed) {
             return ContinueWithApp{kFibreHostUnreachable, app_tx_end_, app_rx_buf_.begin()};
         } else if (result_from_protocol.status != kStreamOk) {
-            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "protocol failed with " << result_from_protocol.status << " - propagating error to application");
+            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "protocol failed with " << result_from_protocol.status << " - propagating error to application");
             return ContinueWithApp{kFibreHostUnreachable, app_tx_end_, app_rx_buf_.begin()};
         }
 
@@ -585,16 +607,16 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
             rx_pos_ = result_from_protocol.rx_end - rx_buf_.data();
         }
 
-    } else if (progress == func_->inputs.size() + 2 + func_->outputs.size()) {
+    } else if (progress == func_->inputs_.size() + 2 + func_->outputs_.size()) {
         if (continue_from.index() != 0) {
-            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "expected continuation from app");
+            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "expected continuation from app");
             return InternalError{};
         }
 
         ResultFromApp result_from_app = std::get<0>(continue_from);
 
         if (result_from_app.status != kFibreOk && result_from_app.status != kFibreClosed) {
-            F_LOG_E(obj_->client->protocol_->domain_->ctx->logger, "application failed with " << result_from_app.status << " - dropping this call");
+            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "application failed with " << result_from_app.status << " - dropping this call");
             return InternalError{};
         }
 
@@ -606,19 +628,24 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
         // Transcode from application codec to protocol codec
 
         obj_ = *reinterpret_cast<LegacyObject**>(tx_buf_.data());
-        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "object is " << as_hex(reinterpret_cast<uintptr_t>(obj_)));
-        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "tx buf is " << as_hex(cbufptr_t{tx_buf_}));
+        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "object is " << as_hex(reinterpret_cast<uintptr_t>(obj_)));
+        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "tx buf is " << as_hex(cbufptr_t{tx_buf_}));
+
+        if (obj_->client != func_->client) {
+            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "function called on object of different peer");
+            return InternalError{};
+        }
 
         std::vector<uint8_t> transcoded;
-        size_t transcoded_size = calc_sum(func_->inputs.begin(), func_->inputs.end(),
+        size_t transcoded_size = calc_sum(func_->inputs_.begin(), func_->inputs_.end(),
             [](LegacyFibreArg& arg) { return arg.protocol_size; });
-        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "transcoding " << func_->inputs.size() << " inputs from " << tx_buf_.size() << " B to " << transcoded_size << " B");
+        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "transcoding " << func_->inputs_.size() << " inputs from " << tx_buf_.size() << " B to " << transcoded_size << " B");
         transcoded.resize(transcoded_size);
         
         tx_pos_ = sizeof(uintptr_t);
         size_t transcoded_pos = 0;
-        for (auto& arg: func_->inputs) {
-            if (!obj_->client->transcode({tx_buf_.data() + tx_pos_, arg.app_size},
+        for (auto& arg: func_->inputs_) {
+            if (!func_->client->transcode({tx_buf_.data() + tx_pos_, arg.app_size},
                     {transcoded.data() + transcoded_pos, arg.protocol_size},
                     arg.app_codec, arg.protocol_codec)) {
                 return ContinueWithApp{kFibreInternalError, app_tx_end_, app_rx_buf_.begin()};
@@ -630,22 +657,22 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
         tx_buf_ = transcoded;
         tx_pos_ = 0;
 
-    } else if (progress == func_->inputs.size() + 1 + func_->outputs.size()) {
+    } else if (progress == func_->inputs_.size() + 1 + func_->outputs_.size()) {
         // Transcode from protocol codec to application codec
 
         std::vector<uint8_t> transcoded;
-        for (auto& arg: func_->outputs) {
-            F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "arg size " << arg.app_size);
+        for (auto& arg: func_->outputs_) {
+            F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "arg size " << arg.app_size);
         }
-        size_t transcoded_size = calc_sum(func_->outputs.begin(), func_->outputs.end(),
+        size_t transcoded_size = calc_sum(func_->outputs_.begin(), func_->outputs_.end(),
             [](LegacyFibreArg& arg) { return arg.app_size; });
-        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "transcoding " << func_->outputs.size() << " outputs from " << rx_buf_.size() << " B to " << transcoded_size << " B");
+        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "transcoding " << func_->outputs_.size() << " outputs from " << rx_buf_.size() << " B to " << transcoded_size << " B");
         transcoded.resize(transcoded_size);
         
         rx_pos_ = 0;
         size_t transcoded_pos = 0;
-        for (auto& arg: func_->outputs) {
-            if (!obj_->client->transcode({rx_buf_.data() + rx_pos_, arg.protocol_size},
+        for (auto& arg: func_->outputs_) {
+            if (!func_->client->transcode({rx_buf_.data() + rx_pos_, arg.protocol_size},
                     {transcoded.data() + transcoded_pos, arg.app_size},
                     arg.protocol_codec, arg.app_codec)) {
                 return ContinueWithApp{kFibreInternalError, app_tx_end_, app_rx_buf_.begin()};
@@ -657,28 +684,28 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
         rx_buf_ = transcoded;
         rx_pos_ = 0;
 
-        F_LOG_T(obj_->client->protocol_->domain_->ctx->logger, "rx buf is " << as_hex(cbufptr_t{rx_buf_}));
+        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "rx buf is " << as_hex(cbufptr_t{rx_buf_}));
     }
 
     progress++;
 
     if (progress == 1 && obj_->ep_num) {
         // Single Endpoint Function - exchange everything in one go
-        progress = func_->inputs.size() + 1 + func_->outputs.size();
-        return ContinueWithProtocol{obj_->client->protocol_, obj_->ep_num, tx_buf_, rx_buf_};
+        progress = func_->inputs_.size() + 1 + func_->outputs_.size();
+        return ContinueWithProtocol{func_->client->protocol_, obj_->ep_num, tx_buf_, rx_buf_};
 
-    } else if (progress <= func_->inputs.size()) {
+    } else if (progress <= func_->inputs_.size()) {
         // send arg
-        auto arg = func_->inputs[progress - 1];
-        return ContinueWithProtocol{obj_->client->protocol_, arg.ep_num, {tx_buf_.data() + tx_pos_, arg.protocol_size}, {}};
-    } else if (progress == func_->inputs.size() + 1) {
+        auto arg = func_->inputs_[progress - 1];
+        return ContinueWithProtocol{func_->client->protocol_, arg.ep_num, {tx_buf_.data() + tx_pos_, arg.protocol_size}, {}};
+    } else if (progress == func_->inputs_.size() + 1) {
         // send trigger
-        return ContinueWithProtocol{obj_->client->protocol_, func_->ep_num, {}, {}};
-    } else if (progress <= func_->inputs.size() + 1 + func_->outputs.size()) {
+        return ContinueWithProtocol{func_->client->protocol_, func_->ep_num, {}, {}};
+    } else if (progress <= func_->inputs_.size() + 1 + func_->outputs_.size()) {
         // receive arg
-        auto arg = func_->outputs[progress - 2 - func_->inputs.size()];
-        return ContinueWithProtocol{obj_->client->protocol_, arg.ep_num, {}, {rx_buf_.data() + rx_pos_, arg.protocol_size}};
-    } else if (progress == func_->inputs.size() + 2 + func_->outputs.size()) {
+        auto arg = func_->outputs_[progress - 2 - func_->inputs_.size()];
+        return ContinueWithProtocol{func_->client->protocol_, arg.ep_num, {}, {rx_buf_.data() + rx_pos_, arg.protocol_size}};
+    } else if (progress == func_->inputs_.size() + 2 + func_->outputs_.size()) {
         // return data to application
         size_t n_copy = std::min(rx_buf_.size() - rx_pos_, app_rx_buf_.size());
         std::copy_n(rx_buf_.data() + rx_pos_, n_copy, app_rx_buf_.begin());
@@ -689,3 +716,34 @@ std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWith
 
     return InternalError{};
 }
+
+InterfaceInfo* LegacyInterface::get_info() {
+    InterfaceInfo* info = new InterfaceInfo{};
+
+    info->name = name;
+
+    for (auto& func: functions) {
+        info->functions.push_back(func.get());
+    }
+
+    for (auto& attr: attributes) {
+        info->attributes.push_back({
+            .name = attr.name,
+            .intf = attr.object->intf.get()
+        });
+    }
+
+    return info;
+}
+
+void LegacyInterface::free_info(InterfaceInfo* info) {
+    delete info;
+}
+
+RichStatusOr<Object*> LegacyInterface::get_attribute(Object* parent_obj, size_t attr_id) {
+    fibre::LegacyObject* parent_obj_cast = reinterpret_cast<fibre::LegacyObject*>(parent_obj);
+    F_RET_IF(parent_obj_cast->intf.get() != this, "object does not implement this interface");
+    F_RET_IF(attr_id >= attributes.size(), "attribute ID " << attr_id << " out of range, have only " << attributes.size() << " attributes");
+    return reinterpret_cast<Object*>(attributes[attr_id].object.get());
+}
+
