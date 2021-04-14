@@ -69,28 +69,34 @@ TestClass test_object;
 TestIntf1Wrapper<TestClass> test_object_wrapper{test_object};
 TestIntf1Intf* test_object_ptr = &test_object_wrapper;
 
-
-
 int main() {
     printf("Starting Fibre server...\n");
 
-    fibre::Logger logger = fibre::Logger{fibre::log_to_stderr, fibre::get_log_verbosity()};
+    fibre::Logger logger =
+        fibre::Logger{fibre::log_to_stderr, fibre::get_log_verbosity()};
 
-    bool failed = F_LOG_IF_ERR(logger, fibre::launch_event_loop(logger, [&](fibre::EventLoop* event_loop) {
-        printf("Hello from event loop...\n");
+    fibre::RichStatus result =
+        fibre::launch_event_loop(logger, [&](fibre::EventLoop* event_loop) {
+            printf("Hello from event loop...\n");
 
-        fibre::Context* fibre_ctx;
-        if (F_LOG_IF_ERR(logger, fibre::open(event_loop, logger, &fibre_ctx), "failed to open fibre")) {
-            return;
-        }
+            fibre::Context* fibre_ctx;
+            if (F_LOG_IF_ERR(logger,
+                             fibre::open(event_loop, logger, &fibre_ctx),
+                             "failed to open fibre")) {
+                return;
+            }
 
-        fibre_ctx->create_domain("tcp-server:address=localhost,port=14220");
-        // auto domain =
-        // fibre_ctx->create_domain("tcp-server:address=localhost,port=14220");
-        // domain->publish_function();
-    }), "event loop failed");
+            fibre_ctx->create_domain("tcp-server:address=localhost,port=14220");
 
-    printf("test server terminated %s\n", failed ? "with an error" : "nominally");
+            // TODO: implement dynamic publishing of objects. Currently
+            // object can only be published statically.
+            // domain->publish_object<TestIntf1Intf>(test_object);
+        });
+
+    bool failed = F_LOG_IF_ERR(logger, result, "event loop failed");
+
+    printf("test server terminated %s\n",
+           failed ? "with an error" : "nominally");
 
     return failed ? 1 : 0;
 }

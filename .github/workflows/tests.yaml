@@ -72,7 +72,6 @@ jobs:
 
           chmod +x ./artifacts/test-server-$ARCH/test_server.elf
           ls ./artifacts/test-server-$ARCH/test_server.elf
-          rm ./python/fibre/libfibre-*
           cp ./artifacts/libfibre-$ARCH/* ./python/fibre/
 
           # Launch test server in background

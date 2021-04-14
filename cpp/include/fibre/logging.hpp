@@ -7,6 +7,10 @@
 #include <sstream>
 #include <iostream>
 #include <string.h>
+
+#if defined(_WIN32) || defined(_WIN64)
+#include "windows.h" // required for GetLastError()
+#endif
 #endif
 
 namespace fibre {
