@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/include/libusb-1.0",
+                "/usr/include/dbus-1.0",
+                "/usr/lib/dbus-1.0/include"
+            ],
+            "defines": [
+                "FIBRE_ENABLE_SERVER=1",
+                "FIBRE_ENABLE_CLIENT=1",
+                "FIBRE_ENABLE_EVENT_LOOP=1",
+                "FIBRE_ALLOW_HEAP=1"
+            ],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c11",
+            "intelliSenseMode": "clang-x64"
+        }
+    ],
+    "version": 4
+}
