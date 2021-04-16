@@ -80,7 +80,7 @@ DeregisterEventSignature = CFUNCTYPE(c_int, c_int)
 CallLaterSignature = CFUNCTYPE(c_void_p, c_float, CFUNCTYPE(None, c_void_p), POINTER(c_int))
 CancelTimerSignature = CFUNCTYPE(c_int, c_void_p)
 
-LogSignature = CFUNCTYPE(None, c_char_p, c_uint, c_int, c_size_t, c_size_t, c_char_p)
+LogSignature = CFUNCTYPE(None, c_void_p, c_char_p, c_uint, c_int, c_size_t, c_size_t, c_char_p)
 
 OnFoundObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p)
 OnLostObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p)
@@ -122,6 +122,7 @@ class LibFibreLogger(Structure):
     _fields_ = [
         ("verbosity", c_int),
         ("log", LogSignature),
+        ("ctx", c_void_p),
     ]
 
 class LibFibreFunctionInfo(Structure):
@@ -809,11 +810,12 @@ class LibFibre():
         logger = LibFibreLogger()
         logger.verbosity = int(os.environ.get('FIBRE_LOG', '2'))
         logger.log = self.c_log
+        logger.ctx = None
 
         self.ctx = c_void_p(libfibre_open(event_loop, logger))
         assert(self.ctx)
 
-    def _log(self, file, line, level, info0, info1, text):
+    def _log(self, ctx, file, line, level, info0, info1, text):
         file = string_at(file).decode('utf-8')
         text = string_at(text).decode('utf-8')
         color = "\x1b[91;1m" if level <= 2 else ""

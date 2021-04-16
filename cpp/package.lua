@@ -108,6 +108,19 @@ function get_fibre_package(args)
     return pkg
 end
 
+function fibre_autogen(yaml_file)
+    python_command = 'python3 -B'
+    interface_generator = '../tools/interface_generator.py'
+    tup.frule{inputs={'../cpp/static_exports_template.j2'}, command=python_command..' '..interface_generator..' --definitions '..yaml_file..' --template %f --output %o', outputs='autogen/static_exports.cpp'}
+    tup.frule{inputs={'../cpp/interfaces_template.j2'}, command=python_command..' '..interface_generator..' --definitions '..yaml_file..' --template %f --output %o', outputs='autogen/interfaces.hpp'}
+    tup.frule{inputs={'../cpp/legacy_endpoints_template.j2'}, command=python_command..' '..interface_generator..' --definitions '..yaml_file..' --template %f --output %o', outputs='autogen/endpoints.cpp'}
+
+    return {
+        code_files={'autogen/static_exports.cpp', 'autogen/endpoints.cpp'},
+        autogen_headers={'autogen/interfaces.hpp'}
+    }
+end
+
 -- Runs the specified shell command immediately (not as part of the dependency
 -- graph).
 -- Returns the values (return_code, stdout) where stdout has the trailing new

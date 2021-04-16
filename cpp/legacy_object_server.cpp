@@ -6,50 +6,6 @@
 
 namespace fibre {
 
-enum class EndpointType {
-    kFunctionTrigger,
-    kFunctionInput,
-    kFunctionOutput,
-    kRoProperty,
-    kRwProperty,
-};
-
-struct EndpointDefinition {
-    EndpointType type;
-    union {
-        struct {
-            ServerFunctionId function_id;
-            ServerObjectId object_id;
-        } function_trigger;
-        struct {
-            unsigned size;
-        } function_input;
-        struct {
-            unsigned size;
-        } function_output;
-        struct {
-            ServerFunctionId read_function_id;
-            ServerObjectId object_id;
-        } ro_property;
-        struct {
-            ServerFunctionId read_function_id;
-            ServerFunctionId exchange_function_id;
-            ServerObjectId object_id;
-        } rw_property;
-    };
-};
-
-}
-
-// TODO: don't hardcode path
-#include "../test/autogen/endpoints.hpp"
-
-namespace fibre {
-
-const uint16_t json_crc_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(PROTOCOL_VERSION, embedded_json, embedded_json_length);
-const uint32_t json_version_id_ = (json_crc_ << 16) | calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(json_crc_, embedded_json, embedded_json_length);
-static constexpr size_t n_endpoints = sizeof(endpoint_table) / sizeof(endpoint_table[0]);
-
 
 
 // Returns part of the JSON interface definition.

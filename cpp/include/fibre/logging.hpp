@@ -24,6 +24,7 @@ enum class LogLevel : int {
 /**
  * @brief Log function callback type
  * 
+ * @param ctx: An opaque user defined context pointer.
  * @param file: The file name of the call site. Valid until the program terminates.
  * @param line: The line number of the call site.
  * @param info0: A general purpose information parameter. The meaning of this depends on the call site.
@@ -31,7 +32,7 @@ enum class LogLevel : int {
  * @param text: Text to log. Valid only for the duration of the log call. Always
  *        Null if Fibre is compiled with FIBRE_ENABLE_TEXT_LOGGING=0.
  */
-typedef void(*log_fn_t)(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
+typedef Callback<void, const char* /* file */, unsigned /* line */, int /* level */, uintptr_t /* info0 */, uintptr_t /* info1 */, const char* /* text */> log_fn_t;
 
 class Logger {
 public:
@@ -39,7 +40,7 @@ public:
         : impl_{impl}, verbosity_{verbosity} {}
 
     template<typename TFunc>
-    void log(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, TFunc text_gen) {
+    void log(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, TFunc text_gen) const {
         if (level <= (int)verbosity_) {
             const char* c_str = nullptr;
 #if FIBRE_ENABLE_TEXT_LOGGING
@@ -48,13 +49,13 @@ public:
             std::string str = stream.str();
             c_str = str.c_str();
 #endif
-            impl_(file, line, level, info0, info1, c_str);
+            impl_.invoke(file, line, level, info0, info1, c_str);
         }
     }
 
     static Logger none() {
         return {
-            [](const char*, unsigned, int, uintptr_t, uintptr_t, const char*){},
+            {[](void*, const char*, unsigned, int, uintptr_t, uintptr_t, const char*){}, nullptr},
             (LogLevel)-1
         };
     }

@@ -121,7 +121,7 @@ void PosixTcpBackend::TcpChannelDiscoveryContext::on_connected(RichStatus status
         auto socket = new PosixSocket{}; // TODO: free
         status = socket->init(parent->event_loop_, parent->logger_, socket_id);
         if (!status.is_error()) {
-            domain->add_channels({kFibreOk, socket, socket, SIZE_MAX});
+            domain->add_channels({kFibreOk, socket, socket, SIZE_MAX, false});
             return;
         }
         delete socket;

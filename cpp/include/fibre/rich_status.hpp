@@ -108,8 +108,8 @@ private:
 
 #else
 
-#define F_MAKE_ERR(msg) RichStatus{{}, __FILE__, __LINE__, RichStatus::success()}
-#define F_AMEND_ERR(inner, msg) RichStatus{{}, __FILE__, __LINE__, (inner)}
+#define F_MAKE_ERR(msg) RichStatus{0, __FILE__, __LINE__, RichStatus::success()}
+#define F_AMEND_ERR(inner, msg) RichStatus{0, __FILE__, __LINE__, (inner)}
 
 #endif
 

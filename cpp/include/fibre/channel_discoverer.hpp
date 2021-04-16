@@ -13,6 +13,7 @@ struct ChannelDiscoveryResult {
     AsyncStreamSource* rx_channel;
     AsyncStreamSink* tx_channel;
     size_t mtu;
+    bool packetized;
 };
 
 struct ChannelDiscoveryContext {};

@@ -34,7 +34,7 @@ If your application doesn't use tup, you have to manually check which code files
 Currently there's no nice walkthrough for this but here are two applications that you can use as an example:
 
  - The [ODrive Firmware](https://github.com/madcowswe/ODrive/tree/devel/Firmware)
- - The [test server](https://github.com/samuelsadok/fibre/blob/devel/test/test_server.cpp)
+ - The [test node](https://github.com/samuelsadok/fibre/blob/devel/test/test_node.cpp)
 
 ## Configuring `libfibre`
 

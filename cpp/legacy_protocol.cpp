@@ -458,7 +458,10 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
 
         cbufptr_t input_buffer{rx_buf.begin(), rx_buf.end() - 2};
         bufptr_t output_buffer{tx_buf_ + 2, expected_response_length};
-        server_.endpoint_handler(domain_, endpoint_id, &input_buffer, &output_buffer);
+        F_LOG_IF_ERR(domain_->ctx->logger,
+                     server_.endpoint_handler(domain_, endpoint_id, &input_buffer, &output_buffer),
+                     "endpoint handler failed");
+        
 
         // Send response
         if (expect_response) {

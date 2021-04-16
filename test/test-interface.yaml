@@ -33,5 +33,6 @@ interfaces:
       func21: {in: {in1: uint32, in2: uint32}, out: {out1: uint32}}
       func22: {in: {in1: uint32, in2: uint32}, out: {out1: uint32, out2: uint32}}
 
+# TODO: these should be given as command line option to the interface generator
 exports:
   test_object: TestIntf1

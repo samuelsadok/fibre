@@ -283,7 +283,7 @@ LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, LibFibreLogger logger) 
     LibFibreCtx* ctx = new LibFibreCtx();
     ctx->event_loop = new ExternalEventLoop(event_loop);
 
-    Logger fibre_logger = logger.log ? Logger{logger.log, (LogLevel)logger.verbosity} : Logger::none();
+    Logger fibre_logger = logger.log ? Logger{{logger.log, logger.ctx}, (LogLevel)logger.verbosity} : Logger::none();
 
     if (F_LOG_IF_ERR(fibre_logger, fibre::open(ctx->event_loop, fibre_logger, &ctx->fibre_ctx), "failed to open fibre")) {
         delete ctx->event_loop;
@@ -338,7 +338,7 @@ void libfibre_close_domain(LibFibreDomain* domain) {
     from_c(domain)->ctx->close_domain(from_c(domain));
 }
 
-void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel, LibFibreTxStream** rx_channel, size_t mtu) {
+void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel, LibFibreTxStream** rx_channel, size_t mtu, bool packetized) {
     fibre::AsyncStreamLink* tx_link = new fibre::AsyncStreamLink(); // libfibre => backend
     fibre::AsyncStreamLink* rx_link = new fibre::AsyncStreamLink(); // backend => libfibre
     LibFibreRxStream* tx = new LibFibreRxStream(); // libfibre => backend
@@ -369,7 +369,7 @@ void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel
         *rx_channel = rx;
     }
 
-    fibre::ChannelDiscoveryResult result = {fibre::kFibreOk, rx_link, tx_link, mtu};
+    fibre::ChannelDiscoveryResult result = {fibre::kFibreOk, rx_link, tx_link, mtu, packetized};
     from_c(domain)->add_channels(result);
 }
 

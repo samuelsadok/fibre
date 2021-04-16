@@ -170,7 +170,6 @@ public:
     void start(Callback<void, LegacyProtocolPacketBased*, StreamStatus> on_stopped) { inner_protocol_.start(on_stopped); }
 #endif
 
-private:
     PacketUnwrapper unwrapper_;
     PacketWrapper wrapper_;
     LegacyProtocolPacketBased inner_protocol_;

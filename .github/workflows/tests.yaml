@@ -33,7 +33,7 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: test-server-${{ matrix.target }}
-          path: test/build/test_server.elf
+          path: test/build/test_node.elf
 
   test-pyfibre:
     needs: [compile]
@@ -70,12 +70,12 @@ jobs:
 
           python3 --version
 
-          chmod +x ./artifacts/test-server-$ARCH/test_server.elf
-          ls ./artifacts/test-server-$ARCH/test_server.elf
+          chmod +x ./artifacts/test-server-$ARCH/test_node.elf
+          ls ./artifacts/test-server-$ARCH/test_node.elf
           cp ./artifacts/libfibre-$ARCH/* ./python/fibre/
 
           # Launch test server in background
-          FIBRE_LOG=5 ./artifacts/test-server-$ARCH/test_server.elf >test_server.log 2>&1 &
+          FIBRE_LOG=5 ./artifacts/test-server-$ARCH/test_node.elf --server --domain tcp-server:address=localhost,port=14220 >test_server.log 2>&1 &
 
           # TODO: try launching client/server in reverse order
           sleep 1
@@ -91,7 +91,7 @@ jobs:
             CLIENT_STATUS="fail"
           fi
 
-          # Tell test_server.elf politely to finish (if it's still running)
+          # Tell test_node.elf politely to finish (if it's still running)
 
           echo "terminiating test server"
 
@@ -132,7 +132,9 @@ jobs:
       - name: Check C++ Formatting
         run: |
           clang-format --version
-          # TODO: we run this only on one file for now until we have it properly configured
-          clang-format -style=file --Werror --dry-run test/test_server.cpp
+          # TODO: we run this only on a few selected files for now until we have it properly configured
+          clang-format -style=file --Werror --dry-run test/test_node.cpp
+          clang-format -style=file --Werror --dry-run test/test_node.hpp
+          clang-format -style=file --Werror --dry-run sim/sim_main.cpp
 
   #    TODO: check if interface_generator outputs the same thing with Python 3.5 and Python 3.8

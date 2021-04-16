@@ -13,6 +13,10 @@
 #include <string>
 #endif
 
+#if FIBRE_ENABLE_TEXT_LOGGING
+#include <chrono>
+#endif
+
 #if FIBRE_ENABLE_EVENT_LOOP
 #  ifdef __linux__
 #    include "platform_support/epoll_event_loop.hpp"
@@ -167,7 +171,7 @@ static std::string get_local_time() {
         std::to_string((now.time_since_epoch() - seconds_since_epoch).count());
 }
 
-void fibre::log_to_stderr(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text) {
+void fibre::log_to_stderr(void* ctx, const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text) {
     switch ((LogLevel)level) {
     case LogLevel::kDebug:
         //std::cerr << "\x1b[93;1m"; // yellow
@@ -181,7 +185,7 @@ void fibre::log_to_stderr(const char* file, unsigned line, int level, uintptr_t 
     std::cerr << get_local_time() << " [" << file << ":" << line << "] " << text << "\x1b[0m" << std::endl;
 }
 #else
-void fibre::log_to_stderr(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text) {
+void fibre::log_to_stderr(void* ctx, const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text) {
     // ignore
 }
 #endif
@@ -282,13 +286,23 @@ void Domain::add_channels(ChannelDiscoveryResult result) {
     }
 
 #if FIBRE_ENABLE_CLIENT || FIBRE_ENABLE_SERVER
-    // Deleted during on_stopped()
-    auto protocol = new fibre::LegacyProtocolPacketBased(this, result.rx_channel, result.tx_channel, result.mtu);
+    if (result.packetized) {
+        // Deleted during on_stopped_p()
+        auto protocol = new fibre::LegacyProtocolPacketBased(this, result.rx_channel, result.tx_channel, result.mtu);
 #if FIBRE_ENABLE_CLIENT
-    protocol->start(MEMBER_CB(this, on_found_root_object), MEMBER_CB(this, on_lost_root_object), MEMBER_CB(this, on_stopped));
+        protocol->start(MEMBER_CB(this, on_found_root_object), MEMBER_CB(this, on_lost_root_object), MEMBER_CB(this, on_stopped_p));
 #else
-    protocol->start(MEMBER_CB(this, on_stopped));
+        protocol->start(MEMBER_CB(this, on_stopped_p));
 #endif
+    } else {
+        // Deleted during on_stopped_s()
+        auto protocol = new fibre::LegacyProtocolStreamBased(this, result.rx_channel, result.tx_channel);
+#if FIBRE_ENABLE_CLIENT
+        protocol->start(MEMBER_CB(this, on_found_root_object), MEMBER_CB(this, on_lost_root_object), MEMBER_CB(this, on_stopped_s));
+#else
+        protocol->start(MEMBER_CB(this, on_stopped_s));
+#endif  
+    }
 #endif
 }
 
@@ -308,8 +322,13 @@ void Domain::on_lost_root_object(LegacyObjectClient* obj_client, std::shared_ptr
 }
 #endif
 
-void Domain::on_stopped(LegacyProtocolPacketBased* protocol, StreamStatus status) {
+void Domain::on_stopped_p(LegacyProtocolPacketBased* protocol, StreamStatus status) {
     delete protocol;
+}
+
+void Domain::on_stopped_s(LegacyProtocolPacketBased* protocol, StreamStatus status) {
+    size_t offset = (size_t)&((LegacyProtocolStreamBased*)nullptr)->inner_protocol_;
+    delete (LegacyProtocolStreamBased*)((uintptr_t)protocol - offset);
 }
 
 #if FIBRE_ENABLE_SERVER

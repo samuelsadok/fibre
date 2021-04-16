@@ -513,7 +513,7 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDi
                     ep_out = nullptr;
                 }
 
-                subscription->domain->add_channels({kFibreOk, ep_in, ep_out, mtu});
+                subscription->domain->add_channels({kFibreOk, ep_in, ep_out, mtu, true});
             }
         }
 

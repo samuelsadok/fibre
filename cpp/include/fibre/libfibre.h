@@ -176,7 +176,8 @@ struct LibFibreLogger {
     int verbosity;
 
     // TODO: document (see fibre.hpp for now)
-    void(*log)(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
+    void(*log)(void* ctx, const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
+    void* ctx;
 };
 
 /**
@@ -361,7 +362,7 @@ FIBRE_PUBLIC void libfibre_close_domain(LibFibreDomain* domain);
  * 
  * The channels can be closed with libfibre_close_tx() and libfibre_close_rx().
  */
-FIBRE_PUBLIC void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel, LibFibreTxStream** rx_channel, size_t mtu);
+FIBRE_PUBLIC void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel, LibFibreTxStream** rx_channel, size_t mtu, bool packetized);
 
 /**
  * @brief Starts looking for Fibre objects that match the specifications.

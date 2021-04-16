@@ -381,7 +381,7 @@ class LibFibre {
         // Function signature codes are documented here:
         // https://github.com/aheejin/emscripten/blob/master/site/source/docs/porting/connecting_cpp_and_javascript/Interacting-with-code.rst#calling-javascript-functions-as-function-pointers-from-c
 
-        this._log = wasm.addFunction((file, line, level, info0, info1, text) => {
+        this._log = wasm.addFunction((ctx, file, line, level, info0, info1, text) => {
             file = this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, file);
             text = this.wasm.UTF8ArrayToString(this.wasm.Module.HEAPU8, text);
             if (level <= 2) {
@@ -489,6 +489,7 @@ class LibFibre {
                 const logger_array = (new Uint32Array(wasm.Module.HEAPU8.buffer, logger, 2));
                 logger_array[0] = log_verbosity;
                 logger_array[1] = this._log;
+                logger_array[2] = 0;
 
                 this._handle = this.wasm.Module._libfibre_open(event_loop, logger);
 
@@ -516,7 +517,7 @@ class LibFibre {
     addChannels(domainHandle, mtu) {
         console.log("add channel with mtu " + mtu);
         const [txChannelId, rxChannelId] = this._withOutputArg((txChannelIdPtr, rxChannelIdPtr) =>
-            this.wasm.Module._libfibre_add_channels(domainHandle, txChannelIdPtr, rxChannelIdPtr, mtu)
+            this.wasm.Module._libfibre_add_channels(domainHandle, txChannelIdPtr, rxChannelIdPtr, mtu, true)
         );
         return [
             new RxStream(this, txChannelId), // libfibre => backend

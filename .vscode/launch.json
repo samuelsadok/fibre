@@ -54,9 +54,32 @@
             "name": "C++ Test Server",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/test/build/test_server.elf",
+            "program": "${workspaceFolder}/test/build/test_node.elf",
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/test",
+            "environment": [{"name": "FIBRE_LOG", "value": "5"}],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "args": ["--server", "--domain", "tcp-server:address=localhost,port=14220"],
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "symbolLoadInfo": {
+                "loadAll": true,
+                "exceptionList": ""
+            }
+        },
+        {
+            "name": "Simulation",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/sim/build/fibre_sim",
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/sim",
             "environment": [{"name": "FIBRE_LOG", "value": "5"}],
             "externalConsole": false,
             "MIMode": "gdb",

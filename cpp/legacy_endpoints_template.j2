@@ -20,11 +20,14 @@ namespace fibre {
 const unsigned char embedded_json[] = [[endpoint_descr | to_c_string]];
 const size_t embedded_json_length = sizeof(embedded_json) - 1;
 
-static EndpointDefinition endpoint_table[] = {
+EndpointDefinition endpoint_table[] = {
 [%- for ep in endpoint_table %]
     [[ep]],
 [%- endfor %]
 };
 
+const uint16_t json_crc_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(PROTOCOL_VERSION, embedded_json, embedded_json_length);
+const uint32_t json_version_id_ = (json_crc_ << 16) | calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(json_crc_, embedded_json, embedded_json_length);
+const size_t n_endpoints = sizeof(endpoint_table) / sizeof(endpoint_table[0]);
 
 }

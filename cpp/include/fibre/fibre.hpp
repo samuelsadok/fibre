@@ -171,7 +171,8 @@ private:
     void on_found_root_object(LegacyObjectClient* obj_client, std::shared_ptr<LegacyObject> obj);
     void on_lost_root_object(LegacyObjectClient* obj_client, std::shared_ptr<LegacyObject> obj);
 #endif
-    void on_stopped(LegacyProtocolPacketBased* protocol, StreamStatus status);
+    void on_stopped_p(LegacyProtocolPacketBased* protocol, StreamStatus status);
+    void on_stopped_s(LegacyProtocolPacketBased* protocol, StreamStatus status);
 
 #if FIBRE_ALLOW_HEAP
     std::unordered_map<std::string, fibre::ChannelDiscoveryContext*> channel_discovery_handles;
@@ -205,7 +206,7 @@ void close(Context*);
  * If Fibre is compiled with FIBRE_ENABLE_TEXT_LOGGING=1 this function logs the
  * event to stderr. Otherwise it does nothing.
  */
-void log_to_stderr(const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
+void log_to_stderr(void* ctx, const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
 
 LogLevel get_log_verbosity();
 
