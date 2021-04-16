@@ -4,6 +4,8 @@ __pycache__
 # Test build files
 /test/autogen
 /test/build
+/sim/autogen
+/sim/build
 
 # Tup database
 /.tup
