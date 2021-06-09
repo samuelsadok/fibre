@@ -1,0 +1,44 @@
+
+name: Update Satellite Repos
+
+on:
+  push:
+    branches: [master, devel]
+
+jobs:
+  push:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: fibre-cpp, dir: cpp}
+          - {name: fibre-js, dir: js}
+          - {name: fibre-tools, dir: tools}
+          - {name: pyfibre, dir: python}
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Push to ${{ matrix.name }}
+        run: |
+          # Unset GITHUB_TOKEN so we can push to another repo (see https://stackoverflow.com/questions/64270867/auth-error-trying-to-copy-a-repo-with-github-actions)
+          git config -l | grep 'http\..*\.extraheader' | cut -d= -f1 | xargs -L1 git config --unset-all
+
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git config credential.helper store
+          echo "https://samuelsadok:${{ secrets.REPO_ACCESS_TOKEN }}@github.com" > ~/.git-credentials
+          wc -c ~/.git-credentials
+
+          URL="https://github.com/samuelsadok/${{ matrix.name }}.git"
+          git remote add ${{ matrix.name }}-origin "$URL"
+
+          echo "Fetching from ${{ matrix.name }}-origin..."
+          git fetch ${{ matrix.name }}-origin
+
+          BRANCH="${GITHUB_REF##*/}"
+          echo "Pushing to ${{ matrix.name }}-origin/$BRANCH..."
+          git subtree push --prefix ${{ matrix.dir }} ${{ matrix.name }}-origin "$BRANCH"
