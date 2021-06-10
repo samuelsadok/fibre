@@ -3,11 +3,14 @@
 
 #include <fibre/async_stream.hpp>
 
-#ifdef FIBRE_ENABLE_CLIENT
+#if FIBRE_ENABLE_CLIENT
 #include "legacy_object_client.hpp"
 #include <unordered_map>
 #include <optional>
 #include <queue>
+#endif
+#if FIBRE_ENABLE_SERVER
+#include "legacy_object_server.hpp"
 #endif
 #if FIBRE_ENABLE_SERVER
 #include "legacy_object_server.hpp"
