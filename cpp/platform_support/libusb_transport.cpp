@@ -243,8 +243,7 @@ void LibusbDiscoverer::start_channel_discovery(Domain* domain, const char* specs
 /**
  * @brief Stops an object discovery process that was started with start_channel_discovery().
  * 
- * Channels which were already discovered will remain open. However if the discovery is restarted
- * it is possible that the same channels are returned again (their pointers need not match the old instance).
+ * Channels which were already discovered will be closed as well.
  * 
  * The discovery must be considered still in progress until the callback is
  * invoked with kFibreCancelled.
@@ -253,6 +252,17 @@ RichStatus LibusbDiscoverer::stop_channel_discovery(ChannelDiscoveryContext* han
     auto it = std::find(subscriptions_.begin(), subscriptions_.end(), handle);
 
     F_RET_IF(it == subscriptions_.end(), "Not an active subscription");
+
+    // TODO: this is a hack which only works if one USB discoverer is active at
+    // a time. This is the case if only one domain is open at any time.
+    // The proper fix would be to close channels selectively or rethink how
+    // multiple domains can exist side by side (and if they should).
+    for (auto& dev: known_devices_) {
+        if (dev.second.handle) {
+            libusb_close(dev.second.handle);
+            dev.second.handle = nullptr;
+        }
+    }
 
     subscriptions_.erase(it);
     delete handle;

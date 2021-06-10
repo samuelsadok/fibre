@@ -12,9 +12,6 @@
 #if FIBRE_ENABLE_SERVER
 #include "legacy_object_server.hpp"
 #endif
-#if FIBRE_ENABLE_SERVER
-#include "legacy_object_server.hpp"
-#endif
 
 namespace fibre {
 
