@@ -1,11 +1,15 @@
 #ifndef __FIBRE_USB_DISCOVERER_HPP
 #define __FIBRE_USB_DISCOVERER_HPP
 
+#include <fibre/config.hpp>
+
+#if FIBRE_ENABLE_LIBUSB_BACKEND
+
 #include <fibre/event_loop.hpp>
 #include <fibre/async_stream.hpp>
 #include <fibre/channel_discoverer.hpp>
 #include <fibre/logging.hpp>
-
+#include <fibre/rich_status.hpp>
 #include <libusb.h>
 #include <thread>
 #include <vector>
@@ -18,7 +22,7 @@ class LibusbBulkOutEndpoint;
 
 template<typename TRes> class LibusbBulkEndpoint;
 
-class LibusbDiscoverer : public ChannelDiscoverer {
+class LibusbDiscoverer : public Backend {
 public:
 
     struct InterfaceSpecs {
@@ -36,21 +40,21 @@ public:
         Domain* domain;
     };
 
-    constexpr static const char* get_name() { return "usb"; }
-    RichStatus init(EventLoop* event_loop, Logger logger);
-    RichStatus deinit() { return deinit(INT_MAX); }
+    RichStatus init(EventLoop* event_loop, Logger logger) final;
+    RichStatus deinit() final { return deinit(INT_MAX); }
     void start_channel_discovery(Domain* domain, const char* specs, size_t specs_len, ChannelDiscoveryContext** handle) final;
     RichStatus stop_channel_discovery(ChannelDiscoveryContext* handle) final;
 
 private:
     friend class LibusbBulkEndpoint<ReadResult>;
-    friend class LibusbBulkEndpoint<WriteResult>;
+    friend class LibusbBulkEndpoint<WriteResult0>;
 
     struct Device {
         struct libusb_device* dev;
         struct libusb_device_handle* handle;
         std::vector<LibusbBulkInEndpoint*> ep_in;
         std::vector<LibusbBulkOutEndpoint*> ep_out;
+        std::string name;
     };
 
     RichStatus deinit(int stage);
@@ -70,8 +74,8 @@ private:
     libusb_hotplug_callback_handle hotplug_callback_handle_ = 0;
     bool run_internal_event_loop_ = false;
     std::thread* internal_event_loop_thread_;
-    EventLoopTimer* device_polling_timer_;
-    EventLoopTimer* event_loop_timer_ = nullptr;
+    Timer* device_polling_timer_ = nullptr;
+    Timer* event_loop_timer_ = nullptr;
     std::unordered_map<uint16_t, Device> known_devices_; // key: bus_number << 8 | dev_number
     std::vector<MyChannelDiscoveryContext*> subscriptions_;
 };
@@ -108,9 +112,9 @@ public:
     }
 };
 
-class LibusbBulkOutEndpoint final : public LibusbBulkEndpoint<WriteResult>, public AsyncStreamSink {
+class LibusbBulkOutEndpoint final : public LibusbBulkEndpoint<WriteResult0>, public AsyncStreamSink {
 public:
-    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) final {
+    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) final {
         start_transfer({
             (unsigned char*)buffer.begin(),
             buffer.size()
@@ -123,5 +127,7 @@ public:
 };
 
 }
+
+#endif
 
 #endif // __FIBRE_USB_DISCOVERER_HPP

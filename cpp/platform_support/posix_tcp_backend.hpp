@@ -16,10 +16,10 @@ namespace fibre {
  * The client uses the posix function `connect` to do so, while the server uses
  * the posix functions `listen` and `accept`.
  */
-class PosixTcpBackend : public ChannelDiscoverer {
+class PosixTcpBackend : public Backend {
 public:
-    RichStatus init(EventLoop* event_loop, Logger logger);
-    RichStatus deinit();
+    RichStatus init(EventLoop* event_loop, Logger logger) final;
+    RichStatus deinit() final;
 
     void start_channel_discovery(Domain* domain, const char* specs, size_t specs_len, ChannelDiscoveryContext** handle) final;
     RichStatus stop_channel_discovery(ChannelDiscoveryContext* handle) final;
@@ -27,7 +27,9 @@ public:
 private:
     struct TcpChannelDiscoveryContext {
         PosixTcpBackend* parent;
-        std::tuple<std::string, int> address;
+        Timer* timer;
+        std::pair<std::string, int> address;
+        std::string display_name;
         Domain* domain;
         AddressResolutionContext* addr_resolution_ctx;
         ConnectionContext* connection_ctx;
@@ -55,8 +57,6 @@ private:
 
 class PosixTcpClientBackend : public PosixTcpBackend {
 public:
-    constexpr static const char* get_name() { return "tcp-client"; }
-
     RichStatus start_opening_connections(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected) final {
         return start_connecting(event_loop, logger, addr, type, protocol, ctx, on_connected);
     }
@@ -67,8 +67,6 @@ public:
 
 class PosixTcpServerBackend : public PosixTcpBackend {
 public:
-    constexpr static const char* get_name() { return "tcp-server"; }
-
     RichStatus start_opening_connections(EventLoop* event_loop, Logger logger, cbufptr_t addr, int type, int protocol, ConnectionContext** ctx, Callback<void, RichStatus, socket_id_t> on_connected) final {
         return start_listening(event_loop, logger, addr, type, protocol, ctx, on_connected);
     }

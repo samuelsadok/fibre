@@ -50,7 +50,7 @@ struct ConnectionContext;
  *           called.
  */
 RichStatus start_resolving_address(EventLoop* event_loop, Logger logger,
-    std::tuple<std::string, int> address, bool passive,
+    std::pair<std::string, int> address, bool passive,
     AddressResolutionContext** handle,
     Callback<void, std::optional<cbufptr_t>> callback);
 
@@ -134,7 +134,7 @@ public:
     void start_read(bufptr_t buffer, TransferHandle* handle, Callback<void, ReadResult> completer) final;
     void cancel_read(TransferHandle transfer_handle) final;
 
-    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) final;
+    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) final;
     void cancel_write(TransferHandle transfer_handle) final;
 
     /**
@@ -150,7 +150,7 @@ public:
 
 private:
     std::optional<ReadResult> read_sync(bufptr_t buffer);
-    std::optional<WriteResult> write_sync(cbufptr_t buffer);
+    std::optional<WriteResult0> write_sync(cbufptr_t buffer);
     void update_subscription();
     void on_event(uint32_t mask);
 
@@ -162,7 +162,7 @@ private:
     bufptr_t rx_buf_{}; // valid while there is an RX request pending
     cbufptr_t tx_buf_{}; // valid while there is a TX request pending
     Callback<void, ReadResult> rx_callback_; // valid while there is an RX request pending
-    Callback<void, WriteResult> tx_callback_; // valid while there is a TX request pending
+    Callback<void, WriteResult0> tx_callback_; // valid while there is a TX request pending
 };
 
 }

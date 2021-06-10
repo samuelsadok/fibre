@@ -15,7 +15,7 @@ using namespace fibre;
 
 /* PacketWrapper -------------------------------------------------------------*/
 
-void PacketWrapper::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) {
+void PacketWrapper::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) {
     if (handle) {
         *handle = reinterpret_cast<TransferHandle>(this);
     }
@@ -51,7 +51,7 @@ void PacketWrapper::cancel_write(TransferHandle transfer_handle) {
     tx_channel_->cancel_write(inner_transfer_handle_);
 }
 
-void PacketWrapper::complete(WriteResult result) {
+void PacketWrapper::complete(WriteResult0 result) {
     if (state_ == kStateCancelling) {
         state_ = kStateIdle;
         completer_.invoke_and_clear({kStreamCancelled, payload_buf_.begin()});
@@ -179,6 +179,123 @@ void PacketUnwrapper::complete(ReadResult result) {
 
 #if FIBRE_ENABLE_CLIENT
 
+Socket* LegacyProtocolPacketBased::start_call(uint16_t ep_num, uint16_t json_crc, std::vector<uint16_t> in_arg_ep_nums, std::vector<uint16_t> out_arg_ep_nums, Socket* caller) {
+    Call* call = new Call{}; // deleted in write() or on_write_done()
+    call->parent_ = this;
+    call->ep_num_ = ep_num;
+    call->json_crc_ = json_crc;
+    call->caller_ = caller;
+    call->in_arg_ep_nums_ = in_arg_ep_nums;
+    call->out_arg_ep_nums_ = out_arg_ep_nums;
+    return call;
+}
+
+WriteResult LegacyProtocolPacketBased::Call::write(WriteArgs args) {
+    while (args.buf.n_chunks()) {
+        Chunk chunk = args.buf.front();
+        args.buf = args.buf.skip_chunks(1);
+
+        if (chunk.is_buf() && chunk.layer() == 0) {
+            for (auto b : chunk.buf()) {
+                last_arg_.push_back(b);
+            }
+        } else if (chunk.is_frame_boundary() && chunk.layer() == 0) {
+            in_args_.push_back(last_arg_);
+            last_arg_ = {};
+        } else {
+            error_ = true;
+        }
+    }
+
+    // Dispatch legacy-style endpoint operations for each argument
+    if (args.status == kFibreClosed && !error_) {
+        if (in_args_.size() != in_arg_ep_nums_.size()) {
+            error_ = true;
+        }
+
+        for (size_t i = 0; i < in_arg_ep_nums_.size(); ++i) {
+            if (in_arg_ep_nums_[i] != ep_num_) {
+                ops_.push_back(parent_->start_endpoint_operation(in_arg_ep_nums_[i], json_crc_, in_args_[i], {}, MEMBER_CB(this, on_ep_operation_done)));
+            }
+        }
+
+        std::vector<uint8_t> buf;
+        buf.resize(512);
+        out_args_ = std::vector<std::vector<uint8_t>>{out_arg_ep_nums_.size(), buf};
+
+        ops_.push_back(parent_->start_endpoint_operation(ep_num_, json_crc_,
+            in_arg_ep_nums_.size() == 1 && in_arg_ep_nums_[0] == ep_num_ ? cbufptr_t{in_args_[0]} : cbufptr_t{},
+            out_arg_ep_nums_.size() == 1 && out_arg_ep_nums_[0] == ep_num_ ? bufptr_t{out_args_[0]} : bufptr_t{},
+            MEMBER_CB(this, on_ep_operation_done)));
+
+        for (size_t i = 0; i < out_arg_ep_nums_.size(); ++i) {
+            if (out_arg_ep_nums_[i] != ep_num_) {
+                ops_.push_back(parent_->start_endpoint_operation(out_arg_ep_nums_[i], json_crc_, {}, out_args_[i], MEMBER_CB(this, on_ep_operation_done)));
+            }
+        }
+    }
+
+    return {args.status, args.buf.begin()};
+}
+
+void LegacyProtocolPacketBased::Call::on_ep_operation_done(EndpointOperationResult result) {
+    if (!ops_.size() || ops_.front() != result.op) {
+        error_ = true;
+        return;
+    }
+    
+    if (ops_.size() <= out_arg_ep_nums_.size()) {
+        // special handling for endpoint 0
+        bool restart = ep_num_ == 0 && (result.rx_end != &*out_args_[n_out_args].end() - 512) && in_args_.size() == 1 && in_args_[0].size() == 4;
+
+        out_args_[n_out_args].erase(out_args_[n_out_args].begin() + (result.rx_end - out_args_[n_out_args].data()), out_args_[n_out_args].end());
+
+        if (restart) {
+            write_le<uint32_t>(out_args_[n_out_args].size(), in_args_[0].data());
+            out_args_[n_out_args].resize(out_args_[n_out_args].size() + 512);
+            ops_[0] = parent_->start_endpoint_operation(in_arg_ep_nums_[0], json_crc_, in_args_[0], bufptr_t{out_args_[0]}.skip(out_args_[0].size() - 512), MEMBER_CB(this, on_ep_operation_done));
+            return;
+        }
+
+        n_out_args++;
+    }
+
+    ops_.erase(ops_.begin());
+
+    if (!ops_.size()) {
+        for (size_t i = 0; i < out_args_.size(); ++i) {
+            chunks_.push_back(Chunk(0, out_args_[i]));
+            chunks_.push_back(Chunk::frame_boundary(0));
+        }
+        chunk_pos = BufChain{&*chunks_.begin(), &*chunks_.end()}.begin();
+
+        // Pass output args to caller
+        for (;;) {
+            WriteResult result = caller_->write({{chunk_pos, &*chunks_.end()}, kFibreClosed});
+            if (result.is_busy()) {
+                break;
+            }
+            chunk_pos = result.end;
+            if (chunk_pos == CBufIt{&*chunks_.end()} && result.status != kFibreOk) {
+                delete this; // close call
+                return;
+            }
+        }
+    }
+}
+
+WriteArgs LegacyProtocolPacketBased::Call::on_write_done(WriteResult result) {
+    chunk_pos = result.end;
+    BufChain next = {chunk_pos, &*chunks_.end()};
+    if (result.status != kFibreOk) {
+        delete this; // close call
+        return {{}, result.status};
+    } else {
+        return {next, kFibreClosed};
+    }
+}
+
+
 /**
  * @brief Starts a remote endpoint operation.
  * 
@@ -197,7 +314,7 @@ void PacketUnwrapper::complete(ReadResult result) {
  *        this function then the handle is not set later than invoking the
  *        completer.
  */
-void LegacyProtocolPacketBased::start_endpoint_operation(uint16_t endpoint_id, cbufptr_t tx_buf, bufptr_t rx_buf, EndpointOperationHandle* handle, Callback<void, EndpointOperationResult> callback) {
+EndpointOperationHandle LegacyProtocolPacketBased::start_endpoint_operation(uint16_t endpoint_id, uint16_t json_crc, cbufptr_t tx_buf, bufptr_t rx_buf, Callback<void, EndpointOperationResult> callback) {
     outbound_seq_no_ = ((outbound_seq_no_ + 1) & 0x7fff);
 
     EndpointOperation op = {
@@ -208,19 +325,16 @@ void LegacyProtocolPacketBased::start_endpoint_operation(uint16_t endpoint_id, c
         .callback = callback
     };
 
-    if (handle) {
-        *handle = op.seqno | 0xffff0000;
-    }
-
     if (tx_handle_) {
         F_LOG_D(domain_->ctx->logger, "Endpoint operation already in progress. Enqueuing this one.");
 
         // A TX operation is already in progress. Enqueue this one.
         pending_operations_.push_back(op);
-        return;
+    } else {
+        start_endpoint_operation(op);
     }
 
-    start_endpoint_operation(op);
+    return op.seqno | 0xffff0000;
 }
 
 void LegacyProtocolPacketBased::start_endpoint_operation(EndpointOperation op) {
@@ -243,7 +357,7 @@ void LegacyProtocolPacketBased::start_endpoint_operation(EndpointOperation op) {
     tx_channel_->start_write(cbufptr_t{tx_buf_}.take(8 + n_payload), &tx_handle_, MEMBER_CB(this, on_write_finished));
 }
 
-
+/*
 void LegacyProtocolPacketBased::cancel_endpoint_operation(EndpointOperationHandle handle) {
     if (!handle) {
         return;
@@ -284,11 +398,11 @@ void LegacyProtocolPacketBased::cancel_endpoint_operation(EndpointOperationHandl
         // been sent. In both cases we can just complete immediately.
         callback.invoke_and_clear({kStreamCancelled, tx_end, rx_end});
     }
-}
+}*/
 
 #endif
 
-void LegacyProtocolPacketBased::on_write_finished(WriteResult result) {
+void LegacyProtocolPacketBased::on_write_finished(WriteResult0 result) {
     tx_handle_ = 0;
 
     if (rx_status_ != kStreamOk) {
@@ -299,6 +413,7 @@ void LegacyProtocolPacketBased::on_write_finished(WriteResult result) {
 #if FIBRE_ENABLE_CLIENT
     if (transmitting_op_) {
         uint16_t seqno = transmitting_op_ & 0xffff;
+        EndpointOperationHandle handle = transmitting_op_;
         transmitting_op_ = 0;
 
         auto it = expected_acks_.find(seqno);
@@ -311,13 +426,13 @@ void LegacyProtocolPacketBased::on_write_finished(WriteResult result) {
             // It's possible that the RX operation completes before the TX operation
             auto op = it->second;
             expected_acks_.erase(it);
-            op.callback.invoke_and_clear({kStreamOk, op.tx_buf.begin(), op.rx_buf.begin()});
+            op.callback.invoke_and_clear({handle, kStreamOk, op.tx_buf.begin(), op.rx_buf.begin()});
         } else if (result.status != kStreamOk) {
             // If the TX task was a remote endpoint operation but didn't succeed
             // we terminate that operation
             auto op = it->second;
             expected_acks_.erase(it);
-            op.callback.invoke_and_clear({result.status, result.end, op.rx_buf.begin()});
+            op.callback.invoke_and_clear({handle, result.status, result.end, op.rx_buf.begin()});
         }
 
         if (transmitting_op_) {
@@ -380,6 +495,8 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
     cbufptr_t rx_buf = cbufptr_t{rx_buf_, result.end};
     //F_LOG_D(domain_->ctx->logger, "got packet of length " << (result.end - rx_buf_) /*<< ": " << as_hex(rx_buf)*/);
 
+    // TODO: think about some kind of ordering guarantees
+    // currently the seq_no is just used to associate a response with a request
     std::optional<uint16_t> seq_no = read_le<uint16_t>(&rx_buf);
 
     if (!seq_no.has_value()) {
@@ -404,7 +521,7 @@ void LegacyProtocolPacketBased::on_read_finished(ReadResult result) {
             if (it->second.tx_done) {
                 auto op = it->second;
                 expected_acks_.erase(it);
-                op.callback.invoke_and_clear({kStreamOk, op.tx_buf.begin(), op.rx_buf.begin()});
+                op.callback.invoke_and_clear({op.handle(), kStreamOk, op.tx_buf.begin(), op.rx_buf.begin()});
             }
         }
 
@@ -500,40 +617,36 @@ void LegacyProtocolPacketBased::on_rx_tx_closed(StreamStatus status) {
 #if FIBRE_ENABLE_CLIENT
     // Cancel pending endpoint operation
     for (auto& op: pending_operations_) {
-        op.callback.invoke_and_clear({status, op.tx_buf.begin(), op.rx_buf.begin()});
+        op.callback.invoke_and_clear({op.handle(), status, op.tx_buf.begin(), op.rx_buf.begin()});
     }
     pending_operations_.clear();
 
     // Cancel all ongoing endpoint operations
     for (auto& item: expected_acks_) {
         if (item.second.callback) {
-            item.second.callback.invoke_and_clear({status, item.second.tx_buf.begin(), item.second.rx_buf.begin()});
+            item.second.callback.invoke_and_clear({item.second.handle(), status, item.second.tx_buf.begin(), item.second.rx_buf.begin()});
         }
     }
     expected_acks_.clear();
 
     // Report that the root object was lost
-    if (client_.on_lost_root_object_ && client_.root_obj_) {
+    if (client_.root_obj_) {
         auto root_obj = client_.root_obj_;
         client_.root_obj_ = nullptr;
-        client_.on_lost_root_object_.invoke(&client_, root_obj);
+        domain_->on_lost_root_object(reinterpret_cast<Object*>(root_obj.get()));
     }
 #endif
     on_stopped_.invoke_and_clear(this, status);
 }
 
-#if FIBRE_ENABLE_CLIENT
-void LegacyProtocolPacketBased::start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_lost_root_object, Callback<void, LegacyProtocolPacketBased*, StreamStatus> on_stopped) {
-#else
 void LegacyProtocolPacketBased::start(Callback<void, LegacyProtocolPacketBased*, StreamStatus> on_stopped) {
-#endif
     on_stopped_ = on_stopped;
     TransferHandle dummy;
     rx_channel_->start_read(rx_buf_, &dummy, MEMBER_CB(this, on_read_finished));
 
 #if FIBRE_ENABLE_CLIENT
     if (on_stopped_) {
-        client_.start(on_found_root_object, on_lost_root_object);
+        client_.start(nullptr, domain_, MEMBER_CB(this, start_call), std::string{intf_name_} + " (legacy protocol)");
     }
 #endif
 }

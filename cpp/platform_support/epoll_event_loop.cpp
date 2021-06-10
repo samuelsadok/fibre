@@ -1,9 +1,14 @@
 
-#include "epoll_event_loop.hpp"
+#include <fibre/config.hpp>
 
+#if FIBRE_ENABLE_EVENT_LOOP
+
+#include "epoll_event_loop.hpp"
+#include <fibre/rich_status.hpp>
 #include <sys/epoll.h>
 #include <sys/types.h>
 #include <sys/eventfd.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 #include <string.h>
 
@@ -41,9 +46,9 @@ RichStatus EpollEventLoop::start(Logger logger, Callback<void> on_started) {
         iterations_++;
 
         do {
-            F_LOG_D(logger, "epoll_wait...");
+            F_LOG_T(logger, "epoll_wait...");
             n_triggered_events_ = epoll_wait(epoll_fd_, triggered_events_, max_triggered_events_, -1);
-            F_LOG_D(logger, "epoll_wait unblocked by " << n_triggered_events_ << " events");
+            F_LOG_T(logger, "epoll_wait unblocked by " << n_triggered_events_ << " events");
             if (errno == EINTR) {
                 F_LOG_D(logger, "interrupted");
             }
@@ -119,9 +124,24 @@ RichStatus EpollEventLoop::register_event(int event_fd, uint32_t events, Callbac
         return F_MAKE_ERR("epoll_ctl(" << event_fd << "...) failed: " << sys_err());
     }
 
-    F_LOG_D(logger_, "registered epoll event " << event_fd);
+    F_LOG_T(logger_, "registered epoll event " << event_fd);
 
     return RichStatus::success();
+}
+
+std::unordered_map<int, EpollEventLoop::EventContext*>::iterator EpollEventLoop::drop_events(int event_fd) {
+    auto it = context_map_.find(event_fd);
+    if (it == context_map_.end()) {
+        return it;
+    }
+
+    for (int i = 0; i < n_triggered_events_; ++i) {
+        if ((EventContext*)(triggered_events_[i].data.ptr) == it->second) {
+            triggered_events_[i].data.ptr = nullptr;
+        }
+    }
+
+    return it;
 }
 
 RichStatus EpollEventLoop::deregister_event(int event_fd) {
@@ -133,31 +153,88 @@ RichStatus EpollEventLoop::deregister_event(int event_fd) {
         status = F_MAKE_ERR("epoll_ctl() failed: " << sys_err());
     }
 
-    EventContext* callback = context_map_[event_fd];
-
-    auto it = context_map_.find(event_fd);
+    auto it = drop_events(event_fd);
     F_RET_IF(it == context_map_.end(), "event context not found");
-
-    for (int i = 0; i < n_triggered_events_; ++i) {
-        if ((EventContext*)(triggered_events_[i].data.ptr) == it->second) {
-            triggered_events_[i].data.ptr = nullptr;
-        }
-    }
-
     context_map_.erase(it);
     
     return status;
 }
 
-RichStatus EpollEventLoop::call_later(float delay, Callback<void> callback, EventLoopTimer** p_timer) {
+RichStatus EpollEventLoop::open_timer(Timer** p_timer, Callback<void> on_trigger) {
     if (p_timer) {
         *p_timer = nullptr;
     }
-    return F_MAKE_ERR("not implemented"); // TODO: implement
+
+    int fd = timerfd_create(CLOCK_BOOTTIME, 0);
+    F_RET_IF(fd < 0, "timerfd_create() failed: " << sys_err{});
+
+    TimerContext* timer = new TimerContext{}; // deleted in close_timer()
+    timer->parent = this;
+    timer->fd = fd;
+    timer->callback = on_trigger;
+
+    RichStatus status;
+
+    if ((status = register_event(fd, EPOLLIN, MEMBER_CB(timer, on_timer))).is_error()) {
+        goto fail;
+    }
+    
+    if (p_timer) {
+        *p_timer = timer;
+    }
+    return RichStatus::success();
+
+fail:
+    close(fd);
+    delete timer;
+    return status;
 }
 
-RichStatus EpollEventLoop::cancel_timer(EventLoopTimer* timer) {
-    return F_MAKE_ERR("not implemented"); // TODO: implement
+RichStatus EpollEventLoop::TimerContext::set(float interval, TimerMode mode) {
+    struct itimerspec timerspec = {};
+
+    if (mode != TimerMode::kNever) {
+        timerspec.it_value = {
+            .tv_sec = (long)interval,
+            .tv_nsec = (long)((interval - (float)(long)interval) * 1e9f)
+        };
+        if (mode == TimerMode::kPeriodic) {
+            timerspec.it_interval = timerspec.it_value;
+        }
+    }
+
+    parent->drop_events(fd);
+
+    if (timerfd_settime(fd, 0, &timerspec, nullptr) != 0) {
+        return F_MAKE_ERR("timerfd_settime() failed: " << sys_err{});
+    }
+
+    return RichStatus::success();
+}
+
+void EpollEventLoop::TimerContext::on_timer(uint32_t mask) {
+    if (mask & EPOLLIN) {
+        uint64_t n_triggers;
+        if (read(fd, (uint8_t*)&n_triggers, sizeof(n_triggers)) == -1) {
+            F_LOG_E(parent->logger_, "failed to read timer: " << sys_err{});
+            return;
+        }
+
+        callback.invoke();
+    }
+
+    if (mask & ~(EPOLLIN)) {
+        F_LOG_E(parent->logger_, "unexpected event " << mask);
+        return;
+    }
+}
+
+RichStatus EpollEventLoop::close_timer(Timer* timer) {
+    TimerContext* ctx = static_cast<TimerContext*>(timer);
+    deregister_event(ctx->fd);
+    close(ctx->fd);
+    delete ctx;
+    return RichStatus::success();
 }
 
 void EpollEventLoop::run_callbacks(uint32_t) {
@@ -177,3 +254,5 @@ void EpollEventLoop::run_callbacks(uint32_t) {
         cb.invoke();
     }
 }
+
+#endif

@@ -1,112 +1,29 @@
 #ifndef __FIBRE_HPP
 #define __FIBRE_HPP
 
-#include <fibre/callback.hpp>
-#include <fibre/bufptr.hpp>
-#include <fibre/cpp_utils.hpp>
+namespace fibre {
+
+struct Fibre;
+
+}
+
+#include <fibre/config.hpp>
+#include <fibre/domain.hpp>
 #include <fibre/event_loop.hpp>
-#include <fibre/channel_discoverer.hpp>
-#include <fibre/rich_status.hpp>
+#include <fibre/interface.hpp>
 #include <fibre/logging.hpp>
 #include <string>
 #include <memory>
 
-#if FIBRE_ENABLE_LIBUSB_BACKEND
-#include "../../platform_support/libusb_transport.hpp"
-#endif
-
-#if FIBRE_ENABLE_TCP_CLIENT_BACKEND
-#include "../../platform_support/posix_tcp_backend.hpp"
-#endif
-
 namespace fibre {
 
-struct CallBuffers {
-    Status status;
-    cbufptr_t tx_buf;
-    bufptr_t rx_buf;
-};
+struct Backend; // defined in channel_discoverer.hpp
+class ChannelDiscoverer; // defined in channel_discoverer.hpp
 
-struct CallBufferRelease {
-    Status status;
-    const uint8_t* tx_end;
-    uint8_t* rx_end;
-};
-
-struct FunctionInfo {
-    std::string name;
-    std::vector<std::tuple<std::string, std::string>> inputs;
-    std::vector<std::tuple<std::string, std::string>> outputs;
-};
-
-class Function {
-public:
-    Function() {}
-    Function(const Function&) = delete; // functions must not move around in memory
-
-    virtual std::optional<CallBufferRelease>
-    call(void**, CallBuffers, Callback<std::optional<CallBuffers>, CallBufferRelease>) = 0;
-
-    virtual FunctionInfo* get_info() = 0;
-    virtual void free_info(FunctionInfo* info) = 0;
-};
-
-struct Object;
-
-struct InterfaceInfo;
-
-class Interface {
-public:
-    Interface() {}
-    Interface(const Interface&) = delete; // interfaces must not move around in memory
-
-    virtual InterfaceInfo* get_info() = 0;
-    virtual void free_info(InterfaceInfo* info) = 0;
-    virtual RichStatusOr<Object*> get_attribute(Object* parent_obj, size_t attr_id) = 0;
-};
-
-struct AttributeInfo {
-    std::string name;
-    Interface* intf;
-};
-
-struct InterfaceInfo {
-    std::string name;
-    std::vector<Function*> functions;
-    std::vector<AttributeInfo> attributes;
-};
-
-
-class Domain;
-
-template<typename T>
-struct StaticBackend {
-    std::string name;
-    T impl;
-};
-
-struct Context {
+struct Fibre {
     size_t n_domains = 0;
     EventLoop* event_loop;
     Logger logger = Logger::none();
-
-    std::tuple<
-#if FIBRE_ENABLE_LIBUSB_BACKEND
-        LibusbDiscoverer
-#endif
-#if FIBRE_ENABLE_LIBUSB_BACKEND && FIBRE_ENABLE_TCP_CLIENT_BACKEND
-        , // TODO: find a less awkward way to do this
-#endif
-#if FIBRE_ENABLE_TCP_CLIENT_BACKEND
-        PosixTcpClientBackend
-#endif
-#if FIBRE_ENABLE_TCP_CLIENT_BACKEND && FIBRE_ENABLE_TCP_SERVER_BACKEND
-        , // TODO: find a less awkward way to do this
-#endif
-#if FIBRE_ENABLE_TCP_SERVER_BACKEND
-        PosixTcpServerBackend
-#endif
-    > static_backends;
 
 #if FIBRE_ALLOW_HEAP
     std::unordered_map<std::string, ChannelDiscoverer*> discoverers;
@@ -118,71 +35,19 @@ struct Context {
      * 
      * This potentially starts looking for channels on this domain.
      */
-    Domain* create_domain(std::string specs);
+    Domain* create_domain(std::string specs, const uint8_t* node_id, F_CONFIG_ENABLE_SERVER_T enable_server);
     void close_domain(Domain* domain);
 
-    void register_backend(std::string name, ChannelDiscoverer* backend);
-    void deregister_backend(std::string name);
+    RichStatus register_backend(std::string name, ChannelDiscoverer* backend);
+    RichStatus deregister_backend(std::string name);
+
+    // internal use
+    RichStatus init_backend(std::string name, Backend* backend);
+    RichStatus deinit_backends();
 };
 
-// TODO: don't declare these types here
-struct LegacyProtocolPacketBased;
-class LegacyObjectClient;
-struct LegacyObject;
 
-#if FIBRE_ENABLE_SERVER
-typedef uint8_t ServerFunctionId;
-typedef uint8_t ServerInterfaceId;
 
-// TODO: Use pointer instead? The codec that decodes the object still needs a table
-// to prevent arbitrary memory access.
-typedef uint8_t ServerObjectId;
-
-struct ServerFunctionDefinition {
-    Callback<std::optional<CallBufferRelease>, Domain*, bool, bufptr_t, CallBuffers, Callback<std::optional<CallBuffers>, CallBufferRelease>> impl;
-};
-
-struct ServerObjectDefinition {
-    void* ptr;
-    ServerInterfaceId interface; // TODO: use pointer instead of index? Faster but needs more memory
-};
-#endif
-
-class Domain {
-    friend struct Context;
-public:
-#if FIBRE_ENABLE_CLIENT
-    // TODO: add interface argument
-    // TODO: support multiple discovery instances
-    void start_discovery(Callback<void, Object*, Interface*> on_found_object, Callback<void, Object*> on_lost_object);
-    void stop_discovery();
-#endif
-
-    void add_channels(ChannelDiscoveryResult result);
-
-#if FIBRE_ENABLE_SERVER
-    ServerFunctionDefinition* get_server_function(ServerFunctionId id);
-    ServerObjectDefinition* get_server_object(ServerObjectId id);
-#endif
-
-    Context* ctx;
-private:
-#if FIBRE_ENABLE_CLIENT
-    void on_found_root_object(LegacyObjectClient* obj_client, std::shared_ptr<LegacyObject> obj);
-    void on_lost_root_object(LegacyObjectClient* obj_client, std::shared_ptr<LegacyObject> obj);
-#endif
-    void on_stopped_p(LegacyProtocolPacketBased* protocol, StreamStatus status);
-    void on_stopped_s(LegacyProtocolPacketBased* protocol, StreamStatus status);
-
-#if FIBRE_ALLOW_HEAP
-    std::unordered_map<std::string, fibre::ChannelDiscoveryContext*> channel_discovery_handles;
-#endif
-#if FIBRE_ENABLE_CLIENT
-    Callback<void, Object*, Interface*> on_found_object_;
-    Callback<void, Object*> on_lost_object_;
-    std::unordered_map<Object*, Interface*> root_objects_;
-#endif
-};
 
 /**
  * @brief Opens and initializes a Fibre context.
@@ -196,9 +61,9 @@ private:
  *        `fibre::log_to_stderr`.
  * @returns: A non-null pointer on success, null otherwise.
  */
-RichStatus open(EventLoop* event_loop, Logger logger, Context** p_ctx);
+RichStatus open(EventLoop* event_loop, Logger logger, Fibre** p_ctx);
 
-void close(Context*);
+void close(Fibre*);
 
 /**
  * @brief Logs an event to stderr.
@@ -207,8 +72,6 @@ void close(Context*);
  * event to stderr. Otherwise it does nothing.
  */
 void log_to_stderr(void* ctx, const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
-
-LogLevel get_log_verbosity();
 
 /**
  * @brief Launches an event loop on the current thread.

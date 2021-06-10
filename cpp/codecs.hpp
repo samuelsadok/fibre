@@ -4,16 +4,18 @@
 #include "static_exports.hpp"
 #include <fibre/simple_serdes.hpp>
 #include <fibre/bufptr.hpp>
+#include <fibre/domain.hpp>
 #include <fibre/rich_status.hpp>
 #include <optional>
 #include "property.hpp"
+#include <fibre/fibre.hpp>
 
 namespace fibre {
 
 template<typename T, typename = void>
 struct Codec {
     static RichStatusOr<T> decode(Domain* domain, cbufptr_t* buffer) {
-        printf("unknown decoder for %s\n", typeid(T).name());
+        F_LOG_E(domain->ctx->logger, "unknown decoder for " << typeid(T).name());
         return std::nullopt; }
 };
 
@@ -58,6 +60,7 @@ struct Codec<T, std::enable_if_t<std::is_enum<T>::value>> {
 
 template<typename T> struct Codec<T*> {
     static RichStatusOr<T*> decode(Domain* domain, cbufptr_t* buffer) {
+#if FIBRE_ENABLE_SERVER
         uint8_t idx = (*buffer)[0]; // TODO: define actual decoder
 
         // Check object type
@@ -71,6 +74,9 @@ template<typename T> struct Codec<T*> {
 
         *buffer = buffer->skip(1);
         return (T*)obj_entry->ptr;
+#else
+        return  F_MAKE_ERR("no server support compiled in");
+#endif
     }
 
     static bool encode(bool value, bufptr_t* buffer) { return false; }

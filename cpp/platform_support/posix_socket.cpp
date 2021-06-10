@@ -1,7 +1,9 @@
 
 #include "posix_socket.hpp"
-#include "../print_utils.hpp"
 
+#if FIBRE_ENABLE_TCP_SERVER_BACKEND || FIBRE_ENABLE_TCP_CLIENT_BACKEND
+
+#include "../print_utils.hpp"
 #include <errno.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -70,12 +72,12 @@ struct fibre::AddressResolutionContext {
     void on_gai_completed(uint32_t);
 };
 
-RichStatus fibre::start_resolving_address(EventLoop* event_loop, Logger logger, std::tuple<std::string, int> address, bool passive, AddressResolutionContext** handle, Callback<void, std::optional<cbufptr_t>> callback) {
+RichStatus fibre::start_resolving_address(EventLoop* event_loop, Logger logger, std::pair<std::string, int> address, bool passive, AddressResolutionContext** handle, Callback<void, std::optional<cbufptr_t>> callback) {
     // deleted in on_gai_completed()
     AddressResolutionContext* ctx = new AddressResolutionContext();
 
-    ctx->address_str = std::get<0>(address);
-    ctx->port_str = std::to_string(std::get<1>(address));
+    ctx->address_str = address.first;
+    ctx->port_str = std::to_string(address.second);
     ctx->event_loop = event_loop;
     ctx->logger = logger;
     ctx->callback = callback;
@@ -355,7 +357,7 @@ void PosixSocket::cancel_read(TransferHandle transfer_handle) {
     }
 }
 
-void PosixSocket::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) {
+void PosixSocket::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) {
     if (tx_callback_) {
         F_LOG_E(logger_, "TX request already pending");
         completer.invoke({kStreamError});
@@ -420,7 +422,7 @@ std::optional<ReadResult> PosixSocket::read_sync(bufptr_t buffer) {
     }
 }
 
-std::optional<WriteResult> PosixSocket::write_sync(cbufptr_t buffer) {
+std::optional<WriteResult0> PosixSocket::write_sync(cbufptr_t buffer) {
     if (buffer.size() == 0) {
         // Empty buffers mess with our socket-close detection
         F_LOG_E(logger_, "empty buffer not permitted");
@@ -500,3 +502,5 @@ void PosixSocket::on_event(uint32_t mask) {
 
     update_subscription();
 }
+
+#endif

@@ -45,3 +45,13 @@ bool ChannelDiscoverer::try_parse_key(const char* begin, const char* end, const 
     return sscanf(buf, "0x%x", val) == 1
         || sscanf(buf, "%d", val) == 1;
 }
+
+bool ChannelDiscoverer::try_parse_key(const char* begin, const char* end, const char* key, std::string* val) {
+    const char* val_begin;
+    const char* val_end;
+    if (!try_parse_key(begin, end, key, &val_begin, &val_end)) {
+        return false;
+    }
+    *val = std::string{val_begin, val_end};
+    return true;
+}

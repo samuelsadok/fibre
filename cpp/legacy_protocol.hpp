@@ -2,6 +2,7 @@
 #define __FIBRE_LEGACY_PROTOCOL_HPP
 
 #include <fibre/async_stream.hpp>
+#include <fibre/config.hpp>
 
 #if FIBRE_ENABLE_CLIENT
 #include "legacy_object_client.hpp"
@@ -9,6 +10,7 @@
 #include <optional>
 #include <queue>
 #endif
+
 #if FIBRE_ENABLE_SERVER
 #include "legacy_object_server.hpp"
 #endif
@@ -38,11 +40,11 @@ public:
     PacketWrapper(AsyncStreamSink* tx_channel)
         : tx_channel_(tx_channel) {}
 
-    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) final;
+    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) final;
     void cancel_write(TransferHandle transfer_handle) final;
 
 private:
-    void complete(WriteResult result);
+    void complete(WriteResult0 result);
 
     AsyncStreamSink* tx_channel_;
     TransferHandle inner_transfer_handle_;
@@ -50,7 +52,7 @@ private:
     uint8_t trailer_buf_[2];
     const uint8_t* expected_tx_end_;
     cbufptr_t payload_buf_ = {nullptr, nullptr};
-    Callback<void, WriteResult> completer_;
+    Callback<void, WriteResult0> completer_;
 
     enum {
         kStateIdle,
@@ -93,13 +95,14 @@ private:
 
 struct LegacyProtocolPacketBased {
 public:
-    LegacyProtocolPacketBased(Domain* domain, AsyncStreamSource* rx_channel, AsyncStreamSink* tx_channel, size_t tx_mtu)
-        : domain_(domain), rx_channel_(rx_channel), tx_channel_(tx_channel), tx_mtu_(std::min(tx_mtu, sizeof(tx_buf_))) {}
+    LegacyProtocolPacketBased(Domain* domain, AsyncStreamSource* rx_channel, AsyncStreamSink* tx_channel, size_t tx_mtu, const char* intf_name)
+        : domain_(domain), rx_channel_(rx_channel), tx_channel_(tx_channel), tx_mtu_(std::min(tx_mtu, sizeof(tx_buf_))), intf_name_(intf_name) {}
 
     Domain* domain_;
     AsyncStreamSource* rx_channel_;
     AsyncStreamSink* tx_channel_;
     size_t tx_mtu_;
+    const char* intf_name_;
     uint8_t tx_buf_[128];
     uint8_t rx_buf_[128];
 
@@ -111,22 +114,40 @@ public:
     
     Callback<void, LegacyProtocolPacketBased*, StreamStatus> on_stopped_ = nullptr;
 
-#if FIBRE_ENABLE_CLIENT
-    void start_endpoint_operation(uint16_t endpoint_id, cbufptr_t tx_buf, bufptr_t rx_buf, EndpointOperationHandle* handle, Callback<void, EndpointOperationResult> callback);
-    void cancel_endpoint_operation(EndpointOperationHandle handle);
+    struct Call final : Socket {
+        WriteResult write(WriteArgs args) final;
+        WriteArgs on_write_done(WriteResult result) final;
+        void on_ep_operation_done(EndpointOperationResult result);
+        LegacyProtocolPacketBased* parent_;
+        uint16_t ep_num_;
+        uint16_t json_crc_;
+        std::vector<uint16_t> in_arg_ep_nums_;
+        std::vector<uint16_t> out_arg_ep_nums_;
+        Socket* caller_;
 
-    LegacyObjectClient client_{this};
+        std::vector<std::vector<uint8_t>> in_args_;
+        std::vector<std::vector<uint8_t>> out_args_;
+        size_t n_out_args = 0;
+        std::vector<uint8_t> last_arg_;
+        std::vector<EndpointOperationHandle> ops_;
+        std::vector<Chunk> chunks_;
+        CBufIt chunk_pos;
+        bool error_ = false;
+    };
+
+#if FIBRE_ENABLE_CLIENT
+    Socket* start_call(uint16_t ep_num, uint16_t json_crc, std::vector<uint16_t> in_arg_ep_nums, std::vector<uint16_t> out_arg_ep_nums, Socket* caller);
+    EndpointOperationHandle start_endpoint_operation(uint16_t endpoint_id, uint16_t json_crc, cbufptr_t tx_buf, bufptr_t rx_buf, Callback<void, EndpointOperationResult> callback);
+    //void cancel_endpoint_operation(EndpointOperationHandle handle);
+
+    LegacyObjectClient client_;
 #endif
 
 #if FIBRE_ENABLE_SERVER
     LegacyObjectServer server_;
 #endif
 
-#if FIBRE_ENABLE_CLIENT
-    void start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_lost_root_object, Callback<void, LegacyProtocolPacketBased*, StreamStatus> on_stopped);
-#else
     void start(Callback<void, LegacyProtocolPacketBased*, StreamStatus> on_stopped);
-#endif
 
 private:
 
@@ -139,6 +160,9 @@ private:
         bufptr_t rx_buf;
         bool rx_done;
         Callback<void, EndpointOperationResult> callback;
+        EndpointOperationHandle handle() {
+            return 0xffff0000 | seqno;
+        }
     };
 
     void start_endpoint_operation(EndpointOperation op);
@@ -149,7 +173,7 @@ private:
     std::unordered_map<uint16_t, EndpointOperation> expected_acks_; // operations that are waiting for RX
 #endif
 
-    void on_write_finished(WriteResult result);
+    void on_write_finished(WriteResult0 result);
     void on_read_finished(ReadResult result);
     void on_rx_closed(StreamStatus status);
     void on_rx_tx_closed(StreamStatus status);
@@ -158,17 +182,10 @@ private:
 
 struct LegacyProtocolStreamBased {
 public:
-    LegacyProtocolStreamBased(Domain* domain, AsyncStreamSource* rx_channel, AsyncStreamSink* tx_channel)
-        : unwrapper_(rx_channel), wrapper_(tx_channel), inner_protocol_{domain, &unwrapper_, &wrapper_, 127} {}
+    LegacyProtocolStreamBased(Domain* domain, AsyncStreamSource* rx_channel, AsyncStreamSink* tx_channel, const char* intf_name)
+        : unwrapper_(rx_channel), wrapper_(tx_channel), inner_protocol_{domain, &unwrapper_, &wrapper_, 127, intf_name} {}
 
-
-#if FIBRE_ENABLE_CLIENT
-    void start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_lost_root_object, Callback<void, LegacyProtocolPacketBased*, StreamStatus> on_stopped) {
-        inner_protocol_.start(on_found_root_object, on_lost_root_object, on_stopped);
-    }
-#else
     void start(Callback<void, LegacyProtocolPacketBased*, StreamStatus> on_stopped) { inner_protocol_.start(on_stopped); }
-#endif
 
     PacketUnwrapper unwrapper_;
     PacketWrapper wrapper_;

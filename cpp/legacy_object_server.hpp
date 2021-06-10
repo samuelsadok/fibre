@@ -1,11 +1,14 @@
 #ifndef __LEGACY_OBJECT_SERVER_HPP
 #define __LEGACY_OBJECT_SERVER_HPP
 
+#include <fibre/base_types.hpp>
+#include <fibre/bufchain.hpp>
+#include <fibre/bufptr.hpp>
+#include <fibre/callback.hpp>
+#include <fibre/rich_status.hpp>
+#include <fibre/status.hpp>
 #include <stdint.h>
 #include <stdlib.h>
-#include <fibre/bufptr.hpp>
-#include <fibre/rich_status.hpp>
-#include <fibre/fibre.hpp>
 
 namespace fibre {
 
@@ -16,7 +19,7 @@ struct LegacyObjectServer {
     size_t rx_pos_;
     uint8_t tx_buf_[128];
     size_t tx_pos_;
-    size_t expected_ep_ = 0; // 0 while no call in progress
+    size_t expected_ep_ = 0;  // 0 while no call in progress
     size_t trigger_ep_;
     size_t n_inputs_;
     size_t n_outputs_;
@@ -34,7 +37,9 @@ struct LegacyObjectServer {
         output_size_ = 0;
     }
 
-    RichStatus endpoint_handler(Domain* domain, int idx, cbufptr_t* input_buffer, bufptr_t* output_buffer);
+    RichStatus endpoint_handler(Domain* domain, int idx,
+                                cbufptr_t* input_buffer,
+                                bufptr_t* output_buffer);
 };
 
 enum class EndpointType {
@@ -78,6 +83,6 @@ extern const uint16_t json_crc_;
 extern const uint32_t json_version_id_;
 extern const size_t n_endpoints;
 
-}
+}  // namespace fibre
 
-#endif // __LEGACY_OBJECT_SERVER_HPP
+#endif  // __LEGACY_OBJECT_SERVER_HPP

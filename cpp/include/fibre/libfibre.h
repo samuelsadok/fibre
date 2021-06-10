@@ -16,6 +16,30 @@
  *  - All of the library's functions can be expected reentry-safe. That means
  *    you can call into any libfibre function from any callback handler that
  *    libfibre invokes.
+ * 
+ * 
+ * 
+ * DEPRECATION NOTES:
+ * 
+ * The following aspects of the libfibre API are expected or proposed to change
+ * in future versions of the API.
+ * 
+ *  - The ability to add backends will be removed or replaced because the
+ *    updated protocol requires a more high level backend interface than a
+ *    simple raw byte stream.
+ *    Currently only FibreJS adds external backend so we will try to change that.
+ *  - The ability to integrate with an external event loop will probably be
+ *    removed.
+ *    The task-passing architecture (libfibre_run_tasks()) is a good foundation
+ *    to pass data across thread boundaries, therefore libfibre should start its
+ *    own internal thread to better utilize multi-core CPUs, and simplify
+ *    language bindings, especially in cases where the application's event loop
+ *    cannot easily be accessed (e.g. Dart).
+ *    We can have a single argument-less callback/function that can be used by
+ *    libfibre to wake the application's event loop and the other way around.
+ *  - More libfibre functions might be incorporated into the task passing
+ *    architecture (libfibre_run_tasks()) for above reason.
+ *  - Object paths will be dynamic.
  */
 
 #ifndef __LIBFIBRE_H
@@ -129,8 +153,9 @@ struct LibFibreInterfaceInfo {
 typedef int (*post_cb_t)(void (*callback)(void*), void* cb_ctx);
 typedef int (*register_event_cb_t)(int fd, uint32_t events, void (*callback)(void*, uint32_t), void* cb_ctx);
 typedef int (*deregister_event_cb_t)(int fd);
-typedef struct LibFibreEventLoopTimer* (*call_later_cb_t)(float delay, void (*callback)(void*), void* cb_ctx);
-typedef int (*cancel_timer_cb_t)(struct LibFibreEventLoopTimer* timer);
+typedef int (*open_timer_cb_t)(struct LibFibreEventLoopTimer** timer, void (*callback)(void*), void* cb_ctx);
+typedef int (*set_timer_cb_t)(struct LibFibreEventLoopTimer* timer, float interval, int mode);
+typedef int (*close_timer_cb_t)(struct LibFibreEventLoopTimer* timer);
 
 struct LibFibreEventLoop {
     /**
@@ -156,20 +181,22 @@ struct LibFibreEventLoop {
     deregister_event_cb_t deregister_event;
 
     /**
-     * @brief Called by libfibre to ask the application to call a certain
-     * callback after a certain amount of time.
-     * 
-     * The callback must be invoked on the same thread on which libfibre_open()
-     * was called. The application should return an opaque handle that
-     * libfibre can use to cancel the timer.
+     * DEPRECATED! (see top of this file)
+     * see libfibre.py for a reference implementation of this callback
      */
-    call_later_cb_t call_later;
+    open_timer_cb_t open_timer;
 
     /**
-     * @brief Called by libfibre to ask the application to cancel a callback
-     * timer previously enqueued with call_later().
+     * DEPRECATED! (see top of this file)
+     * see libfibre.py for a reference implementation of this callback
      */
-    cancel_timer_cb_t cancel_timer;
+    set_timer_cb_t set_timer;
+
+    /**
+     * DEPRECATED! (see top of this file)
+     * see libfibre.py for a reference implementation of this callback
+     */
+    close_timer_cb_t close_timer;
 };
 
 struct LibFibreLogger {
@@ -179,6 +206,89 @@ struct LibFibreLogger {
     void(*log)(void* ctx, const char* file, unsigned line, int level, uintptr_t info0, uintptr_t info1, const char* text);
     void* ctx;
 };
+
+typedef uintptr_t LibFibreCallHandle;
+
+enum LibFibreTaskType {
+    kStartCall,
+    kWrite,
+    kWriteDone,
+};
+
+struct LibFibreChunk {
+    unsigned char layer;
+    unsigned char* begin;
+    unsigned char* end;
+};
+
+struct LibFibreTask {
+    LibFibreTaskType type;
+    LibFibreCallHandle handle; //!< Identifies the call on which the task is to
+                               //!< be run. For kStartCall tasks, this handle
+                               //!< be freely chosen by the creator of the task.
+                               //!< (i.e. the application for client side
+                               //!< calls and libfibre for server side calls).
+
+    union {
+        /**
+         * @brief Starts a new call on the specified function.
+         * 
+         * The call's resources are released once the call is closed in both
+         * directions, that is, a write task with an empty buffer and a
+         * status different from kFibreOk has been issued.
+         * 
+         * This task corresponds to Function::start_call() in the C++ API.
+         */
+        struct {
+            LibFibreFunction* func;
+            LibFibreDomain* domain;
+        } start_call;
+
+        /**
+         * @brief Writes data to the specified ongoing call.
+         * 
+         * This task corresponds to Socket::write() in the C++ API.
+         */
+        struct {
+            const unsigned char* b_begin;
+            const LibFibreChunk* c_begin;
+            const LibFibreChunk* c_end;
+            int8_t elevation;
+            LibFibreStatus status; //!< The status of the data source.
+                                   //!< This status pertains to after the
+                                   //!< provided data, for example if the
+                                   //!< status is kFibreClosed, it means that
+                                   //!< the call should be closed only after the
+                                   //!< sink has processed all provided chunks.
+        } write;
+
+        struct {
+            LibFibreStatus status;
+            const LibFibreChunk* c_end;
+            const unsigned char* b_end;
+        } on_write_done;
+    };
+};
+
+/**
+ * @brief Callback type for the libfibre_open() `run_tasks_cb` argument.
+ * 
+ * Used by libfibre to post a batch of tasks to the application. If this results
+ * in the application generating new tasks for libfibre without blocking, it can
+ * immediately return those tasks to libfibre.
+ * 
+ * The semantics of this function are symmetric to `libfibre_run_tasks()`.
+ * 
+ * @param tasks: Pointer to an array of LibFibreTask structures. The array
+ *        itself is only valid for the duration of the callback however the
+ *        chunk buffers referenced by the tasks (if any) will remain valid until
+ *        their corresponding on_write_done task is returned by the application.
+ * @param out_tasks: Pointer to a pointer that can be set to an array of
+ *        LibFibreTask structures. This array must remain valid until the next
+ *        invokation of `run_tasks_cb` or libfibre_close(), whichever happens
+ *        first.
+ */
+typedef void (*run_tasks_cb_t)(LibFibreCtx* ctx, LibFibreTask* tasks, size_t n_tasks, LibFibreTask** out_tasks, size_t* n_out_tasks);
 
 /**
  * @brief on_start_discovery callback type for libfibre_register_backend().
@@ -199,8 +309,10 @@ typedef void (*on_stop_discovery_cb_t)(void* ctx, LibFibreDomain* domain);
  * @param obj: The object handle.
  * @param intf: The interface handle. Valid for as long as any handle of an
  *        object that implements it is valid.
+ * @param path: A human-readable string that indicates the physical location /
+ *        path of the object.
  */
-typedef void (*on_found_object_cb_t)(void*, LibFibreObject* obj, LibFibreInterface* intf);
+typedef void (*on_found_object_cb_t)(void*, LibFibreObject* obj, LibFibreInterface* intf, const char* path, size_t path_length);
 
 /**
  * @brief on_lost_object callback type for libfibre_start_discovery().
@@ -313,11 +425,13 @@ FIBRE_PUBLIC const struct LibFibreVersion* libfibre_get_version();
  *        the platform and the backends used (TODO: elaborate).
  *        The event loop must be single threaded and all calls to libfibre must
  *        happen on the event loop thread.
+ * @param run_tasks_cb: Used by libfibre to post tasks to the application.
+ *        See `run_tasks_cb_t` for details.
  * @param logger: A struct that contains a log function an a log verbosity.
  *        This function is used by libfibre to log debug and error information.
  *        The log function can be null, in which case all log output is discarded.
  */
-FIBRE_PUBLIC struct LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, LibFibreLogger logger);
+FIBRE_PUBLIC struct LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, run_tasks_cb_t run_tasks_cb, LibFibreLogger logger);
 
 /**
  * @brief Closes a context that was previously opened with libfibre_open().
@@ -462,95 +576,28 @@ FIBRE_PUBLIC void libfibre_free_interface_info(LibFibreInterfaceInfo* info);
 FIBRE_PUBLIC LibFibreStatus libfibre_get_attribute(LibFibreInterface* intf, LibFibreObject* parent_obj, size_t attr_id, LibFibreObject** child_obj_ptr);
 
 /**
- * @brief Starts a remote coroutine call or continues or cancels an ongoing call.
+ * @brief Posts a batch of tasks to libfibre and receives a batch of return
+ * tasks for the application.
  * 
- * A remote coroutine call can be considered a continuous exchange of the
- * following tuples:
+ * The semantics of this function are symmetric to the `run_tasks_cb` argument
+ * of `libfibre_open()`.
  * 
- *  Client Application  ===== (tx_buf, rx_buf, status) ====> libfibre
- *  Client Application  <==== (tx_end, rx_end, status) ===== libfibre
- * 
- * These tuples are exchanged through the input/output arguments of
- * libfibre_call() or libfibre_call()'s callback.
- * 
- * If during an ongoing call either of the two parties is unable to respond
- * immediately it responds with kFibreBusy and will thus get the responsibility
- * to resume the call when able. kFibreCancelled can be issued by either party
- * at any time.
- * 
- * Each party must make progress during every control transfer to the other
- * party.
- * 
- * For the application this means for every call to libfibre_call() and every
- * return from libfibre_call()'s callback the arguments passed from application
- * to libfibre must satisfy at least one of the following:
- * 
- *  - The call handle is NULL
- *  - tx_len is non-zero
- *  - rx_len is non-zero
- *  - The status is different from kFibreOk
- * 
- * For libfibre this means every for return from libfibre_call() and every
- * call to libfibre_call()'s callback the arguments passed from libfibre to
- * application satisfy at least one of the following:
- * 
- *  - tx_end is larger than the corresponding tx_buf
- *  - rx_end is larger than the corresponding rx_buf
- *  - The status is different from kFibreOk
- * 
- * @param func: A function handle that was obtained in the `functions` list of
- *        of the libfibre_get_interface_info() result.
- * @param handle: The variable being pointed to by this argument identifies the
- *        coroutine call. If the variable is NULL it will be set to a new opaque
- *        handle. If the variable is not NULL the active function call is
- *        continued or cancelled (depending on status).
- * @param tx_buf: The buffer to transmit. If libfibre_call() returns kFibreBusy
- *        then this buffer must remain valid until `callback` is invoked.
- *        Otherwise it can be freed immediately after this call.
- * @param tx_len: Length of tx_buf. Must be zero if tx_buf is NULL.
- * @param rx_buf: The buffer into which the received data should be written. If
- *        libfibre_call() returns kFibreBusy then this buffer must remain
- *        allocated until `callback` is invoked. Otherwise it can be freed
- *        immediately after this call.
- * @param rx_len: Length of rx_buf. Must be zero if rx_buf is NULL.
- * @param tx_end: End of the range of data that was accepted by libfibre. This
- *        is always in the interval [tx_buf, tx_buf + tx_len] unless
- *        libfibre_call() returns kFibreBusy, in which case this is NULL.
- *        This value does not give any delivery guarantees.
- * @param rx_end: End of the range of data that was returned by libfibre. This
- *        is always in the interval [rx_buf, rx_buf + rx_len] unless
- *        libfibre_call() returns kFibreBusy, in which case this is NULL.
- * @param callback: Will be invoked eventually if and only if libfibre_call()
- *        returns kFibreBusy. This callback is never invoked from inside
- *        libfibre_call().
- * @param cb_ctx: An opaque application-defined handle that gets passed to
- *        `callback`.
- * 
- * @retval kFibreOk: libfibre accepted some or all of the tx_buf or filled some
- *         or all of the rx_buf with data and can immediately accept more TX
- *         data or provide more RX data.
- * @retval kFibreBusy: libfibre will complete the request asynchronously by
- *         calling `callback`. If this value is returned, then the application
- *         must not invoke libfibre_call() on the same call handle again until
- *         `callback` is invoked except for cancelling the call with a status
- *         of `kFibreCancelled`.
- * @retval kFibreClosed: the remote server completed the call and will not
- *         accept or return any more data on this call. The application must not
- *         pass the closed call context handle to libfibre_call() anymore.
- * @retval kFibreCancelled: the application's cancellation request was honored
- *         or the remote server cancelled the call. The application must not
- *         pass the cancelled call context handle to libfibre_call() anymore.
+ * @param tasks: Pointer to an array of LibFibreTask structures. The array
+ *        itself can be freed after the libfibre_run_tasks() call however the
+ *        chunk buffers referenced by the tasks (if any) must remain valid until
+ *        their corresponding on_write_done task is returned.
+ * @param out_tasks: Pointer to a pointer that will be set to an array of
+ *        LibFibreTask structures. This array will remain valid until the next
+ *        call to libfibre_run_tasks() or libfibre_close(), whichever happens
+ *        first.
  */
-FIBRE_PUBLIC LibFibreStatus libfibre_call(LibFibreFunction* func, LibFibreCallContext** handle,
-        LibFibreStatus status,
-        const unsigned char* tx_buf, size_t tx_len,
-        unsigned char* rx_buf, size_t rx_len,
-        const unsigned char** tx_end,
-        unsigned char** rx_end,
-        libfibre_call_cb_t callback, void* cb_ctx);
+FIBRE_PUBLIC void libfibre_run_tasks(LibFibreCtx* ctx, LibFibreTask* tasks, size_t n_tasks, LibFibreTask** out_tasks, size_t* n_out_tasks);
 
 /**
  * @brief Starts sending data on the specified TX stream.
+ * 
+ * DEPRECATED! (see top of this file)
+ * TODO: remove
  * 
  * The TX operation must be considered in progress until the on_completed
  * callback is called. Until then the application must not start another TX
@@ -570,6 +617,9 @@ FIBRE_PUBLIC void libfibre_start_tx(LibFibreTxStream* tx_stream, const uint8_t* 
 /**
  * @brief Cancels an ongoing TX operation.
  * 
+ * DEPRECATED! (see top of this file)
+ * TODO: remove
+ * 
  * Must only be called if there is actually a TX operation in progress for which
  * cancellation has not yet been requested.
  * The application must still wait for the on_complete callback to be called
@@ -585,12 +635,18 @@ FIBRE_PUBLIC void libfibre_cancel_tx(LibFibreTxStream* tx_stream);
 /**
  * @brief Permanently close TX stream.
  * 
+ * DEPRECATED! (see top of this file)
+ * TODO: remove
+ * 
  * Must not be called while a transfer is ongoing.
  */
 FIBRE_PUBLIC void libfibre_close_tx(LibFibreTxStream* tx_stream, LibFibreStatus status);
 
 /**
  * @brief Starts receiving data on the specified RX stream.
+ * 
+ * DEPRECATED! (see top of this file)
+ * TODO: remove
  * 
  * The RX operation must be considered in progress until the on_completed
  * callback is called. Until then the application must not start another RX
@@ -610,6 +666,9 @@ FIBRE_PUBLIC void libfibre_start_rx(LibFibreRxStream* rx_stream, uint8_t* rx_buf
 /**
  * @brief Cancels an ongoing RX operation.
  * 
+ * DEPRECATED! (see top of this file)
+ * TODO: remove
+ * 
  * Must only be called if there is actually a RX operation in progress for which
  * cancellation has not yet been requested.
  * The application must still wait for the on_complete callback to be called
@@ -624,6 +683,9 @@ FIBRE_PUBLIC void libfibre_cancel_rx(LibFibreRxStream* rx_stream);
 
 /**
  * @brief Permanently close RX stream.
+ * 
+ * DEPRECATED! (see top of this file)
+ * TODO: remove
  * 
  * Must not be called while a transfer is ongoing.
  */

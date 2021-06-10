@@ -4,7 +4,7 @@
 #include <fibre/fibre.hpp>
 #include <algorithm>
 
-namespace fibre {
+using namespace fibre;
 
 
 
@@ -65,13 +65,13 @@ RichStatus LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr
         F_RET_IF(!func, "invalid function");
 
         uint8_t call_frame[256];
-        std::optional<CallBufferRelease> call_buffer_release = func->impl.invoke(
+        std::optional<CallBufferRelease> call_buffer_release /* TODO = func->call(
             domain,
             true, // start
             call_frame,
             {kFibreClosed, {rx_buf_, rx_pos_}, *output_buffer}, // call buffers
             {} // continuation
-        );
+        )*/;
 
         F_RET_IF(!call_buffer_release.has_value(),
                  "legacy protocol used to call function that did not return synchronously");
@@ -142,13 +142,13 @@ RichStatus LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr
             F_RET_IF(!func, "invalid function");
 
             uint8_t call_frame[256];
-            std::optional<CallBufferRelease> call_buffer_release = func->impl.invoke(
+            std::optional<CallBufferRelease> call_buffer_release /* TODO = func->call(
                 domain,
                 true, // start
                 call_frame,
                 {kFibreClosed, {rx_buf_, rx_pos_}, {tx_buf_, output_size_}}, // call buffers
                 {} // continuation
-            );
+            )*/;
 
             F_RET_IF(!call_buffer_release.has_value(),
                      "legacy protocol used to call function that did not return synchronously");
@@ -175,6 +175,4 @@ RichStatus LegacyObjectServer::endpoint_handler(Domain* domain, int idx, cbufptr
 
         return RichStatus::success();
     }
-}
-
 }

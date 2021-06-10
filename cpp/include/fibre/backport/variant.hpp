@@ -47,29 +47,45 @@ public:
     storage_t content_;
 
     static void selective_destructor(char* storage, size_t index) {
+#if _HAS_EXCEPTIONS != 0
         throw;
+#endif
     }
 
     static void selective_copy_constuctor(char* target, const char* source, size_t index) {
+#if _HAS_EXCEPTIONS != 0
         throw;
+#endif
     }
 
     static bool selective_eq(const char* lhs, const char* rhs, size_t index) {
+#if _HAS_EXCEPTIONS != 0
         throw;
+#else
+        return false;
+#endif
     }
 
     static bool selective_neq(const char* lhs, const char* rhs, size_t index) {
+#if _HAS_EXCEPTIONS != 0
         throw;
+#else
+        return true;
+#endif
     }
 
     template<typename TFunc, typename ... TArgs>
     static void selective_invoke_const(const char* content, size_t index, TFunc functor, TArgs&&... args) {
+#if _HAS_EXCEPTIONS != 0
         throw;
+#endif
     }
 
     template<typename TFunc, typename ... TArgs>
     static void selective_invoke(const char* content, size_t index, TFunc functor, TArgs&&... args) {
+#if _HAS_EXCEPTIONS != 0
         throw;
+#endif
     }
 };
 
@@ -187,9 +203,12 @@ public:
 };
 
 template<size_t I, typename ... Ts>
-typename tuple_element<I, tuple<Ts...>>::type& get(std::variant<Ts...>& val) {
-    if (val.index() != I)
+typename tuple_element<I, tuple<Ts...>>::type& get(const std::variant<Ts...>& val) {
+#if _HAS_EXCEPTIONS != 0
+    if (val.index() != I) {
         throw;
+    }
+#endif
     using T = typename tuple_element<I, tuple<Ts...>>::type;
     return *((T*)val.content_);
 }
@@ -199,6 +218,10 @@ T& get(std::variant<Ts...>& val) {
     constexpr size_t index = detail::index_of<T, Ts...>::value;
     return std::get<index>(val);
 }
+
+template<typename T> struct variant_size;
+template<typename... Ts> struct variant_size<std::variant<Ts...>>
+    : std::integral_constant<std::size_t, sizeof...(Ts)> {};
 
 }
 

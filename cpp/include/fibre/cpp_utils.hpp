@@ -78,6 +78,7 @@ public:
 #ifndef __CPP_UTILS_HPP
 #define __CPP_UTILS_HPP
 
+#include <bitset>
 #include <limits>
 #include <tuple>
 #include <functional>
@@ -1010,5 +1011,43 @@ struct repeat_type_impl<0, T, Ts...> {
 
 template<size_t I, typename T>
 using repeat_t = typename repeat_type_impl<I, T>::type;
+
+
+// GCC implementation
+template<size_t Size, size_t(std::bitset<Size>::*)(size_t) const = &std::bitset<Size>::_Find_next>
+size_t find_next_impl(std::bitset<Size> set, size_t prev, int) {
+    return set._Find_next(prev);
+}
+
+// default implementation - both GCC and clang don't do a good job at optimizing this
+template<size_t Size>
+size_t find_next_impl(std::bitset<Size> set, size_t prev, ...) {
+    while (++prev < Size && !set[prev]);
+    return prev;
+}
+
+template<size_t Size>
+size_t find_next(std::bitset<Size> set, size_t prev) {
+    return find_next_impl(set, prev, 0);
+}
+
+// GCC implementation - compiles down to "CLZ" and "RBIT" instructions on ARM
+template<size_t Size, size_t(std::bitset<Size>::*)(void) const = &std::bitset<Size>::_Find_first>
+size_t find_first_impl(std::bitset<Size> set, int) {
+    return set._Find_first();
+}
+
+// default implementation - both GCC and clang don't do a good job at optimizing this
+template<size_t Size>
+size_t find_first_impl(std::bitset<Size> set, ...) {
+    return find_next(set, SIZE_MAX);
+}
+
+template<size_t Size>
+size_t find_first(std::bitset<Size> set) {
+    return find_first_impl(set, 0);
+}
+
+
 
 #endif // __CPP_UTILS_HPP

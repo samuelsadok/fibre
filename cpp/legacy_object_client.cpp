@@ -1,241 +1,148 @@
 
+#include "crc.hpp"
+#include "json.hpp"
 #include "legacy_object_client.hpp"
 #include "legacy_protocol.hpp"
 #include <fibre/simple_serdes.hpp>
-#include "print_utils.hpp"
-#include "crc.hpp"
-#include <variant>
-#include <algorithm>
 
 using namespace fibre;
 
-struct json_error {
-    const char* ptr;
-    std::string str;
+struct fibre::Transcoder {
+    std::string app_codec;
+    bool (*func)(LegacyObjectClient* client, std::vector<uint8_t>&);
+    bool transcode(LegacyObjectClient* client, std::vector<uint8_t>& buf) {
+        return (*func)(client, buf);
+    }
 };
 
-struct json_value;
-using json_list = std::vector<std::shared_ptr<json_value>>;
-using json_dict = std::vector<std::pair<std::shared_ptr<json_value>, std::shared_ptr<json_value>>>;
-using json_value_variant = std::variant<std::string, int, json_list, json_dict, json_error>;
-
-struct json_value : json_value_variant {
-    //json_value(const json_value_variant& v) : json_value_variant{v} {}
-    template<typename T> json_value(T&& arg) : json_value_variant{std::forward<T>(arg)} {}
-    //json_value_variant v;
-};
-
-// helper functions
-bool json_is_str(json_value val) { return val.index() == 0; }
-bool json_is_int(json_value val) { return val.index() == 1; }
-bool json_is_list(json_value val) { return val.index() == 2; }
-bool json_is_dict(json_value val) { return val.index() == 3; }
-bool json_is_err(json_value val) { return val.index() == 4; }
-std::string json_as_str(json_value val) { return std::get<0>(val); }
-int json_as_int(json_value val) { return std::get<1>(val); }
-json_list json_as_list(json_value val) { return std::get<2>(val); }
-json_dict json_as_dict(json_value val) { return std::get<3>(val); }
-json_error json_as_err(json_value val) { return std::get<4>(val); }
-
-json_value json_make_error(const char* ptr, std::string str) {
-    return {json_error{ptr, str}};
-}
-
-
-void json_skip_whitespace(const char** begin, const char* end) {
-    while (*begin < end && std::isspace(**begin)) {
-        (*begin)++;
-    }
-}
-
-bool json_comp(const char* begin, const char* end, char c) {
-    return begin < end && *begin == c;
-}
-
-json_value json_parse(const char** begin, const char* end, Logger logger) {
-    // skip whitespace
-
-    if (*begin >= end) {
-        return json_make_error(*begin, "expected value but got EOF");
-    }
-
-    if (json_comp(*begin, end, '{')) {
-        // parse dict
-        (*begin)++; // consume leading '{'
-        json_dict dict;
-        bool expect_comma = false;
-
-        json_skip_whitespace(begin, end);
-        while (!json_comp(*begin, end, '}')) {
-            if (expect_comma) {
-                if (!json_comp(*begin, end, ',')) {
-                    return json_make_error(*begin, "expected ',' or '}'");
-                }
-                (*begin)++; // consume comma
-                json_skip_whitespace(begin, end);
-            }
-            expect_comma = true;
-
-            // Parse key-value pair
-            json_value key = json_parse(begin, end, logger);
-            if (json_is_err(key)) return key;
-            json_skip_whitespace(begin, end);
-            if (!json_comp(*begin, end, ':')) {
-                return json_make_error(*begin, "expected :");
-            }
-            (*begin)++;
-            json_value val = json_parse(begin, end, logger);
-            if (json_is_err(val)) return val;
-            dict.push_back({std::make_shared<json_value>(key), std::make_shared<json_value>(val)});
-
-            json_skip_whitespace(begin, end);
+Transcoder endpoint_ref_encoder{
+    "object_ref", [](LegacyObjectClient* client, std::vector<uint8_t>& buf) {
+        if (buf.size() < sizeof(uintptr_t)) {
+            return false;
         }
 
-        (*begin)++;
-        return {dict};
-
-    } else if (json_comp(*begin, end, '[')) {
-        // parse list
-        (*begin)++; // consume leading '['
-        json_list list;
-        bool expect_comma = false;
-
-        json_skip_whitespace(begin, end);
-        while (!json_comp(*begin, end, ']')) {
-            if (expect_comma) {
-                if (!json_comp(*begin, end, ',')) {
-                    return json_make_error(*begin, "expected ',' or ']'");
-                }
-                (*begin)++; // consume comma
-                json_skip_whitespace(begin, end);
-            }
-            expect_comma = true;
-
-            // Parse item
-            json_value val = json_parse(begin, end, logger);
-            if (json_is_err(val)) return val;
-            list.push_back(std::make_shared<json_value>(val));
-
-            json_skip_whitespace(begin, end);
+        uintptr_t val = *reinterpret_cast<const uintptr_t*>(buf.data());
+        LegacyObject* obj_ptr = reinterpret_cast<LegacyObject*>(val);
+        uint8_t dst[4];
+        write_le<uint16_t>(obj_ptr ? obj_ptr->ep_num : 0, dst);
+        write_le<uint16_t>(obj_ptr ? obj_ptr->json_crc : 0, dst + 2);
+        buf = std::vector<uint8_t>{dst, dst + 4};
+        return true;
+    }};
+Transcoder endpoint_ref_decoder{
+    "object_ref", [](LegacyObjectClient* client, std::vector<uint8_t>& buf) {
+        if (buf.size() < 4) {
+            return false;
         }
 
-        (*begin)++; // consume trailing ']'
-        return {list};
+        uint16_t ep_num = read_le<uint16_t>(buf.data());
+        uint16_t json_crc = read_le<uint16_t>(buf.data() + 2);
 
-    } else if (json_comp(*begin, end, '"')) {
-        // parse string
-        (*begin)++; // consume leading '"'
-        std::string str;
+        LegacyObject* obj_ptr = nullptr;
 
-        while (!json_comp(*begin, end, '"')) {
-            if (*begin >= end) {
-                return json_make_error(*begin, "expected '\"' but got EOF");
+        for (auto& known_obj : client->objects_) {
+            if (known_obj->ep_num == ep_num &&
+                known_obj->json_crc == json_crc) {
+                obj_ptr = known_obj.get();
             }
-            if (json_comp(*begin, end, '\\')) {
-                return json_make_error(*begin, "escaped strings not supported");
-            }
-            str.push_back(**begin);
-            (*begin)++;
         }
 
-        (*begin)++; // consume trailing '"'
-        return {str};
+        buf =
+            std::vector<uint8_t>{(uint8_t*)&obj_ptr, (uint8_t*)(&obj_ptr + 1)};
+        return true;
+    }};
 
-    } else if (std::isdigit(**begin)) {
-        // parse int
+std::unordered_map<std::string, Transcoder*> decoders = {
+    {"endpoint_ref", &endpoint_ref_decoder}};
+std::unordered_map<std::string, Transcoder*> encoders = {
+    {"endpoint_ref", &endpoint_ref_encoder}};
 
-        std::string str;
-        while (*begin < end && std::isdigit(**begin)) {
-            str.push_back(**begin);
-            (*begin)++;
-        }
-
-        return {std::stoi(str)}; // note: this can throw an exception if the int is too long
-
-    } else {
-        return json_make_error(*begin, "unexpected character '" + std::string(*begin, *begin + 1) + "'");
-    }
-}
-
-json_value json_dict_find(json_dict dict, std::string key) {
-    auto it = std::find_if(dict.begin(), dict.end(),
-        [&](std::pair<std::shared_ptr<json_value>, std::shared_ptr<json_value>>& kv){
-            return json_is_str(*kv.first) && json_as_str(*kv.first) == key;
-        });
-    return (it == dict.end()) ? json_make_error(nullptr, "key not found") : *it->second;
-}
-
-// not sure if this function exists in the STL
-template<typename TIt, typename TFunc, typename TNum = decltype(std::declval<TFunc>()(*std::declval<TIt>()))>
-TNum calc_sum(TIt begin, TIt end, TFunc func) {
-    TNum s = {};
-    for (TIt it = begin; it != end; ++it) {
-        s += func(*it);
-    }
-    return s;
-}
-
-std::unordered_map<std::string, size_t> codecs = {
-    {"bool", 1},
-    {"int8", 1},
-    {"uint8", 1},
-    {"int16", 2},
-    {"uint16", 2},
-    {"int32", 4},
-    {"uint32", 4},
-    {"int64", 8},
-    {"uint64", 8},
-    {"float", 4},
-    {"endpoint_ref", 4}
-};
-
-size_t get_codec_size(std::string codec) {
-    auto it = codecs.find(codec);
-    return (it == codecs.end()) ? 0 : it->second;
-}
-
-std::vector<LegacyFibreArg> parse_arglist(const json_value& list_val, Logger logger) {
+std::vector<LegacyFibreArg> parse_arglist(
+    const json_value& list_val,
+    const std::unordered_map<std::string, Transcoder*>& transcoders,
+    Logger logger) {
     std::vector<LegacyFibreArg> arglist;
 
-    for (auto& arg : json_is_list(list_val) ? json_as_list(list_val) : json_list()) {
+    for (auto& arg :
+         json_is_list(list_val) ? json_as_list(list_val) : json_list()) {
         if (!json_is_dict(*arg)) {
             F_LOG_E(logger, "arglist is invalid");
             continue;
         }
         auto dict = json_as_dict(*arg);
-        
+
         json_value name_val = json_dict_find(dict, "name");
         json_value id_val = json_dict_find(dict, "id");
         json_value type_val = json_dict_find(dict, "type");
 
-        if (!json_is_str(name_val) || !json_is_int(id_val) || ((int)(size_t)json_as_int(id_val) != json_as_int(id_val)) || !json_is_str(type_val)) {
+        if (!json_is_str(name_val) || !json_is_int(id_val) ||
+            ((int)(size_t)json_as_int(id_val) != json_as_int(id_val)) ||
+            !json_is_str(type_val)) {
             F_LOG_E(logger, "arglist is invalid");
             continue;
         }
 
+        auto it = transcoders.find(json_as_str(type_val));
 
-        arglist.push_back({
-            json_as_str(name_val),
-            json_as_str(type_val),
-            (json_as_str(type_val) == "endpoint_ref") ? "object_ref" : json_as_str(type_val),
-            get_codec_size(json_as_str(type_val)),
-            (json_as_str(type_val) == "endpoint_ref") ? sizeof(uintptr_t) : get_codec_size(json_as_str(type_val)),
-            (size_t)json_as_int(id_val),
-        });
+        arglist.push_back({json_as_str(name_val),
+                           it == transcoders.end() ? json_as_str(type_val)
+                                                   : it->second->app_codec,
+                           it == transcoders.end() ? nullptr : it->second,
+                           (size_t)json_as_int(id_val)});
     }
 
     return arglist;
 }
 
-void LegacyObjectClient::start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_lost_root_object) {
-    F_LOG_D(protocol_->domain_->ctx->logger, "start");
-    on_found_root_object_ = on_found_root_object;
-    on_lost_root_object_ = on_lost_root_object;
-    json_.clear();
-    receive_more_json();
+void LegacyObjectClient::start(Node* node, Domain* domain,
+                                EndpointClientCallback default_endpoint_client,
+                                std::string path) {
+    node_ = node;
+    domain_ = domain;
+    default_endpoint_client_ = default_endpoint_client;
+    path_ = path;
+
+    chunks_[0] = Chunk(0, data0);
+    chunks_[1] = Chunk::frame_boundary(0);
+
+    Socket* call = default_endpoint_client_.invoke(0, 1, {0}, {0}, this);
+
+    tx_pos_ = BufChain{chunks_}.begin();
+    while (tx_pos_.chunk != BufChain{chunks_}.c_end()) {
+        WriteResult result = call->write(
+            {{tx_pos_, BufChain{chunks_}.c_end()}, kFibreClosed});
+        if (result.is_busy()) {
+            return;
+        }
+        tx_pos_ = result.end;
+    }
 }
 
-std::shared_ptr<LegacyInterface> LegacyObjectClient::get_property_interfaces(std::string codec, bool write) {
+WriteResult LegacyObjectClient::write(WriteArgs args) {
+    while (args.buf.n_chunks()) {
+        if (args.buf.front().is_buf()) {
+            for (uint8_t b : args.buf.front().buf()) {
+                json_.push_back(b);
+            }
+        } else {
+            // end of JSON
+        }
+        args.buf = args.buf.skip_chunks(1);
+    }
+    if (args.status == kFibreClosed) {
+        load_json(json_);
+        json_ = {};  // free memory (but really who cares)
+    }
+    return {args.status, args.buf.begin()};
+}
+
+WriteArgs LegacyObjectClient::on_write_done(WriteResult result) {
+    tx_pos_ = result.end;
+    return {{tx_pos_, BufChain{chunks_}.c_end()}, kFibreClosed};
+}
+
+std::shared_ptr<LegacyInterface> LegacyObjectClient::get_property_interfaces(
+    std::string codec, bool write) {
     auto& dict = write ? rw_property_interfaces : ro_property_interfaces;
 
     auto it = dict.find(codec);
@@ -246,68 +153,88 @@ std::shared_ptr<LegacyInterface> LegacyObjectClient::get_property_interfaces(std
     auto intf_ptr = std::make_shared<LegacyInterface>();
     dict[codec] = intf_ptr;
     LegacyInterface& intf = *intf_ptr;
-    size_t size = get_codec_size(codec);
-    std::string app_codec = codec == "endpoint_ref" ? "object_ref" : codec;
-    size_t app_codec_size = codec == "endpoint_ref" ? sizeof(uintptr_t) : size;
 
-    if (!size || !app_codec_size) {
-        F_LOG_E(protocol_->domain_->ctx->logger, "unknown size for codec " << codec);
-    }
-    
-    intf.name = std::string{} + "fibre.Property<" + (write ? "readwrite" : "readonly") + " " + codec + ">";
-    intf.functions.push_back(std::shared_ptr<LegacyFunction>(new LegacyFunction{this,
-        "read", 0, nullptr, {}, {{"value", codec, app_codec, size, app_codec_size, 0}}}));
+    auto encoder_it = encoders.find(codec);
+    auto decoder_it = decoders.find(codec);
+    Transcoder* encoder =
+        encoder_it == encoders.end() ? nullptr : encoder_it->second;
+    Transcoder* decoder =
+        decoder_it == decoders.end() ? nullptr : decoder_it->second;
+
+    intf.name = std::string{} + "fibre.Property<" +
+                (write ? "readwrite" : "readonly") + " " + codec + ">";
+    intf.functions.push_back(
+        std::shared_ptr<LegacyFunction>(new LegacyFunction{
+            this,
+            "read",
+            0,
+            nullptr,
+            {},
+            {{"value", encoder ? encoder->app_codec : codec, encoder}}}));
     if (write) {
-        intf.functions.push_back(std::shared_ptr<LegacyFunction>(new LegacyFunction{this,
-            "exchange", 0, nullptr, {{"newval", codec, app_codec, size, app_codec_size, 0}}, {{"oldval", codec, app_codec, size, app_codec_size, 0}}}));
+        intf.functions.push_back(
+            std::shared_ptr<LegacyFunction>(new LegacyFunction{
+                this,
+                "exchange",
+                0x4000,
+                nullptr,
+                {{"newval", encoder ? encoder->app_codec : codec, encoder}},
+                {{"oldval", decoder ? decoder->app_codec : codec, decoder}}}));
     }
-    
+
     return intf_ptr;
 }
 
-std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_val) {
-    
-
+std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(
+    json_value list_val) {
     if (!json_is_list(list_val)) {
-        F_LOG_E(protocol_->domain_->ctx->logger, "interface members must be a list");
+        F_LOG_E(domain_->ctx->logger, "interface members must be a list");
         return nullptr;
     }
 
     LegacyObject obj{
-        .client = this,
+        .node = node_,
         .ep_num = 0,
+        .json_crc = json_crc_,
         .intf = std::make_shared<LegacyInterface>(),
     };
     auto obj_ptr = std::make_shared<LegacyObject>(obj);
     LegacyInterface& intf = *obj_ptr->intf;
 
-    for (auto& item: json_as_list(list_val)) {
+    for (auto& item : json_as_list(list_val)) {
         if (!json_is_dict(*item)) {
-            F_LOG_E(protocol_->domain_->ctx->logger, "expected dict");
+            F_LOG_E(domain_->ctx->logger, "expected dict");
             continue;
         }
         auto dict = json_as_dict(*item);
 
         json_value type = json_dict_find(dict, "type");
         json_value name_val = json_dict_find(dict, "name");
-        std::string name = json_is_str(name_val) ? json_as_str(name_val) : "[anonymous]";
+        std::string name =
+            json_is_str(name_val) ? json_as_str(name_val) : "[anonymous]";
 
         if (json_is_str(type) && json_as_str(type) == "object") {
-            std::shared_ptr<LegacyObject> subobj = load_object(json_dict_find(dict, "members"));
+            std::shared_ptr<LegacyObject> subobj =
+                load_object(json_dict_find(dict, "members"));
             intf.attributes.push_back({name, subobj});
 
         } else if (json_is_str(type) && json_as_str(type) == "function") {
             json_value id = json_dict_find(dict, "id");
-            if (!json_is_int(id) || ((int)(size_t)json_as_int(id) != json_as_int(id))) {
+            if (!json_is_int(id) ||
+                ((int)(size_t)json_as_int(id) != json_as_int(id))) {
                 continue;
             }
-            intf.functions.push_back(std::shared_ptr<LegacyFunction>(new LegacyFunction{this,
-                name,
-                (size_t)json_as_int(id),
-                obj_ptr.get(),
-                parse_arglist(json_dict_find(dict, "inputs"), protocol_->domain_->ctx->logger),
-                parse_arglist(json_dict_find(dict, "outputs"), protocol_->domain_->ctx->logger),
-            }));
+            intf.functions.push_back(
+                std::shared_ptr<LegacyFunction>(new LegacyFunction{
+                    this,
+                    name,
+                    (size_t)json_as_int(id),
+                    obj_ptr.get(),
+                    parse_arglist(json_dict_find(dict, "inputs"), encoders,
+                                  domain_->ctx->logger),
+                    parse_arglist(json_dict_find(dict, "outputs"), decoders,
+                                  domain_->ctx->logger),
+                }));
 
         } else if (json_is_str(type) && json_as_str(type) == "json") {
             // Ignore
@@ -315,17 +242,20 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
         } else if (json_is_str(type)) {
             std::string type_str = json_as_str(type);
             json_value access = json_dict_find(dict, "access");
-            std::string access_str = json_is_str(access) ? json_as_str(access) : "r";
+            std::string access_str =
+                json_is_str(access) ? json_as_str(access) : "r";
             bool can_write = access_str.find('w') != std::string::npos;
 
             json_value id = json_dict_find(dict, "id");
-            if (!json_is_int(id) || ((int)(size_t)json_as_int(id) != json_as_int(id))) {
+            if (!json_is_int(id) ||
+                ((int)(size_t)json_as_int(id) != json_as_int(id))) {
                 continue;
             }
 
             LegacyObject subobj{
-                .client = this,
+                .node = node_,
                 .ep_num = (size_t)json_as_int(id),
+                .json_crc = json_crc_,
                 .intf = get_property_interfaces(type_str, can_write),
             };
             auto subobj_ptr = std::make_shared<LegacyObject>(subobj);
@@ -333,7 +263,7 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
             intf.attributes.push_back({name, subobj_ptr});
 
         } else {
-            F_LOG_E(protocol_->domain_->ctx->logger, "unsupported codec");
+            F_LOG_E(domain_->ctx->logger, "unsupported codec");
         }
     }
 
@@ -341,380 +271,51 @@ std::shared_ptr<LegacyObject> LegacyObjectClient::load_object(json_value list_va
     return obj_ptr;
 }
 
-void LegacyObjectClient::receive_more_json() {
-    write_le<uint32_t>(json_.size(), tx_buf_);
-    json_.resize(json_.size() + 1024);
-    bufptr_t rx_buf = {json_.data() + json_.size() - 1024, json_.data() + json_.size()};
-    protocol_->start_endpoint_operation(0, tx_buf_, rx_buf, &op_handle_, MEMBER_CB(this, on_received_json));
-}
+void LegacyObjectClient::load_json(cbufptr_t json) {
+    F_LOG_D(domain_->ctx->logger, "received JSON of length " << json.size());
 
-void LegacyObjectClient::on_received_json(EndpointOperationResult result) {
-    // The JSON read operation completed
+    const char* begin = reinterpret_cast<const char*>(json.begin());
+    auto val = json_parse(&begin, begin + json.size(), domain_->ctx->logger);
 
-    op_handle_ = 0;
-
-    if (result.status == kStreamCancelled) {
+    if (json_is_err(val)) {
+        size_t pos =
+            json_as_err(val).ptr - reinterpret_cast<const char*>(json.begin());
+        F_LOG_E(domain_->ctx->logger,
+                "JSON parsing error: " << json_as_err(val).str
+                                       << " at position " << pos);
         return;
-    } else if (result.status == kStreamClosed) {
-        return;
-    } else if (result.status != kStreamOk) {
-        F_LOG_E(protocol_->domain_->ctx->logger, "JSON read operation failed"); // TODO: add retry logic
+    } else if (!json_is_list(val)) {
+        F_LOG_E(domain_->ctx->logger, "JSON data must be a list");
         return;
     }
 
-    size_t n_received = result.rx_end - json_.data() - json_.size() + 1024;
-    json_.resize(json_.size() - 1024 + n_received);
-
-    if (n_received) {
-        receive_more_json();
-
-    } else {
-
-        F_LOG_D(protocol_->domain_->ctx->logger, "received JSON of length " << json_.size());
-        //F_LOG_D(protocol_->domain_->ctx->logger, "JSON: " << str{json_.data(), json_.data() + json_.size()});
-
-        const char *begin = reinterpret_cast<const char*>(json_.data());
-        auto val = json_parse(&begin, begin + json_.size(), protocol_->domain_->ctx->logger);
-
-        if (json_is_err(val)) {
-            size_t pos = json_as_err(val).ptr - reinterpret_cast<const char*>(json_.data());
-            F_LOG_E(protocol_->domain_->ctx->logger, "JSON parsing error: " << json_as_err(val).str << " at position " << pos);
-            return;
-        } else if (!json_is_list(val)) {
-            F_LOG_E(protocol_->domain_->ctx->logger, "JSON data must be a list");
-            return;
-        }
-
-        F_LOG_D(protocol_->domain_->ctx->logger, "sucessfully parsed JSON");
-        root_obj_ = load_object(val);
-        json_crc_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(PROTOCOL_VERSION, json_.data(), json_.size());
-        if (root_obj_) {
-            on_found_root_object_.invoke_and_clear(this, root_obj_);
-        }
+    F_LOG_D(domain_->ctx->logger, "sucessfully parsed JSON");
+    json_crc_ = calc_crc16<CANONICAL_CRC16_POLYNOMIAL>(
+        PROTOCOL_VERSION, json_.data(), json_.size());
+    root_obj_ = load_object(val);
+    if (root_obj_) {
+        domain_->on_found_root_object(
+            reinterpret_cast<Object*>(root_obj_.get()), root_obj_->intf.get(),
+            path_);
     }
 }
 
-
-FunctionInfo* LegacyFunction::get_info() {
+FunctionInfo* LegacyFunction::get_info() const {
     FunctionInfo* info = new FunctionInfo{
-        .name = name,
-        .inputs = {{"obj", "object_ref"}},
-        .outputs = {}
-    };
-    
-    for (auto& arg: inputs_) {
+        .name = name, .inputs = {{"obj", "object_ref"}}, .outputs = {}};
+
+    for (auto& arg : inputs_) {
         info->inputs.push_back({arg.name, arg.app_codec});
     }
-    for (auto& arg: outputs_) {
+    for (auto& arg : outputs_) {
         info->outputs.push_back({arg.name, arg.app_codec});
     }
 
     return info;
 }
 
-void LegacyFunction::free_info(FunctionInfo* info) {
+void LegacyFunction::free_info(FunctionInfo* info) const {
     delete info;
-}
-
-std::optional<CallBufferRelease> LegacyFunction::call(void** call_handle,
-        CallBuffers buffers,
-        Callback<std::optional<CallBuffers>, CallBufferRelease> callback) {
-    
-    LegacyCallContext* ctx;
-
-    if (!*call_handle) {
-        // Instantiate new call (TODO: free)
-        ctx = new LegacyCallContext();
-        ctx->func_ = this;
-
-        size_t total_tx_decoded_size = sizeof(uintptr_t);
-        for (auto& arg: inputs_) {
-            total_tx_decoded_size += arg.app_size;
-        }
-
-        size_t total_rx_encoded_size = 0;
-        for (auto& arg: outputs_) {
-            total_rx_encoded_size += arg.protocol_size;
-        }
-
-        ctx->tx_buf_.resize(total_tx_decoded_size);
-        ctx->rx_buf_.resize(total_rx_encoded_size);
-
-        *call_handle = ctx;
-    } else {
-        // Resume call
-        ctx = reinterpret_cast<LegacyCallContext*>(*call_handle);
-    }
-
-
-    std::variant<LegacyCallContext::ResultFromApp,
-                 LegacyCallContext::ResultFromProtocol> result = buffers;
-
-    // Run endpoint operations for as long as we can do this synchronously.
-    for (;;) {
-        auto continuation = ctx->get_next_task(result);
-        if (continuation.index() == 0) {
-            return std::get<0>(continuation);
-        } else if (continuation.index() == 1) {
-            auto proto_continuation = std::get<1>(continuation);
-            proto_continuation.client->start_endpoint_operation(
-                    proto_continuation.ep_num, proto_continuation.tx_buf,
-                    proto_continuation.rx_buf, &ctx->op_handle_,
-                    MEMBER_CB(ctx, resume_from_protocol));
-
-            if (!ctx->ep_result.has_value()) {
-                ctx->callback = callback;
-                return std::nullopt; // protocol will resume asynchronously
-            }
-
-            result = *ctx->ep_result;
-            ctx->ep_result = std::nullopt;
-
-            // TODO: ensure progress
-        } else {
-            return CallBufferRelease{kFibreInternalError, ctx->app_tx_end_, ctx->app_rx_buf_.begin()};
-        }
-    }
-
-    return ctx->resume_from_app(buffers, callback);
-}
-
-
-void LegacyCallContext::resume_from_protocol(EndpointOperationResult result) {
-    if (!callback) {
-        // No callback configured. This means that this function is being executed
-        // synchronously from inside LegacyFunction::call(). Set result and return.
-        ep_result = result;
-        return;
-    }
-    op_handle_ = 0;
-
-    std::variant<ResultFromApp, ResultFromProtocol> res = result; 
-
-    for (;;) {
-        auto continuation = get_next_task(res);
-        if (continuation.index() == 0) {
-            auto app_result = callback.invoke(std::get<0>(continuation));
-            if (!app_result.has_value()) {
-                return; // app will resume asynchronously
-            } else if (std::get<0>(continuation).status != kFibreOk) {
-                if (app_result->status != kFibreClosed || app_result->rx_buf.size() || app_result->tx_buf.size()) {
-                    F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "app tried to continue a closed call");
-                }
-                F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "closing call");
-                return;
-            } else {
-                res = *app_result;
-            }
-        } else if (continuation.index() == 1) {
-            auto proto_continuation = std::get<1>(continuation);
-            proto_continuation.client->start_endpoint_operation(
-                    proto_continuation.ep_num, proto_continuation.tx_buf,
-                    proto_continuation.rx_buf, &op_handle_,
-                    MEMBER_CB(this, resume_from_protocol));
-            return; // protocol will return asynchronously
-        } else {
-            callback.invoke({kFibreInternalError, app_tx_end_, app_rx_buf_.begin()});
-            return;
-        }
-    }
-}
-
-bool LegacyObjectClient::transcode(cbufptr_t src, bufptr_t dst, std::string src_codec, std::string dst_codec) {
-    if (src_codec == "object_ref" && dst_codec == "endpoint_ref") {
-        if (src.size() < sizeof(uintptr_t) || dst.size() < 4) {
-            return false;
-        }
-
-        uintptr_t val = *reinterpret_cast<const uintptr_t*>(src.begin());
-        LegacyObject* obj = reinterpret_cast<LegacyObject*>(val);
-        write_le<uint16_t>(obj ? obj->ep_num : 0, &dst);
-        write_le<uint16_t>(obj ? obj->client->json_crc_ : 0, &dst);
-
-    } else if (src_codec == "endpoint_ref" && dst_codec == "object_ref") {
-        if (src.size() < 4 || dst.size() < sizeof(uintptr_t)) {
-            return false;
-        }
-
-        uint16_t ep_num = *read_le<uint16_t>(&src);
-        uint16_t json_crc = *read_le<uint16_t>(&src);
-
-        LegacyObject* obj_ptr = nullptr;
-
-        if (ep_num && json_crc == json_crc_) {
-            for (auto& known_obj: objects_) {
-                if (known_obj->ep_num == ep_num) {
-                    obj_ptr = known_obj.get();
-                }
-            }
-        }
-
-        F_LOG_D(protocol_->domain_->ctx->logger, "placing transcoded ptr " << reinterpret_cast<uintptr_t>(obj_ptr));
-        *reinterpret_cast<uintptr_t*>(dst.begin()) = reinterpret_cast<uintptr_t>(obj_ptr);
-
-    } else {
-        if (src.size() != dst.size()) {
-            return false;
-        }
-
-        memcpy(dst.begin(), src.begin(), src.size());
-    }
-
-    return true;
-}
-
-
-std::variant<LegacyCallContext::ContinueWithApp, LegacyCallContext::ContinueWithProtocol, LegacyCallContext::InternalError> LegacyCallContext::get_next_task(std::variant<ResultFromApp, ResultFromProtocol> continue_from) {
-    if (progress == 0) {
-        if (continue_from.index() != 0) {
-            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "expected continuation from app");
-            return InternalError{};
-        }
-
-        ResultFromApp result_from_app = std::get<0>(continue_from);
-
-        size_t n_copy = std::min(tx_buf_.size() - tx_pos_, result_from_app.tx_buf.size());
-        std::copy_n(result_from_app.tx_buf.begin(), n_copy, tx_buf_.begin() + tx_pos_);
-        result_from_app.tx_buf = result_from_app.tx_buf.skip(n_copy);
-        tx_pos_ += n_copy;
-
-        app_tx_end_ = result_from_app.tx_buf.begin();
-        app_rx_buf_ = result_from_app.rx_buf;
-
-        if (tx_pos_ < tx_buf_.size()) {
-            // application specified kFibreOk? => return kFibreOk
-            // application specified kFibreClosed? => return kFibreClosed
-            return ContinueWithApp{result_from_app.status, app_tx_end_, app_rx_buf_.begin()};
-        }
-
-    } else if (progress <= func_->inputs_.size() + 1 + func_->outputs_.size()) {
-        if (continue_from.index() != 1) {
-            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "expected continuation from protocol");
-            return InternalError{};
-        }
-
-        ResultFromProtocol result_from_protocol = std::get<1>(continue_from);
-
-        if (result_from_protocol.status == kStreamClosed) {
-            return ContinueWithApp{kFibreHostUnreachable, app_tx_end_, app_rx_buf_.begin()};
-        } else if (result_from_protocol.status != kStreamOk) {
-            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "protocol failed with " << result_from_protocol.status << " - propagating error to application");
-            return ContinueWithApp{kFibreHostUnreachable, app_tx_end_, app_rx_buf_.begin()};
-        }
-
-        tx_pos_ = result_from_protocol.tx_end - tx_buf_.data();
-        if (result_from_protocol.rx_end) {
-            rx_pos_ = result_from_protocol.rx_end - rx_buf_.data();
-        }
-
-    } else if (progress == func_->inputs_.size() + 2 + func_->outputs_.size()) {
-        if (continue_from.index() != 0) {
-            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "expected continuation from app");
-            return InternalError{};
-        }
-
-        ResultFromApp result_from_app = std::get<0>(continue_from);
-
-        if (result_from_app.status != kFibreOk && result_from_app.status != kFibreClosed) {
-            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "application failed with " << result_from_app.status << " - dropping this call");
-            return InternalError{};
-        }
-
-        app_tx_end_ = result_from_app.tx_buf.begin();
-        app_rx_buf_ = result_from_app.rx_buf;
-    }
-
-    if (progress == 0) {
-        // Transcode from application codec to protocol codec
-
-        obj_ = *reinterpret_cast<LegacyObject**>(tx_buf_.data());
-        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "object is " << as_hex(reinterpret_cast<uintptr_t>(obj_)));
-        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "tx buf is " << as_hex(cbufptr_t{tx_buf_}));
-
-        if (obj_->client != func_->client) {
-            F_LOG_E(func_->client->protocol_->domain_->ctx->logger, "function called on object of different peer");
-            return InternalError{};
-        }
-
-        std::vector<uint8_t> transcoded;
-        size_t transcoded_size = calc_sum(func_->inputs_.begin(), func_->inputs_.end(),
-            [](LegacyFibreArg& arg) { return arg.protocol_size; });
-        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "transcoding " << func_->inputs_.size() << " inputs from " << tx_buf_.size() << " B to " << transcoded_size << " B");
-        transcoded.resize(transcoded_size);
-        
-        tx_pos_ = sizeof(uintptr_t);
-        size_t transcoded_pos = 0;
-        for (auto& arg: func_->inputs_) {
-            if (!func_->client->transcode({tx_buf_.data() + tx_pos_, arg.app_size},
-                    {transcoded.data() + transcoded_pos, arg.protocol_size},
-                    arg.app_codec, arg.protocol_codec)) {
-                return ContinueWithApp{kFibreInternalError, app_tx_end_, app_rx_buf_.begin()};
-            }
-            transcoded_pos += arg.protocol_size;
-            tx_pos_ += arg.app_size;
-        }
-
-        tx_buf_ = transcoded;
-        tx_pos_ = 0;
-
-    } else if (progress == func_->inputs_.size() + 1 + func_->outputs_.size()) {
-        // Transcode from protocol codec to application codec
-
-        std::vector<uint8_t> transcoded;
-        for (auto& arg: func_->outputs_) {
-            F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "arg size " << arg.app_size);
-        }
-        size_t transcoded_size = calc_sum(func_->outputs_.begin(), func_->outputs_.end(),
-            [](LegacyFibreArg& arg) { return arg.app_size; });
-        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "transcoding " << func_->outputs_.size() << " outputs from " << rx_buf_.size() << " B to " << transcoded_size << " B");
-        transcoded.resize(transcoded_size);
-        
-        rx_pos_ = 0;
-        size_t transcoded_pos = 0;
-        for (auto& arg: func_->outputs_) {
-            if (!func_->client->transcode({rx_buf_.data() + rx_pos_, arg.protocol_size},
-                    {transcoded.data() + transcoded_pos, arg.app_size},
-                    arg.protocol_codec, arg.app_codec)) {
-                return ContinueWithApp{kFibreInternalError, app_tx_end_, app_rx_buf_.begin()};
-            }
-            transcoded_pos += arg.app_size;
-            rx_pos_ += arg.protocol_size;
-        }
-
-        rx_buf_ = transcoded;
-        rx_pos_ = 0;
-
-        F_LOG_T(func_->client->protocol_->domain_->ctx->logger, "rx buf is " << as_hex(cbufptr_t{rx_buf_}));
-    }
-
-    progress++;
-
-    if (progress == 1 && obj_->ep_num) {
-        // Single Endpoint Function - exchange everything in one go
-        progress = func_->inputs_.size() + 1 + func_->outputs_.size();
-        return ContinueWithProtocol{func_->client->protocol_, obj_->ep_num, tx_buf_, rx_buf_};
-
-    } else if (progress <= func_->inputs_.size()) {
-        // send arg
-        auto arg = func_->inputs_[progress - 1];
-        return ContinueWithProtocol{func_->client->protocol_, arg.ep_num, {tx_buf_.data() + tx_pos_, arg.protocol_size}, {}};
-    } else if (progress == func_->inputs_.size() + 1) {
-        // send trigger
-        return ContinueWithProtocol{func_->client->protocol_, func_->ep_num, {}, {}};
-    } else if (progress <= func_->inputs_.size() + 1 + func_->outputs_.size()) {
-        // receive arg
-        auto arg = func_->outputs_[progress - 2 - func_->inputs_.size()];
-        return ContinueWithProtocol{func_->client->protocol_, arg.ep_num, {}, {rx_buf_.data() + rx_pos_, arg.protocol_size}};
-    } else if (progress == func_->inputs_.size() + 2 + func_->outputs_.size()) {
-        // return data to application
-        size_t n_copy = std::min(rx_buf_.size() - rx_pos_, app_rx_buf_.size());
-        std::copy_n(rx_buf_.data() + rx_pos_, n_copy, app_rx_buf_.begin());
-        app_rx_buf_ = app_rx_buf_.skip(n_copy);
-        rx_pos_ += n_copy;
-        return ContinueWithApp{rx_pos_ == rx_buf_.size() ? kFibreClosed : kFibreOk, app_tx_end_, app_rx_buf_.begin()};
-    }
-
-    return InternalError{};
 }
 
 InterfaceInfo* LegacyInterface::get_info() {
@@ -722,15 +323,13 @@ InterfaceInfo* LegacyInterface::get_info() {
 
     info->name = name;
 
-    for (auto& func: functions) {
+    for (auto& func : functions) {
         info->functions.push_back(func.get());
     }
 
-    for (auto& attr: attributes) {
-        info->attributes.push_back({
-            .name = attr.name,
-            .intf = attr.object->intf.get()
-        });
+    for (auto& attr : attributes) {
+        info->attributes.push_back(
+            {.name = attr.name, .intf = attr.object->intf.get()});
     }
 
     return info;
@@ -740,10 +339,290 @@ void LegacyInterface::free_info(InterfaceInfo* info) {
     delete info;
 }
 
-RichStatusOr<Object*> LegacyInterface::get_attribute(Object* parent_obj, size_t attr_id) {
-    fibre::LegacyObject* parent_obj_cast = reinterpret_cast<fibre::LegacyObject*>(parent_obj);
-    F_RET_IF(parent_obj_cast->intf.get() != this, "object does not implement this interface");
-    F_RET_IF(attr_id >= attributes.size(), "attribute ID " << attr_id << " out of range, have only " << attributes.size() << " attributes");
+RichStatusOr<Object*> LegacyInterface::get_attribute(Object* parent_obj,
+                                                      size_t attr_id) {
+    fibre::LegacyObject* parent_obj_cast =
+        reinterpret_cast<fibre::LegacyObject*>(parent_obj);
+    F_RET_IF(parent_obj_cast->intf.get() != this,
+             "object does not implement this interface");
+    F_RET_IF(attr_id >= attributes.size(),
+             "attribute ID " << attr_id << " out of range, have only "
+                             << attributes.size() << " attributes");
     return reinterpret_cast<Object*>(attributes[attr_id].object.get());
 }
 
+struct LegacyCallContext2;
+
+struct TheStateMachine {
+    TheStateMachine(LegacyCallContext2* ctx, int start_arg,
+                    const std::vector<fibre::LegacyFibreArg>& args)
+        : ctx_(ctx), start_arg(start_arg), args_(args) {}
+    Cont iteration(WriteArgs args);
+    Cont iteration(WriteResult result);
+    Cont extended_iteration(WriteArgs args);
+    Cont extended_iteration(WriteResult result);
+    WriteResult write(WriteArgs args, Socket** sink);
+    WriteArgs on_write_done(WriteResult result, Socket** source);
+
+    LegacyCallContext2* ctx_;
+    int start_arg;
+    const std::vector<fibre::LegacyFibreArg>& args_;
+    size_t arg_num_ = 0;
+    std::vector<uint8_t> buf;
+    Chunk chunks_[2];
+    Status status_ = kFibreClosed;
+    bool terminated_ = false;
+    bool changed_state = false;
+    WriteArgs pending;
+};
+
+struct LegacyCallContext2 : TwoSidedSocket {
+    LegacyCallContext2(const LegacyFunction* func, Socket* caller);
+
+    const LegacyFunction* func_;
+
+    Socket* caller_;
+    Socket* callee_;
+
+    TheStateMachine tx_state_machine_;
+    TheStateMachine rx_state_machine_;
+
+    WriteResult downstream_write(WriteArgs args) final;
+    WriteArgs on_upstream_write_done(WriteResult result) final;
+    WriteResult upstream_write(WriteArgs args) final;
+    WriteArgs on_downstream_write_done(WriteResult result) final;
+};
+
+std::vector<uint16_t> get_arg_eps(const std::vector<LegacyFibreArg>& args,
+                                  uint16_t ep_offset) {
+    std::vector<uint16_t> eps;
+    std::transform(
+        args.begin(), args.end(), std::inserter(eps, eps.end()),
+        [&](const LegacyFibreArg& arg) { return arg.ep_num + ep_offset; });
+    return eps;
+}
+
+Cont TheStateMachine::iteration(WriteArgs args) {
+    if (terminated_) {
+        // Closed - drop all input
+        if (args.status == kFibreOk || args.buf.n_chunks()) {
+            F_LOG_W(ctx_->func_->client->domain_->ctx->logger, "received excess data");
+            args.status = kFibreClosed;
+        }
+        return Cont1{args.status, args.buf.end()};
+    }
+
+    if (arg_num_ < start_arg) {
+        // Receiving first argument (object pointer)
+
+        while (args.buf.n_chunks()) {
+            Chunk chunk = args.buf.front();
+            args.buf = args.buf.skip_chunks(1);
+
+            if (chunk.is_buf() && chunk.layer() == 0) {
+                for (auto b : chunk.buf()) {
+                    buf.push_back(b);
+                }
+            } else if (chunk.is_frame_boundary() && chunk.layer() == 0) {
+                if (buf.size() == sizeof(void*)) {
+                    LegacyObject* obj = *(LegacyObject**)&buf[0];
+                    uint16_t endpoint_id = ctx_->func_->ep_num + obj->ep_num;
+                    ctx_->callee_ =
+                        ctx_->func_->client->default_endpoint_client_.invoke(
+                            endpoint_id, obj->json_crc,
+                            get_arg_eps(ctx_->func_->inputs_, obj->ep_num),
+                            get_arg_eps(ctx_->func_->outputs_, obj->ep_num),
+                            ctx_->downfacing_socket());
+                    arg_num_++;
+                    changed_state = true;
+                    return Cont1{kFibreOk, args.buf.begin()};
+                } else {
+                    arg_num_ = args_.size() + start_arg;
+                    status_ = kFibreInternalError;
+                    changed_state = true;
+                    return Cont1{kFibreOk, args.buf.begin()};
+                }
+
+            } else {
+                arg_num_ = args_.size() + start_arg;
+                status_ = kFibreInternalError;
+                changed_state = true;
+                return Cont1{kFibreOk, args.buf.begin()};
+            }
+        }
+        return Cont1{kFibreOk, args.buf.begin()};
+
+    } else if (arg_num_ < start_arg + args_.size() &&
+               args_[arg_num_ - start_arg].transcoder) {
+        Transcoder* transcoder = args_[arg_num_ - start_arg].transcoder;
+        // Receiving transcoded argument
+        while (args.buf.n_chunks()) {
+            Chunk chunk = args.buf.front();
+            args.buf = args.buf.skip_chunks(1);
+
+            if (chunk.is_buf() && chunk.layer() == 0) {
+                for (auto b : chunk.buf()) {
+                    buf.push_back(b);
+                }
+            } else if (chunk.is_frame_boundary() && chunk.layer() == 0) {
+                if (!transcoder->transcode(ctx_->func_->client, buf)) {
+                    arg_num_ = args_.size() + start_arg;
+                    status_ = kFibreInternalError;
+                    changed_state = true;
+                    return Cont1{kFibreOk, args.buf.begin()};
+                }
+                chunks_[0] = Chunk{0, buf};
+                chunks_[1] = Chunk::frame_boundary(0);
+                changed_state = true;
+                pending = args;
+                return Cont0{chunks_, kFibreOk};
+            } else {
+                arg_num_ = args_.size() + start_arg;
+                status_ = kFibreInternalError;
+                changed_state = true;
+                return Cont1{kFibreOk, args.buf.begin()};
+            }
+        }
+        return Cont1{kFibreOk, args.buf.begin()};
+
+    } else if (arg_num_ < start_arg + args_.size()) {
+        // Receiving non-transcoded argument
+        if (!args.buf.n_chunks() && args.status == kFibreOk) {
+            return Cont1{args.status, args.buf.begin()};
+        }
+        CBufIt arg_end = args.buf.find_layer0_bound();
+        if (arg_end != args.buf.end()) {
+            arg_end = CBufIt{arg_end.chunk + 1, (arg_end.chunk + 1)->buf().begin()};
+        }
+        pending = args;
+        return Cont0{args.buf.until(arg_end.chunk), kFibreOk};
+
+    } else {
+        // Closing
+        pending = args;
+        return Cont0{{}, status_};
+    }
+}
+
+Cont TheStateMachine::iteration(WriteResult result) {
+    if (result.status != kFibreOk) {
+        terminated_ = true;
+        return Cont1{result.status, pending.buf.begin()};
+
+    } else if (arg_num_ < start_arg) {
+        // First argument (object pointer)
+        return Cont0{{}, kFibreInternalError};  // shouldn't happen
+
+    } else if (arg_num_ < start_arg + args_.size() &&
+               args_[arg_num_ - start_arg].transcoder) {
+        // Transcoded argument
+        if (result.end.chunk == chunks_ + 2) {
+            arg_num_++;
+            changed_state = true;
+            return extended_iteration(pending);
+        } else {
+            return Cont0{BufChain{result.end, chunks_ + 2}, kFibreOk};
+        }
+
+    } else if (arg_num_ < start_arg + args_.size()) {
+        // Non-transcoded argument
+        BufChain sent = pending.buf.until(result.end.chunk);
+        if (sent.n_chunks() &&
+            sent.back().is_frame_boundary() &&
+            sent.back().layer() == 0) {
+            arg_num_++;
+        }
+        pending.buf = pending.buf.from(result.end);
+        return extended_iteration(pending);
+
+    } else if (!terminated_) {
+        // Closing
+        terminated_ = true;
+        return extended_iteration({pending.buf, result.status});
+
+    } else {
+        // Closed
+        return Cont0{{}, result.status};  // shouldn't happen
+    }
+}
+
+Cont TheStateMachine::extended_iteration(WriteArgs args) {
+    do {
+        changed_state = false;
+
+        auto output = iteration(args);
+
+        if (output.index() == 1) {
+            // iteration ate some of the buffer and gave a new state
+            args.buf = args.buf.from(std::get<1>(output).end);
+        } else if (output.index() == 0) {
+            // iteration returned a buffer
+            return Cont0{std::get<0>(output)};
+        }
+    } while (args.buf.n_chunks() || changed_state);
+    return Cont1{args.status, args.buf.begin()};
+}
+
+Cont TheStateMachine::extended_iteration(WriteResult result) {
+    return iteration(result);
+}
+
+WriteResult TheStateMachine::write(WriteArgs args, Socket** sink) {
+    Cont cont = extended_iteration(args);
+    for (;;) {
+        if (cont.index() == 1) {
+            return std::get<1>(cont);
+        }
+        WriteResult result = (*sink)->write(std::get<0>(cont));
+        if (result.is_busy()) {
+            return WriteResult::busy();
+        }
+        cont = extended_iteration(result);
+    }
+}
+
+WriteArgs TheStateMachine::on_write_done(WriteResult result, Socket** source) {
+    Cont cont = extended_iteration(result);
+    for (;;) {
+        if (cont.index() == 0) {
+            return std::get<0>(cont);
+        }
+        WriteArgs args = (*source)->on_write_done(std::get<1>(cont));
+        if (std::get<1>(cont).status != kFibreOk) {
+            return {{}, std::get<1>(cont).status};
+        }
+        if (args.is_busy()) {
+            return WriteArgs::busy();
+        }
+        cont = extended_iteration(args);
+    }
+}
+
+LegacyCallContext2::LegacyCallContext2(const LegacyFunction* func, Socket* caller)
+    : func_(func),
+      caller_(caller),
+      tx_state_machine_{this, 1, func->inputs_},
+      rx_state_machine_{this, 0, func->outputs_} {}
+
+Socket* LegacyFunction::start_call(Domain* domain, bufptr_t call_frame,
+                                    Socket* caller) const {
+    // Instantiate new call (TODO: free)
+    return alloc_ctx<LegacyCallContext2>(call_frame, this, caller)
+        ->upfacing_socket();
+}
+
+WriteResult LegacyCallContext2::downstream_write(WriteArgs args) {
+    return tx_state_machine_.write(args, &callee_);
+}
+
+WriteArgs LegacyCallContext2::on_downstream_write_done(WriteResult result) {
+    return tx_state_machine_.on_write_done(result, &caller_);
+}
+
+WriteResult LegacyCallContext2::upstream_write(WriteArgs args) {
+    return rx_state_machine_.write(args, &caller_);
+}
+
+WriteArgs LegacyCallContext2::on_upstream_write_done(WriteResult result) {
+    return rx_state_machine_.on_write_done(result, &callee_);
+}

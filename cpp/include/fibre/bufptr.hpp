@@ -2,6 +2,7 @@
 #define __FIBRE_BUFPTR_HPP
 
 #include <stdlib.h>
+#include <array>
 #include <vector>
 
 namespace fibre {
@@ -26,6 +27,10 @@ struct generic_bufptr_t {
 
     template<size_t I>
     generic_bufptr_t(T (&begin)[I]) : generic_bufptr_t(begin, I) {}
+
+    template<size_t I>
+    generic_bufptr_t(std::array<typename std::remove_const<T>::type, I>& array)
+        : generic_bufptr_t(array.data(), I) {}
 
     generic_bufptr_t(std::vector<typename std::remove_const<T>::type>& vector)
         : generic_bufptr_t(vector.data(), vector.size()) {}

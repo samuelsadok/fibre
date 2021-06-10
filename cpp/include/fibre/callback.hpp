@@ -122,8 +122,8 @@ typename MemCb::cb_t make_callback(typename TTraits::TObj* obj) {
 
 #define MEMBER_CB(obj, func) \
     fibre::make_callback< \
-        decltype(&std::remove_reference_t<decltype(*obj)>::func), \
-        &std::remove_reference_t<decltype(*obj)>::func \
+        decltype(&std::remove_reference<decltype(*obj)>::type::func), \
+        &std::remove_reference<decltype(*obj)>::type::func \
     >(obj)
 
 }

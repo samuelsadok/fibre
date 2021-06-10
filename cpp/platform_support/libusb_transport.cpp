@@ -5,6 +5,9 @@
  */
 
 #include "libusb_transport.hpp"
+
+#if FIBRE_ENABLE_LIBUSB_BACKEND
+
 #include "../print_utils.hpp"
 #include <fibre/fibre.hpp>
 
@@ -44,6 +47,12 @@ RichStatus LibusbDiscoverer::init(EventLoop* event_loop, Logger logger) {
     if (libusb_init(&libusb_ctx_) != LIBUSB_SUCCESS) {
         deinit(0);
         return F_MAKE_ERR("libusb_init() failed: " << sys_err());
+    }
+
+    RichStatus status = event_loop_->open_timer(&event_loop_timer_, MEMBER_CB(this, on_event_loop_iteration));
+    if (status.is_error()) {
+        deinit(1);
+        return status;
     }
 
     // Fetch initial list of file-descriptors we have to monitor.
@@ -123,7 +132,13 @@ RichStatus LibusbDiscoverer::init(EventLoop* event_loop, Logger logger) {
         // This code path is taken on Windows
         F_LOG_D(logger_, "Using periodic polling to discover devices");
 
-        poll_devices_now(); // this will also start a timer to poll again periodically
+        RichStatus status = event_loop_->open_timer(&device_polling_timer_, MEMBER_CB(this, poll_devices_now));
+        if (status.is_error()) {
+            deinit(3);
+            return status;
+        }
+        device_polling_timer_->set(kPollingIntervalMs * 0.001f, TimerMode::kPeriodic);
+        poll_devices_now();
     }
 
     // The hotplug callback handler above is not yet thread-safe. To make it thread-safe
@@ -143,7 +158,7 @@ RichStatus LibusbDiscoverer::deinit(int stage) {
     }
     
     if (stage > 3 && device_polling_timer_) {
-        event_loop_->cancel_timer(device_polling_timer_);
+        event_loop_->close_timer(device_polling_timer_);
         device_polling_timer_ = nullptr;
     }
 
@@ -161,6 +176,11 @@ RichStatus LibusbDiscoverer::deinit(int stage) {
 
     if (stage > 1 && !run_internal_event_loop_) {
         libusb_set_pollfd_notifiers(libusb_ctx_, nullptr, nullptr, nullptr);
+    }
+
+    if (stage > 1 && event_loop_timer_) {
+        event_loop_->close_timer(event_loop_timer_);
+        event_loop_timer_ = nullptr;
     }
 
     if (stage > 0 && run_internal_event_loop_) {
@@ -281,11 +301,7 @@ void LibusbDiscoverer::internal_event_loop() {
 }
 
 void LibusbDiscoverer::on_event_loop_iteration() {
-    if (event_loop_timer_) {
-        F_LOG_D(logger_, "cancelling event loop timer");
-        event_loop_->cancel_timer(event_loop_timer_);
-        event_loop_timer_ = nullptr;
-    }
+    F_LOG_IF_ERR(logger_, event_loop_timer_->set(0.0f, TimerMode::kNever), "failed to set timer");
 
     timeval tv = { .tv_sec = 0, .tv_usec = 0 };
     F_LOG_IF(logger_, libusb_handle_events_timeout(libusb_ctx_, &tv) != 0,
@@ -295,9 +311,8 @@ void LibusbDiscoverer::on_event_loop_iteration() {
     if (libusb_get_next_timeout(libusb_ctx_, &timeout)) {
         float timeout_sec = (float)timeout.tv_sec + (float)timeout.tv_usec * 1e-6;
         F_LOG_D(logger_, "setting event loop timeout to " << timeout_sec << " s");
-        F_LOG_IF_ERR(logger_, event_loop_->call_later(timeout_sec,
-            MEMBER_CB(this, on_event_loop_iteration), &event_loop_timer_),
-            "call_later() failed");
+        F_LOG_IF_ERR(logger_, event_loop_timer_->set(timeout_sec, TimerMode::kOnce),
+            "failed to set timer");
     }
 }
 
@@ -419,13 +434,6 @@ void LibusbDiscoverer::poll_devices_now() {
 
         libusb_free_device_list(list, 1 /* unref the devices */);
     }
-
-    // It's possible that the discoverer was deinited during this function.
-    if (event_loop_) {
-        F_LOG_IF_ERR(logger_, event_loop_->call_later(kPollingIntervalMs * 0.001f,
-            MEMBER_CB(this, poll_devices_now), &device_polling_timer_),
-            "call_later() failed");
-    }
 }
 
 void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDiscoveryContext* subscription) {
@@ -485,6 +493,7 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDi
                 }
 
                 Device& my_dev = known_devices_[bus_number << 8 | dev_number];
+                my_dev.name = "USB bus " + std::to_string(bus_number) + " dev " + std::to_string(dev_number);
 
                 // If the same device was already returned in a previous discovery
                 // then it will already be open.
@@ -523,7 +532,7 @@ void LibusbDiscoverer::consider_device(struct libusb_device *device, MyChannelDi
                     ep_out = nullptr;
                 }
 
-                subscription->domain->add_channels({kFibreOk, ep_in, ep_out, mtu, true});
+                subscription->domain->add_legacy_channels({kFibreOk, ep_in, ep_out, mtu, true}, my_dev.name.data());
             }
         }
 
@@ -688,3 +697,5 @@ void LibusbBulkEndpoint<TRes>::on_transfer_finished() {
         parent_->on_hotplug(dev, LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT);
     }
 }
+
+#endif

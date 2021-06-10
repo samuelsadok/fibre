@@ -1,6 +1,8 @@
 #ifndef __FIBRE_RICH_STATUS_HPP
 #define __FIBRE_RICH_STATUS_HPP
 
+#include <fibre/config.hpp>
+
 #include <stdlib.h>
 #include <array>
 #include <fibre/backport/optional.hpp>
@@ -53,6 +55,10 @@ struct [[nodiscard]] RichStatus {
 
     bool is_error() const {
         return n_msgs > 0;
+    }
+
+    bool is_success() const {
+        return !is_error();
     }
 
     template<typename TFunc>

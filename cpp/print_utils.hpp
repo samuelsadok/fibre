@@ -4,6 +4,8 @@
 #include <string>
 #include <ostream>
 #include <fibre/bufptr.hpp>
+#include <fibre/bufchain.hpp>
+#include <limits>
 
 namespace fibre {
 
@@ -111,8 +113,8 @@ HexPrinter<T> as_hex(T val, bool prefix = true) { return HexPrinter<T>(val, pref
 template<typename T>
 class HexArrayPrinter {
 public:
-    HexArrayPrinter(T* ptr, size_t length) : ptr_(ptr), length_(length) {}
-    T* ptr_;
+    HexArrayPrinter(const T* ptr, size_t length) : ptr_(ptr), length_(length) {}
+    const T* ptr_;
     size_t length_;
 };
 
@@ -131,6 +133,31 @@ HexArrayPrinter<T> as_hex(T (&val)[ILength]) { return HexArrayPrinter<T>(val, IL
 
 template<typename T>
 HexArrayPrinter<T> as_hex(generic_bufptr_t<T> buffer) { return HexArrayPrinter<T>(buffer.begin(), buffer.size()); }
+
+template<typename T, size_t Size>
+HexArrayPrinter<T> as_hex(const std::array<T, Size>& arr) { return HexArrayPrinter<T>(arr.data(), Size); }
+
+
+static inline std::ostream& operator <<(std::ostream& stream, const Chunk& chunk) {
+    stream << "L" << (int)chunk.layer() << ": ";
+    if (chunk.is_frame_boundary()) {
+        stream << "frame boundary";
+    } else {
+        stream << chunk.buf().size() << " bytes";
+    }
+    return stream;
+}
+
+static inline std::ostream& operator <<(std::ostream& stream, const BufChain& c) {
+    BufChain chain = c;
+    stream << chain.n_chunks() << " chunks" << (chain.n_chunks() ? ":" : "");
+    while (chain.n_chunks()) {
+        Chunk chunk = chain.front();
+        stream << "\n\t\t" << chunk;
+        chain = chain.skip_chunks(1);
+    }
+    return stream;
+}
 
 }
 

@@ -66,7 +66,7 @@ public:
     }
 
 private:
-    void on_write_complete(WriteResult result) {
+    void on_write_complete(WriteResult0 result) {
         is_active_ = false;
         transfer_handle_ = 0;
 
@@ -103,7 +103,7 @@ class AsyncStreamSinkMultiplexer : public AsyncStreamSink {
 public:
     AsyncStreamSinkMultiplexer(AsyncStreamSink& sink) : sink_(sink) {}
 
-    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) final {
+    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) final {
         for (size_t i = 0; i < NSlots; ++i) {
             auto& [slot_in_use, slot_buf, slot_completer] = slots_[i];
             if (!__atomic_exchange_n(&slot_in_use, true, __ATOMIC_SEQ_CST)) {
@@ -145,7 +145,7 @@ public:
     }
 
 private:
-    void on_write_complete(fibre::WriteResult result) {
+    void on_write_complete(fibre::WriteResult0 result) {
         transfer_handle_ = 0;
 
         auto& [slot_in_use, slot_buf, slot_completer] =  slots_[active_slot_ - 1];
@@ -178,7 +178,7 @@ private:
     }
     
     AsyncStreamSink& sink_;
-    std::tuple<bool, cbufptr_t, Callback<void, WriteResult>> slots_[NSlots];
+    std::tuple<bool, cbufptr_t, Callback<void, WriteResult0>> slots_[NSlots];
     size_t active_slot_ = 0;
     TransferHandle transfer_handle_ = 0;
 };

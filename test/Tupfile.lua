@@ -17,6 +17,7 @@ fibre_pkg = get_fibre_package({
     enable_libusb_backend=false,
     enable_tcp_client_backend=true,
     enable_tcp_server_backend=true,
+    enable_socket_can_backend=true,
 })
 
 CFLAGS += fibre_pkg.cflags

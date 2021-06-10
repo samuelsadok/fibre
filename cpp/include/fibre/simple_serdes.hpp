@@ -124,4 +124,10 @@ static inline T read_le(const uint8_t** buffer, size_t* length) {
     return result;
 }
 
+template<typename T>
+inline T read_le(const uint8_t* buf) {
+    static_assert(is_complete<LittleEndianSerializer<T>>(), "no LittleEndianSerializer is defined for type T");
+    return LittleEndianSerializer<T>::read(&buf, (const uint8_t*)nullptr).value();
+}
+
 #endif

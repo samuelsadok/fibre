@@ -22,7 +22,7 @@ namespace fibre {
  * within an event callback (which executes on the event loop thread), provided
  * those calls are properly synchronized with calls from other threads.
  */
-class EpollEventLoop : public EventLoop {
+class EpollEventLoop final : public EventLoop {
 public:
 
     /**
@@ -37,8 +37,8 @@ public:
     RichStatus post(Callback<void> callback) final;
     RichStatus register_event(int fd, uint32_t events, Callback<void, uint32_t> callback) final;
     RichStatus deregister_event(int fd) final;
-    RichStatus call_later(float delay, Callback<void> callback, EventLoopTimer** p_timer) final;
-    RichStatus cancel_timer(EventLoopTimer* timer) final;
+    RichStatus open_timer(Timer** p_timer, Callback<void> on_trigger) final;
+    RichStatus close_timer(Timer* timer) final;
 
 private:
     struct EventContext {
@@ -46,7 +46,17 @@ private:
         Callback<void, uint32_t> callback;
     };
 
+    struct TimerContext final : Timer {
+        RichStatus set(float interval, TimerMode mode) final;
+        void on_timer(uint32_t);
+        EpollEventLoop* parent;
+        int fd;
+        Callback<void> callback;
+    };
+
+    std::unordered_map<int, EventContext*>::iterator drop_events(int event_fd);
     void run_callbacks(uint32_t);
+    void on_timer(TimerContext* ctx);
 
     int epoll_fd_ = -1;
     Logger logger_ = Logger::none();

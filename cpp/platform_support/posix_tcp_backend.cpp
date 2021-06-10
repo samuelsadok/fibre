@@ -1,5 +1,8 @@
 
 #include "posix_tcp_backend.hpp"
+
+#if FIBRE_ENABLE_TCP_CLIENT_BACKEND || FIBRE_ENABLE_TCP_SERVER_BACKEND
+
 #include "posix_socket.hpp"
 #include <fibre/fibre.hpp>
 #include <signal.h>
@@ -51,8 +54,15 @@ void PosixTcpBackend::start_channel_discovery(Domain* domain, const char* specs,
     n_discoveries_++;
 
     TcpChannelDiscoveryContext* ctx = new TcpChannelDiscoveryContext(); // TODO: free
+    
+    if (F_LOG_IF_ERR(logger_, event_loop_->open_timer(&ctx->timer, MEMBER_CB(ctx, resolve_address)), "failed to open timer")) {
+        delete ctx;
+        return;
+    }
+
     ctx->parent = this;
     ctx->address = {{address_begin, address_end}, port};
+    ctx->display_name = "TCP (" + ctx->address.first + ":" + std::to_string(port) + ")";
     ctx->domain = domain;
     ctx->addr_resolution_ctx = nullptr;
     ctx->resolve_address();
@@ -101,16 +111,14 @@ void PosixTcpBackend::TcpChannelDiscoveryContext::on_found_address(std::optional
         if (known_addresses.size() == 0) {
             // No addresses could be found. Try again using exponential backoff.
             // TODO: cancel timer on shutdown
-            F_LOG_IF_ERR(parent->logger_,
-                         parent->event_loop_->call_later(lookup_period, MEMBER_CB(this, resolve_address), nullptr),
+            F_LOG_IF_ERR(parent->logger_, timer->set(lookup_period, TimerMode::kOnce),
                          "failed to set timer");
             lookup_period = std::min(lookup_period * 3.0f, 3600.0f); // exponential backoff with at most 1h period
         } else {
             // Some addresses are known from this lookup or from a previous
             // lookup. Resolve addresses again in 1h.
             // TODO: cancel timer on shutdown
-            F_LOG_IF_ERR(parent->logger_,
-                         parent->event_loop_->call_later(3600.0, MEMBER_CB(this, resolve_address), nullptr),
+            F_LOG_IF_ERR(parent->logger_, timer->set(3600.0, TimerMode::kOnce),
                          "failed to set timer");
         }
     }
@@ -121,7 +129,7 @@ void PosixTcpBackend::TcpChannelDiscoveryContext::on_connected(RichStatus status
         auto socket = new PosixSocket{}; // TODO: free
         status = socket->init(parent->event_loop_, parent->logger_, socket_id);
         if (!status.is_error()) {
-            domain->add_channels({kFibreOk, socket, socket, SIZE_MAX, false});
+            domain->add_legacy_channels({kFibreOk, socket, socket, SIZE_MAX, false}, display_name.data());
             return;
         }
         delete socket;
@@ -138,3 +146,5 @@ void PosixTcpBackend::TcpChannelDiscoveryContext::on_disconnected() {
     lookup_period = 1.0f; // reset exponential backoff
     resolve_address();
 }
+
+#endif

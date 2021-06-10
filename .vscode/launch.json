@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "fibre-shell",
+            "name": "fibre-shell (libfibre)",
             "type": "cppdbg",
             "request": "launch",
             "program": "/usr/bin/python",
@@ -28,7 +28,14 @@
             }
         },
         {
-            "name": "Python Test Client",
+            "name": "fibre-shell (PyFibre)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/fibre-shell",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python Test Client (libfibre)",
             "type": "cppdbg",
             "request": "launch",
             "program": "/usr/bin/python",
@@ -51,6 +58,14 @@
             }
         },
         {
+            "name": "Python Test Client (Python)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/test/test_client.py",
+            "env": {"FIBRE_LOG": "5"},
+            "console": "integratedTerminal"
+        },
+        {
             "name": "C++ Test Server",
             "type": "cppdbg",
             "request": "launch",
@@ -60,7 +75,7 @@
             "environment": [{"name": "FIBRE_LOG", "value": "5"}],
             "externalConsole": false,
             "MIMode": "gdb",
-            "args": ["--server", "--domain", "tcp-server:address=localhost,port=14220"],
+            "args": ["--server", "--domain", "tcp-server:address=localhost,port=14220,can:if=vcan0"],
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",

@@ -1,9 +1,12 @@
 
 #include "test_node.hpp"
+#include <fibre/../../platform_support/socket_can.hpp>
 #include <fibre/fibre.hpp>
+#include <fibre/func_utils.hpp>
 #include <autogen/interfaces.hpp>
 #include <algorithm>
 #include <iostream>
+#include <random>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -72,15 +75,27 @@ TestIntf1Intf* test_object_ptr = &test_object_wrapper;
 
 using namespace fibre;
 
-RichStatus TestNode::start(fibre::EventLoop* event_loop,
+RichStatus TestNode::start(fibre::EventLoop* event_loop, const uint8_t* node_id,
                            std::string domain_path, bool enable_server,
                            bool enable_client, fibre::Logger logger) {
     logger_ = logger;
-    fibre::Context* fibre_ctx;
+    fibre::Fibre* fibre_ctx;
     F_RET_IF_ERR(fibre::open(event_loop, logger, &fibre_ctx),
                  "failed to open fibre");
 
-    domain_ = fibre_ctx->create_domain(domain_path);
+    // can.init(event_loop, "vcan0");
+    // can.send_message(0, {
+    //    .id = 0x123,
+    //    .len = 3,
+    //    .buf = "asd",
+    //}, {});
+
+    // fibre::SocketCan can;
+    // fibre::SocketCanBackend can_backend;
+
+    // can_backend.wait_for_if(event_loop, "vcan0");
+
+    domain_ = fibre_ctx->create_domain(domain_path, node_id, enable_client);
 
     if (enable_server) {
         // TODO: implement dynamic publishing of objects. Currently
@@ -100,40 +115,8 @@ RichStatus TestNode::start(fibre::EventLoop* event_loop,
     return RichStatus::success();
 }
 
-void SyncUnwrapper::call(
-    bufptr_t inputs, size_t output_size,
-    Callback<void, SyncUnwrapper*, Status, cbufptr_t> on_call_finished) {
-    if (inputs.size() > sizeof(tx_buf)) {
-        on_call_finished.invoke(this, kFibreOutOfMemory, {});
-    } else if (output_size > sizeof(rx_buf)) {
-        on_call_finished.invoke(this, kFibreOutOfMemory, {});
-    }
-    std::copy(inputs.begin(), inputs.end(), tx_buf);
-
-    on_call_finished_ = on_call_finished;
-    tx_bufptr = {tx_buf, inputs.size()};
-    rx_bufptr = {rx_buf, output_size};
-
-    func->call(&ctx, {kFibreClosed, tx_bufptr, rx_bufptr},
-               MEMBER_CB(this, on_continue));
-}
-
-std::optional<CallBuffers> SyncUnwrapper::on_continue(
-    CallBufferRelease call_buffers) {
-    tx_bufptr.begin() = call_buffers.tx_end;
-    rx_bufptr.begin() = call_buffers.rx_end;
-
-    if (call_buffers.status != kFibreOk) {
-        on_call_finished_.invoke(this, call_buffers.status,
-                                 {rx_buf, rx_bufptr.begin()});
-        return std::nullopt;
-    }
-
-    return CallBuffers{kFibreClosed, tx_bufptr, rx_bufptr};
-}
-
-void TestNode::on_found_object(fibre::Object* obj, fibre::Interface* intf) {
-    F_LOG_D(logger_, "discovered Object!");
+void TestNode::on_found_object(fibre::Object* obj, fibre::Interface* intf, std::string path) {
+    F_LOG_D(logger_, "discovered Object on " + path);
     fibre::InterfaceInfo* info = intf->get_info();
 
     auto it = std::find_if(info->functions.begin(), info->functions.end(),
@@ -149,10 +132,11 @@ void TestNode::on_found_object(fibre::Object* obj, fibre::Interface* intf) {
     } else {
         F_LOG_D(logger_, "calling func00...");
 
-        SyncUnwrapper* call = new SyncUnwrapper{*it};
+        CoroAsFunc* call = new CoroAsFunc{*it};
         uint8_t tx_buf[sizeof(Object*)];
         *(Object**)tx_buf = obj;
-        call->call(tx_buf, 0, MEMBER_CB(this, on_finished_call));
+        cbufptr_t args[] = {tx_buf};
+        call->call(&args[0], 1, MEMBER_CB(this, on_finished_call));
     }
 
     intf->free_info(info);
@@ -160,10 +144,10 @@ void TestNode::on_found_object(fibre::Object* obj, fibre::Interface* intf) {
 
 void TestNode::on_lost_object(fibre::Object* obj) {}
 
-void TestNode::on_finished_call(SyncUnwrapper* call, Status status,
-                                cbufptr_t out) {
+void TestNode::on_finished_call(Socket* call, Status status,
+                                const cbufptr_t* out, size_t n_out) {
     F_LOG_D(logger_, "call finished");
-    delete call;
+    delete static_cast<CoroAsFunc*>(call);
 }
 
 #if STANDALONE_NODE
@@ -201,11 +185,17 @@ int main(int argc, const char** argv) {
     fibre::Logger logger = fibre::Logger{{fibre::log_to_stderr, nullptr},
                                          fibre::get_log_verbosity()};
 
+    std::random_device engine;
+    unsigned node_id[(16 + sizeof(unsigned) - 1) / sizeof(unsigned)];
+    for (size_t i = 0; i < sizeof(node_id) / sizeof(unsigned); ++i) {
+        node_id[i] = engine();
+    }
+
     fibre::RichStatus result =
         fibre::launch_event_loop(logger, [&](fibre::EventLoop* event_loop) {
             printf("Hello from event loop...\n");
-            auto res2 = node.start(event_loop, *domain_path, enable_server,
-                                   enable_client, logger);
+            auto res2 = node.start(event_loop, (uint8_t*)node_id, *domain_path,
+                                   enable_server, enable_client, logger);
             F_LOG_IF_ERR(logger, res2, "failed to start node");
         });
 

@@ -8,7 +8,7 @@ end
 
 tup.include('package.lua')
 
-CFLAGS = {'-fPIC -std=c++11 -DFIBRE_COMPILE -Wall'}
+CFLAGS = {'-fPIC -std=c++11 -DFIBRE_COMPILE -Wall -I.'}
 LDFLAGS = {'-static-libstdc++'}
 
 
@@ -69,6 +69,7 @@ elseif string.find(machine, "arm64.*-apple-.*") then
 elseif string.find(machine, "wasm.*") then
     outname = 'libfibre-wasm.js'
     STRIP = false
+    enable_tcp = false
     BUILD_TYPE = ''
 else
     error('unknown machine identifier '..machine)
@@ -77,7 +78,7 @@ end
 LDFLAGS += BUILD_TYPE
 
 if DEBUG then
-    CFLAGS += '-O1 -g'
+    CFLAGS += '-Os -g'
 else
     CFLAGS += '-O3' -- TODO: add back -lfto
 end
@@ -102,6 +103,7 @@ pkg = get_fibre_package({
     enable_tcp_server_backend=get_bool_config("ENABLE_TCP_SERVER_BACKEND", enable_tcp),
     enable_tcp_client_backend=get_bool_config("ENABLE_TCP_CLIENT_BACKEND", enable_tcp),
     enable_libusb_backend=get_bool_config("ENABLE_LIBUSB_BACKEND", true),
+    enable_socket_can_backend=get_bool_config("ENABLE_SOCKETCAN_BACKEND", true),
     allow_heap=true,
     pkgconf=(tup.getconfig("USE_PKGCONF") != "") and tup.getconfig("USE_PKGCONF") or nil
 })
@@ -127,14 +129,14 @@ else
 end
 
 if tup.ext(outname) == 'js' then
-    extra_outputs = {tup.base(compile_outname)..'.wasm'}
+    extra_outputs = {'build/'..tup.base(compile_outname)..'.wasm'}
 else
     extra_outputs = {}
 end
 
 tup.frule{
     inputs=object_files,
-    command='^c^ '..LINKER..' %f '..tostring(CFLAGS)..' '..tostring(LDFLAGS)..' -o %o',
+    command='^c^ '..LINKER..' %f '..tostring(CFLAGS)..' '..tostring(LDFLAGS)..' -Wl,--undefined=environ_get -o %o',
     outputs={compile_outname, extra_outputs=extra_outputs}
 }
 

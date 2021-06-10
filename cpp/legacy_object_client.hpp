@@ -1,61 +1,73 @@
 #ifndef __FIBRE_LEGACY_OBJECT_MODEL_HPP
 #define __FIBRE_LEGACY_OBJECT_MODEL_HPP
 
-#include <fibre/async_stream.hpp>
+#include <fibre/backport/variant.hpp>
+#include <fibre/callback.hpp>
+#include <fibre/fibre.hpp>
+#include <fibre/function.hpp>
+#include <fibre/interface.hpp>
 #include <unordered_map>
 #include <vector>
 #include <memory>
 #include <string>
-#include <fibre/backport/variant.hpp>
-#include <fibre/callback.hpp>
-#include <fibre/fibre.hpp>
 
 struct json_value;
 
 namespace fibre {
 
-struct EndpointOperationResult {
-    StreamStatus status;
-    const uint8_t* tx_end;
-    uint8_t* rx_end;
-};
+struct LegacyProtocolPacketBased;
+struct Transcoder;
+struct LegacyObject;
+class LegacyObjectClient;
+struct LegacyInterface;
 
 // Lower 16 bits are the seqno. Upper 16 bits are all 1 for valid handles
 // (such that seqno 0 doesn't cause the handle to be 0)
 using EndpointOperationHandle = uint32_t;
 
-struct LegacyProtocolPacketBased;
+struct EndpointOperationResult {
+    EndpointOperationHandle op;
+    StreamStatus status;
+    const uint8_t* tx_end;
+    uint8_t* rx_end;
+};
 
 struct LegacyFibreArg {
     std::string name;
-    std::string protocol_codec;
     std::string app_codec;
-    size_t protocol_size;
-    size_t app_size;
+    Transcoder* transcoder;
     size_t ep_num;
 };
 
-struct LegacyObject;
 
 struct LegacyFunction final : Function {
-    LegacyFunction(LegacyObjectClient* client, std::string name, size_t ep_num, LegacyObject* obj, std::vector<LegacyFibreArg> inputs, std::vector<LegacyFibreArg> outputs)
-        : Function{}, client(client), name(name), ep_num(ep_num), obj_(obj), inputs_(inputs), outputs_(outputs) {}
+    LegacyFunction(LegacyObjectClient* client, std::string name,
+                    size_t ep_num, LegacyObject* obj,
+                    std::vector<LegacyFibreArg> inputs,
+                    std::vector<LegacyFibreArg> outputs)
+        : Function{},
+          client(client),
+          name(name),
+          ep_num(ep_num),
+          obj_(obj),
+          inputs_(inputs),
+          outputs_(outputs) {}
 
-    std::optional<CallBufferRelease>
-    call(void**, CallBuffers, Callback<std::optional<CallBuffers>, CallBufferRelease>) final;
-    FunctionInfo* get_info() final;
-    void free_info(FunctionInfo* info) final;
+    virtual Socket* start_call(
+        Domain* domain, bufptr_t call_frame, Socket* caller) const final;
+
+    FunctionInfo* get_info() const final;
+    void free_info(FunctionInfo* info) const final;
 
     LegacyObjectClient* client;
     std::string name;
-    size_t ep_num; // 0 for property read/write/exchange functions
-    LegacyObject* obj_; // null for property read/write/exchange functions (all other functions are associated with one object only)
+    size_t ep_num;  // 0 for property read/write/exchange functions
+    LegacyObject*
+        obj_;  // null for property read/write/exchange functions (all other
+               // functions are associated with one object only)
     std::vector<LegacyFibreArg> inputs_;
     std::vector<LegacyFibreArg> outputs_;
 };
-
-struct LegacyInterface;
-class LegacyObjectClient;
 
 struct LegacyFibreAttribute {
     std::string name;
@@ -64,95 +76,78 @@ struct LegacyFibreAttribute {
 
 struct LegacyInterface final : Interface {
     std::string name;
-    std::vector<std::shared_ptr<LegacyFunction>> functions;
+    std::vector<std::shared_ptr<Function>> functions;
     std::vector<LegacyFibreAttribute> attributes;
 
     InterfaceInfo* get_info() final;
     void free_info(InterfaceInfo* info) final;
-    RichStatusOr<Object*> get_attribute(Object* parent_obj, size_t attr_id) final;
+    RichStatusOr<Object*> get_attribute(Object* parent_obj,
+                                        size_t attr_id) final;
 };
 
 struct LegacyObject {
-    LegacyObjectClient* client;
+    Node* node;
     size_t ep_num;
+    uint16_t json_crc;
     std::shared_ptr<LegacyInterface> intf;
 };
 
-struct LegacyCallContext {
-    LegacyFunction* func_;
+using EndpointClientCallback = Callback<Socket*, uint16_t, uint16_t, std::vector<uint16_t>, std::vector<uint16_t>, Socket*>;
 
-    size_t progress = 0; //!< 0: expecting more tx data
-                         //!< [1...n_inputs]: endpoint operations for sending inputs
-                         //!< n_inputs + 1: trigger endpoint operation
-                         //!< [n_inputs + 2, n_inputs + 2 + n_outputs]: endpoint operations for receiving outputs
-                         //!< n_inputs + 3 + n_outputs: reporting outputs to application
-                         
-    EndpointOperationHandle op_handle_ = 0;
-
-    std::vector<uint8_t> tx_buf_;
-    size_t tx_pos_ = 0;
-    std::vector<uint8_t> rx_buf_;
-    size_t rx_pos_ = 0;
-
-    const uint8_t* app_tx_end_;
-    bufptr_t app_rx_buf_;
-
-    Callback<std::optional<CallBuffers>, CallBufferRelease> callback;
-    std::optional<EndpointOperationResult> ep_result;
-
-    LegacyObject* obj_;
-
-    std::optional<CallBufferRelease>
-    resume_from_app(CallBuffers, Callback<std::optional<CallBuffers>, CallBufferRelease>);
-
-    void resume_from_protocol(EndpointOperationResult result);
-
-    struct ContinueWithProtocol {
-        LegacyProtocolPacketBased* client;
-        size_t ep_num;
-        cbufptr_t tx_buf;
-        bufptr_t rx_buf;
-    };
-
-    using ContinueWithApp = CallBufferRelease;
-    using ResultFromProtocol = EndpointOperationResult;
-    using ResultFromApp = CallBuffers;
-    struct InternalError {};
-
-    // Returns control either to the application or to the next endpoint operation
-    std::variant<ContinueWithApp, ContinueWithProtocol, InternalError> get_next_task(std::variant<ResultFromApp, ResultFromProtocol> continue_from);
-};
-
-class LegacyObjectClient {
+class LegacyObjectClient : public Socket {
 public:
-    LegacyObjectClient(LegacyProtocolPacketBased* protocol) : protocol_(protocol) {}
+    void start(Node* node, Domain* domain_, EndpointClientCallback default_endpoint_client, std::string path);
 
-    void start(Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object, Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_lost_root_object);
-    bool transcode(cbufptr_t src, bufptr_t dst, std::string src_codec, std::string dst_codec);
-
-    // For direct access by LegacyProtocolPacketBased and libfibre.cpp
-    uint16_t json_crc_ = 0;
-    Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_lost_root_object_;
-    std::shared_ptr<LegacyObject> root_obj_;
-    std::vector<std::shared_ptr<LegacyObject>> objects_;
-    void* user_data_; // used by libfibre to store the libfibre context pointer
-    LegacyProtocolPacketBased* protocol_;
-
-private:
-    std::shared_ptr<LegacyInterface> get_property_interfaces(std::string codec, bool write);
+    std::shared_ptr<LegacyInterface> get_property_interfaces(std::string codec,
+                                                              bool write);
     std::shared_ptr<LegacyObject> load_object(json_value list_val);
-    void receive_more_json();
-    void on_received_json(EndpointOperationResult result);
+    void load_json(cbufptr_t json);
 
-    Callback<void, LegacyObjectClient*, std::shared_ptr<LegacyObject>> on_found_root_object_;
-    uint8_t tx_buf_[4] = {0xff, 0xff, 0xff, 0xff};
-    EndpointOperationHandle op_handle_ = 0;
+    WriteResult write(WriteArgs args) final;
+    WriteArgs on_write_done(WriteResult result) final;
+
+    // call endpoint 0
+    uint8_t data0[4] = {0x00, 0x00, 0x00, 0x00};
+
+    Node* node_;
+    Domain* domain_;
+    EndpointClientCallback default_endpoint_client_;
+    std::string path_; // TODO: get dynamically from node
+    CBufIt tx_pos_;
     std::vector<uint8_t> json_;
-    //std::vector<LegacyCallContext*> pending_calls_;
-    std::unordered_map<std::string, std::shared_ptr<LegacyInterface>> rw_property_interfaces;
-    std::unordered_map<std::string, std::shared_ptr<LegacyInterface>> ro_property_interfaces;
+    uint16_t json_crc_;
+    std::vector<std::shared_ptr<LegacyObject>> objects_;
+    std::shared_ptr<LegacyObject> root_obj_ = nullptr;
+    Chunk chunks_[2];
+    std::unordered_map<std::string, std::shared_ptr<LegacyInterface>>
+        rw_property_interfaces;
+    std::unordered_map<std::string, std::shared_ptr<LegacyInterface>>
+        ro_property_interfaces;
 };
 
+template<typename T, typename... TArgs>
+T* alloc_ctx(bufptr_t buf, TArgs... args) {
+#if FIBRE_ALLOW_HEAP
+    return new T{args...};
+#else
+    if (buf.size() >= sizeof(T)) {
+        return new ((T*)buf.begin()) T{args...};
+    }
+    return nullptr;
+#endif
 }
 
-#endif // __FIBRE_LEGACY_OBJECT_MODEL_HPP
+template<typename T> void delete_ctx(T* ptr) {
+#if FIBRE_ALLOW_HEAP
+    delete ptr;
+#else
+    if (ptr) {
+        ptr->~T();
+        return;
+    }
+#endif
+}
+
+}  // namespace fibre
+
+#endif  // __FIBRE_LEGACY_OBJECT_MODEL_HPP

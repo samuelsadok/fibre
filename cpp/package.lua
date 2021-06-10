@@ -69,16 +69,6 @@ function get_fibre_package(args)
         pkgconf = real_pkgconf
     end
 
-    pkg.cflags += '-DFIBRE_ENABLE_SERVER='..(args.enable_server and '1' or '0')
-    pkg.cflags += '-DFIBRE_ENABLE_CLIENT='..(args.enable_client and '1' or '0')
-    pkg.cflags += '-DFIBRE_ENABLE_EVENT_LOOP='..(args.enable_event_loop and '1' or '0')
-    pkg.cflags += '-DFIBRE_ALLOW_HEAP='..(args.allow_heap and '1' or '0')
-    pkg.cflags += '-DFIBRE_MAX_LOG_VERBOSITY='..(args.max_log_verbosity or '5')
-    pkg.cflags += '-DFIBRE_ENABLE_TEXT_LOGGING='..(args.enable_text_logging or '1')
-    pkg.cflags += '-DFIBRE_ENABLE_LIBUSB_BACKEND='..(args.enable_libusb_backend and '1' or '0')
-    pkg.cflags += '-DFIBRE_ENABLE_TCP_SERVER_BACKEND='..(args.enable_tcp_server_backend and '1' or '0')
-    pkg.cflags += '-DFIBRE_ENABLE_TCP_CLIENT_BACKEND='..(args.enable_tcp_client_backend and '1' or '0')
-
     if args.enable_libusb_backend then
         pkg.code_files += 'platform_support/libusb_transport.cpp'
         pkgconf(pkg, "libusb-1.0")
@@ -87,21 +77,26 @@ function get_fibre_package(args)
         pkg.ldflags += '-lpthread'
     end
     if args.enable_client then
+        --pkg.code_files += 'legacy_object_client.cpp'
         pkg.code_files += 'legacy_object_client.cpp'
     end
     if args.enable_server then
         pkg.code_files += 'legacy_object_server.cpp'
     end
-    if args.enable_client or args.enable_server then
-        pkg.code_files += 'legacy_protocol.cpp'
-    end
-    if args.enable_event_loop then
-        pkg.code_files += 'platform_support/epoll_event_loop.cpp'
-    end
+
+    pkg.code_files += 'legacy_protocol.cpp'
+    pkg.code_files += 'connection.cpp'
+    pkg.code_files += 'endpoint_connection.cpp'
+    pkg.code_files += 'multiplexer.cpp'
+    pkg.code_files += 'func_utils.cpp'
+    pkg.code_files += 'platform_support/epoll_event_loop.cpp'
+    pkg.code_files += 'platform_support/socket_can.cpp'
+    pkg.code_files += 'platform_support/can_adapter.cpp'
+    pkg.code_files += 'platform_support/posix_tcp_backend.cpp'
+    pkg.code_files += 'platform_support/posix_socket.cpp'
+
     if args.enable_tcp_client_backend or args.enable_tcp_server_backend then
         -- TODO: chose between windows and posix backend
-        pkg.code_files += 'platform_support/posix_tcp_backend.cpp'
-        pkg.code_files += 'platform_support/posix_socket.cpp'
         pkg.ldflags += '-lanl'
     end
 

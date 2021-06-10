@@ -1,6 +1,9 @@
 #ifndef __FIBRE_LOGGING_HPP
 #define __FIBRE_LOGGING_HPP
 
+#include <fibre/config.hpp>
+
+#include <fibre/callback.hpp>
 #include <stdint.h>
 
 #if FIBRE_ENABLE_TEXT_LOGGING
@@ -143,5 +146,7 @@ const T& with(const T& val, TFunc func) {
 #define F_LOG_E(logger, msg) \
     (logger).log(__FILE__, __LINE__, (int)fibre::LogLevel::kError, 0, 0, STR_BUILDER(msg))
 
+// TODO: fix
+#define F_LOG_W F_LOG_E
 
 #endif // __FIBRE_LOGGING_HPP

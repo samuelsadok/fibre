@@ -77,10 +77,18 @@ public:
         return (T*)content_;
     }
 
+    size_t has_value() const { return has_value_; }
+
+    inline T& value() {
+        return *(T*)content_;
+    }
+
+    inline const T& value() const {
+        return *(T*)content_;
+    }
+
     storage_t content_;
     size_t has_value_;
-
-    size_t has_value() const { return has_value_; }
 };
 
 template<typename T>

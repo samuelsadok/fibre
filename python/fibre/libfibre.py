@@ -78,16 +78,16 @@ else:
 PostSignature = CFUNCTYPE(c_int, CFUNCTYPE(None, c_void_p), POINTER(c_int))
 RegisterEventSignature = CFUNCTYPE(c_int, c_int, c_uint32, CFUNCTYPE(None, c_void_p, c_int), POINTER(c_int))
 DeregisterEventSignature = CFUNCTYPE(c_int, c_int)
-CallLaterSignature = CFUNCTYPE(c_void_p, c_float, CFUNCTYPE(None, c_void_p), POINTER(c_int))
-CancelTimerSignature = CFUNCTYPE(c_int, c_void_p)
+OpenTimerSignature = CFUNCTYPE(c_int, POINTER(c_void_p), CFUNCTYPE(None, c_void_p), POINTER(c_int))
+SetTimerSignature = CFUNCTYPE(c_int, c_void_p, c_float, c_int)
+CloseTimerSignature = CFUNCTYPE(c_int, c_void_p)
 
 LogSignature = CFUNCTYPE(None, c_void_p, c_char_p, c_uint, c_int, c_size_t, c_size_t, c_char_p)
 
-OnFoundObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p)
+OnFoundObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_void_p, c_char_p, c_size_t)
 OnLostObjectSignature = CFUNCTYPE(None, c_void_p, c_void_p)
 OnStoppedSignature = CFUNCTYPE(None, c_void_p, c_int)
 
-OnCallCompletedSignature = CFUNCTYPE(c_int, c_void_p, c_int, c_void_p, c_void_p, POINTER(c_void_p), POINTER(c_size_t), POINTER(c_void_p), POINTER(c_size_t))
 OnTxCompletedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_int, c_void_p)
 OnRxCompletedSignature = CFUNCTYPE(None, c_void_p, c_void_p, c_int, c_void_p)
 
@@ -99,6 +99,10 @@ kFibreInvalidArgument = 4
 kFibreInternalError = 5
 kFibreProtocolError = 6
 kFibreHostUnreachable = 7
+
+kStartCall = 0
+kWrite = 1
+kWriteDone = 2
 
 class LibFibreVersion(Structure):
     _fields_ = [
@@ -115,8 +119,9 @@ class LibFibreEventLoop(Structure):
         ("post", PostSignature),
         ("register_event", RegisterEventSignature),
         ("deregister_event", DeregisterEventSignature),
-        ("call_later", CallLaterSignature),
-        ("cancel_timer", CancelTimerSignature),
+        ("open_timer", OpenTimerSignature),
+        ("set_timer", SetTimerSignature),
+        ("close_timer", CloseTimerSignature),
     ]
 
 class LibFibreLogger(Structure):
@@ -153,16 +158,63 @@ class LibFibreInterfaceInfo(Structure):
         ("n_functions", c_size_t),
     ]
 
+class LibFibreChunk(Structure):
+    _fields_ = [
+        ("layer", c_uint8),
+        ("begin", c_void_p),
+        ("end", c_void_p),
+    ]
+
+class LibFibreStartCallTask(Structure):
+    _fields_ = [
+        ("func", c_void_p),
+        ("domain", c_void_p),
+    ]
+
+class LibFibreWriteTask(Structure):
+    _fields_ = [
+        ("b_begin", c_void_p),
+        ("c_begin", POINTER(LibFibreChunk)),
+        ("c_end", POINTER(LibFibreChunk)),
+        ("elevation", c_int8),
+        ("status", c_int),
+    ]
+
+class LibFibreWriteDoneTask(Structure):
+    _fields_ = [
+        ("status", c_int),
+        ("c_end", POINTER(LibFibreChunk)),
+        ("b_end", c_char_p),
+    ]
+
+class LibFibreTaskContent(Union):
+    _fields_ = [
+        ("start_call", LibFibreStartCallTask),
+        ("write", LibFibreWriteTask),
+        ("write_done", LibFibreWriteDoneTask),
+    ]
+
+class LibFibreTask(Structure):
+    _fields_ = [
+        ("type", c_int),
+        ("handle", c_size_t),
+        ("content", LibFibreTaskContent),
+    ]
+
+OnRunTasksSignature = CFUNCTYPE(None, c_void_p, POINTER(LibFibreTask), c_size_t, POINTER(POINTER(LibFibreTask)), POINTER(c_size_t))
+
+
+
 libfibre_get_version = lib.libfibre_get_version
 libfibre_get_version.argtypes = []
 libfibre_get_version.restype = POINTER(LibFibreVersion)
 
 version = libfibre_get_version().contents
-if (version.major, version.minor) != (0, 2):
+if (version.major, version.minor) != (0, 3):
     raise Exception("Incompatible libfibre version: {}".format(version))
 
 libfibre_open = lib.libfibre_open
-libfibre_open.argtypes = [LibFibreEventLoop, LibFibreLogger]
+libfibre_open.argtypes = [LibFibreEventLoop, OnRunTasksSignature, LibFibreLogger]
 libfibre_open.restype = c_void_p
 
 libfibre_close = lib.libfibre_close
@@ -205,26 +257,30 @@ libfibre_get_attribute = lib.libfibre_get_attribute
 libfibre_get_attribute.argtypes = [c_void_p, c_void_p, c_size_t, POINTER(c_void_p)]
 libfibre_get_attribute.restype = c_int
 
-libfibre_call = lib.libfibre_call
-libfibre_call.argtypes = [c_void_p, POINTER(c_void_p), c_int, c_void_p, c_size_t, c_void_p, c_size_t, POINTER(c_void_p), POINTER(c_void_p), OnCallCompletedSignature, c_void_p]
-libfibre_call.restype = c_int
+libfibre_run_tasks = lib.libfibre_run_tasks
+libfibre_run_tasks.argtypes = [c_void_p, POINTER(LibFibreTask), c_size_t, POINTER(POINTER(LibFibreTask)), POINTER(c_size_t)]
+libfibre_run_tasks.restype = None
 
-libfibre_start_tx = lib.libfibre_start_tx
-libfibre_start_tx.argtypes = [c_void_p, c_char_p, c_size_t, OnTxCompletedSignature, c_void_p]
-libfibre_start_tx.restype = None
+# DEPRECATED
+# TODO: remove
+#libfibre_start_tx = lib.libfibre_start_tx
+#libfibre_start_tx.argtypes = [c_void_p, c_char_p, c_size_t, OnTxCompletedSignature, c_void_p]
+#libfibre_start_tx.restype = None
+#
+#libfibre_cancel_tx = lib.libfibre_cancel_tx
+#libfibre_cancel_tx.argtypes = [c_void_p]
+#libfibre_cancel_tx.restype = None
+#
+#libfibre_start_rx = lib.libfibre_start_rx
+#libfibre_start_rx.argtypes = [c_void_p, c_char_p, c_size_t, OnRxCompletedSignature, c_void_p]
+#libfibre_start_rx.restype = None
+#
+#libfibre_cancel_rx = lib.libfibre_cancel_rx
+#libfibre_cancel_rx.argtypes = [c_void_p]
+#libfibre_cancel_rx.restype = None
 
-libfibre_cancel_tx = lib.libfibre_cancel_tx
-libfibre_cancel_tx.argtypes = [c_void_p]
-libfibre_cancel_tx.restype = None
 
-libfibre_start_rx = lib.libfibre_start_rx
-libfibre_start_rx.argtypes = [c_void_p, c_char_p, c_size_t, OnRxCompletedSignature, c_void_p]
-libfibre_start_rx.restype = None
-
-libfibre_cancel_rx = lib.libfibre_cancel_rx
-libfibre_cancel_rx.argtypes = [c_void_p]
-libfibre_cancel_rx.restype = None
-
+c_size_max = (1 << (8 * sizeof(c_size_t))) - 1
 
 # libfibre wrapper ------------------------------------------------------------#
 
@@ -332,8 +388,19 @@ def run_coroutine_threadsafe(loop, func):
     loop.call_soon_threadsafe(asyncio.ensure_future, func_async())
     return future.result()
 
+def customresize(array, new_size):
+    # The no-copy resize doesn't work, see
+    # https://stackoverflow.com/questions/919369/resize-ctypes-array#comment119544773_919501
+    # resize(array, sizeof(array._type_) * new_size)
+    # return (array._type_ * new_size).from_address(addressof(array))
+    return (array._type_ * new_size)(*array)
+
 class TxStream():
-    """Python wrapper for libfibre's LibFibreTxStream interface"""
+    """Python wrapper for libfibre's LibFibreTxStream interface
+
+    DEPRECATED
+    TODO: remove
+    """
 
     def __init__(self, libfibre, tx_stream_handle):
         self._libfibre = libfibre
@@ -408,7 +475,11 @@ class TxStream():
             assert(n_written > 0) # Ensure progress
 
 class RxStream():
-    """Python wrapper for libfibre's LibFibreRxStream interface"""
+    """Python wrapper for libfibre's LibFibreRxStream interface
+    
+    DEPRECATED
+    TODO: remove
+    """
 
     def __init__(self, libfibre, rx_stream_handle):
         self._libfibre = libfibre
@@ -483,76 +554,127 @@ class RxStream():
             assert(len(chunk) > 0) # Ensure progress
         return data
 
+class TxSocket():
+    def __init__(self, call, handle):
+        self._call = call
+        self._handle = handle
+        self._future = None
+        self._buf = None
+        self._chunks = None
+        self._b_begin = 0
+        self._c_begin = 0
+
+    def _c_end(self):
+        return cast(addressof(self._chunks) + sizeof(LibFibreChunk) * len(self._chunks), POINTER(LibFibreChunk))
+
+    def write_all(self, buf, status):
+        assert(self._future is None)
+        self._future = self._call._libfibre.loop.create_future()
+
+        # Retain a reference to the buffers to prevent them from being garbage collected
+        self._buf = buf
+        self._chunks = (LibFibreChunk * len(buf))()
+        self._c_begin = cast(addressof(self._chunks), POINTER(LibFibreChunk))
+        self._status = status
+
+        # Convert python Chunk list to LibFibreChunk array
+        for i, chunk in enumerate(buf):
+            if chunk.is_frame_boundary():
+                self._chunks[i] = LibFibreChunk(chunk.layer, 0, c_size_max)
+            else:
+                ptr = cast(c_char_p(chunk.buffer), c_void_p).value
+                self._chunks[i] = LibFibreChunk(chunk.layer, ptr, ptr + len(chunk.buffer))
+
+        self._b_begin = self._chunks[0].begin if len(self._chunks) else 0
+
+        task = LibFibreTask(kWrite, self._handle)
+        task.content.write = LibFibreWriteTask(self._b_begin, self._c_begin, self._c_end(), 0, self._status)
+        self._call._libfibre.enqueue_task(task)
+
+        return self._future
+
+    def _on_write_done(self, result):
+        self._b_begin = result.c_end
+        self._c_begin = result.c_end
+
+        if self._c_begin != self._c_end() and result.status == self._status:
+            self._future.set_result(True)
+        elif result.status != kFibreOk:
+            self._future.set_exception(_get_exception(result.status))
+        else:
+            # If there are more chunks enqueued, continue right away
+            task = LibFibreTask(kWrite, self._handle)
+            task.content.write = LibFibreWriteTask(self._b_begin, self._c_begin, self._c_end(), 0, self._status)
+            self._call._libfibre.enqueue_task(task)
+
+        if result.status != kFibreOk:
+            self._buf = None
+            self._chunks = None
+            self._call._maybe_close(1)
+
+class RxSocket():
+    def __init__(self, call, handle):
+        self._call = call
+        self._handle = handle
+        self._future = None
+
+    def read_all(self):
+        self._buf = []
+        self._future = self._call._libfibre.loop.create_future()
+        return self._future
+
+    def _on_write(self, args):
+        # TODO: implement blocking operation while no Python client is listening
+        c_begin = cast(args.c_begin, c_void_p).value or 0
+        c_end = cast(args.c_end, c_void_p).value or 0
+        chunks = (LibFibreChunk * int((c_end - c_begin) / sizeof(LibFibreChunk))).from_address(c_begin)
+        assert(not self._future is None)
+
+        # Convert LibFibreChunk array to python Chunk list
+        buf = [0] * len(chunks)
+        for i, c in enumerate(chunks):
+            length = (cast(c.end, c_void_p).value or 0) - (cast(c.begin, c_void_p).value or 0)
+            if length == c_size_max:
+                buf[i] = Chunk(c.layer + args.elevation, None)
+            else:
+                buf[i] = Chunk(c.layer + args.elevation, bytes((c_uint8 * length).from_address(cast(c.begin, c_void_p).value)))
+
+        self._buf += buf
+
+        # If there are more chunks enqueued, continue right away
+        task = LibFibreTask(kWriteDone, self._handle)
+        task.content.write_done = LibFibreWriteDoneTask(args.status, args.c_end, 0)
+        self._call._libfibre.enqueue_task(task)
+
+        if args.status != kFibreOk:
+            self._call._maybe_close(0)
+
+        if args.status == kFibreClosed:
+            self._future.set_result(self._buf)
+        elif args.status != kFibreOk:
+            self._future.set_exception(_get_exception(args.status))
 
 class Call(object):
-    """
-    This call behaves as you would expect an async generator to behave. This is
-    used to provide compatibility down to Python 3.5.
-    """
-    def __init__(self, func):
-        self._func = func
-        self._call_handle = c_void_p(0)
-        self._is_started = False
-        self._should_close = False
-        self._is_closed = False
-        self._tx_buf = None
+    def __init__(self, libfibre):
+        self._libfibre = libfibre
+        self._tx_socket = TxSocket(self, id(self))
+        self._rx_socket = RxSocket(self, id(self))
 
-    def __aiter__(self):
-        return self
+    def _maybe_close(self, idx):
+        if idx == 0:
+            self._rx_socket = None
+        elif idx == 1:
+            self._tx_socket = None
+        if self._rx_socket is None and self._tx_socket is None:
+            self._libfibre._calls.pop(id(self))
 
-    async def asend(self, val):
-        assert(self._is_started == (not val is None))
-        if not val is None:
-            self._tx_buf, self._rx_len, self._should_close = val
-        return await self.__anext__()
+class Chunk(object):
+    def __init__(self, layer, buffer):
+        self.layer = layer
+        self.buffer = buffer
 
-    async def __anext__(self):
-        if not self._is_started:
-            self._is_started = True
-            return None # This immitates the weird starting behavior of Python 3.6+ async generators iterators
-
-        if self._is_closed:
-            raise StopAsyncIteration
-
-        tx_end = c_void_p(0)
-        rx_end = c_void_p(0)
-
-        rx_buf = b'\0' * self._rx_len
-
-        call_id = insert_with_new_id(self._func._libfibre._calls, self)
-
-        status = libfibre_call(self._func._func_handle, byref(self._call_handle),
-                kFibreClosed if self._should_close else kFibreOk,
-                cast(self._tx_buf, c_char_p), len(self._tx_buf),
-                cast(rx_buf, c_char_p), len(rx_buf),
-                byref(tx_end), byref(rx_end), self._func._libfibre.c_on_call_completed, call_id)
-
-        if status == kFibreBusy:
-            self.ag_await = self._func._libfibre.loop.create_future()
-            status, tx_end, rx_end = await self.ag_await
-            self.ag_await = None
-
-        if status != kFibreOk and status != kFibreClosed:
-            raise _get_exception(status)
-
-        n_written = tx_end - cast(self._tx_buf, c_void_p).value
-        self._tx_buf = self._tx_buf[n_written:]
-        n_read = rx_end - cast(rx_buf, c_void_p).value
-        rx_buf = rx_buf[:n_read]
-
-        if status != kFibreOk:
-            self._is_closed = True
-        return self._tx_buf, rx_buf, self._is_closed
-
-    async def cancel():
-        # TODO: this doesn't follow the official Python async generator protocol. Should implement aclose() instead.
-        status = libfibre_call(self._func._func_handle, byref(self._call_handle), kFibreOk,
-                0, 0, 0, 0, 0, 0, self._func._libfibre.c_on_call_completed, call_id)
-
-    #async def aclose(self):
-    #    assert(self._is_started and not self._is_closed)
-    #    return self._tx_buf, rx_buf, self._is_closed
-
+    def is_frame_boundary(self):
+        return self.buffer is None
 
 class RemoteFunction(object):
     """
@@ -566,37 +688,45 @@ class RemoteFunction(object):
         self._outputs = outputs
         self._rx_size = sum(codec.get_length() for _, _, codec in self._outputs)
 
+    def start(self):
+        call = Call(self._libfibre)
+        self._libfibre._calls[id(call)] = call
+        task = LibFibreTask(kStartCall, id(call))
+        task.content.start_call = LibFibreStartCallTask(self._func_handle, 0) # TODO: set domain handle
+        self._libfibre.enqueue_task(task)
+        return call._tx_socket, call._rx_socket
+
     async def async_call(self, args, cancellation_token):
         #print("making call on " + hex(args[0]._obj_handle))
-        tx_buf = bytes()
+        tx_chunks = [0] * (2 * len(self._inputs))
         for i, arg in enumerate(self._inputs):
-            tx_buf += arg[2].serialize(self._libfibre, args[i])
+            tx_chunks[2 * i] = Chunk(0, arg[2].serialize(self._libfibre, args[i]))
+            tx_chunks[2 * i + 1] = Chunk(0, None)
+
         rx_buf = bytes()
 
-        agen = Call(self)
-        
-        if not cancellation_token is None:
-            cancellation_token.add_done_callback(agen.cancel)
+        tx_socket, rx_socket = self.start()
 
-        try:
-            assert(await agen.asend(None) is None)
+        rx_future = rx_socket.read_all()
+        await tx_socket.write_all(tx_chunks, kFibreClosed)
+        rx_chunks = await rx_future
 
-            is_closed = False
-            while not is_closed:
-                tx_buf, rx_chunk, is_closed = await agen.asend((tx_buf, self._rx_size - len(rx_buf), True))
-                rx_buf += rx_chunk
-
-        finally:
-            if not cancellation_token is None:
-                cancellation_token.remove_done_callback(agen.cancel)
-
-        assert(len(rx_buf) == self._rx_size)
-
+        # Convert chunks list to list of raw arg buffers
         outputs = []
-        for arg in self._outputs:
-            arg_length = arg[2].get_length()
-            outputs.append(arg[2].deserialize(self._libfibre, rx_buf[:arg_length]))
-            rx_buf = rx_buf[arg_length:]
+        i = 0
+        last_arg = bytes()
+        for c in rx_chunks:
+            if i >= len(self._outputs):
+                raise Exception("received unexpected extra data")
+
+            if c.layer == 0 and not c.is_frame_boundary():
+                last_arg += c.buffer
+            elif c.layer == 0:
+                outputs.append(self._outputs[i][2].deserialize(self._libfibre, last_arg))
+                last_arg = bytes()
+                i += 1
+            else:
+                raise Exception("expected layer 0 chunk but got layer " + str(c.layer) + " chunk")
 
         if len(outputs) == 0:
             return
@@ -647,12 +777,13 @@ class RemoteObject(object):
     """
     __sealed__ = False
 
-    def __init__(self, libfibre, obj_handle):
+    def __init__(self, libfibre, obj_handle, path):
         self._refcount = 0
         self._children = set()
 
         self._libfibre = libfibre
         self._obj_handle = obj_handle
+        self._path = path
         self._on_lost = concurrent.futures.Future() # TODO: maybe we can do this with conc
 
         # Ensure that assignments to undefined attributes raise an exception
@@ -681,7 +812,7 @@ class RemoteObject(object):
             raise _get_exception(status)
         
         assert(obj_handle.value)
-        obj = self._libfibre._load_py_obj(obj_handle.value, intf._handle)
+        obj = self._libfibre._load_py_obj(obj_handle.value, intf._handle, "UNKNOWN PATH") # TODO: fetch path from libfibre
         if obj in self._children:
             self._libfibre._release_py_obj(obj_handle.value)
         else:
@@ -714,7 +845,7 @@ class RemoteObject(object):
         if not func is None:
             return func.__get__(self, None)
 
-        return object.__getattr__(self, key)
+        return object.__getattribute__(self, key)
 
     def __dir__(self):
         props = ["_" + k + "_property" for k, (idx, intf) in self._attributes.items() if intf._name.startswith("fibre.Property<") and intf._name.endswith(">")]
@@ -786,12 +917,13 @@ class LibFibre():
         self.c_post = PostSignature(self._post)
         self.c_register_event = RegisterEventSignature(self._register_event)
         self.c_deregister_event = DeregisterEventSignature(self._deregister_event)
-        self.c_call_later = CallLaterSignature(self._call_later)
-        self.c_cancel_timer = CancelTimerSignature(self._cancel_timer)
+        self.c_open_timer = OpenTimerSignature(self._open_timer)
+        self.c_set_timer = SetTimerSignature(self._set_timer)
+        self.c_close_timer = CloseTimerSignature(self._close_timer)
+        self.c_on_run_tasks = OnRunTasksSignature(self._on_run_tasks)
         self.c_on_found_object = OnFoundObjectSignature(self._on_found_object)
         self.c_on_lost_object = OnLostObjectSignature(self._on_lost_object)
         self.c_on_discovery_stopped = OnStoppedSignature(self._on_discovery_stopped)
-        self.c_on_call_completed = OnCallCompletedSignature(self._on_call_completed)
         
         self.timer_map = {}
         self.eventfd_map = {}
@@ -801,19 +933,24 @@ class LibFibre():
         self._functions = {} # key: libfibre handle, value: python class
         self._calls = {} # key: libfibre handle, value: Call object
 
+        self.clear_tasks()
+        self._autostart_dispatcher = True
+        self._in_dispatcher = False
+
         event_loop = LibFibreEventLoop()
         event_loop.post = self.c_post
         event_loop.register_event = self.c_register_event
         event_loop.deregister_event = self.c_deregister_event
-        event_loop.call_later = self.c_call_later
-        event_loop.cancel_timer = self.c_cancel_timer
+        event_loop.open_timer = self.c_open_timer
+        event_loop.set_timer = self.c_set_timer
+        event_loop.close_timer = self.c_close_timer
 
         logger = LibFibreLogger()
         logger.verbosity = int(os.environ.get('FIBRE_LOG', '2'))
         logger.log = self.c_log
         logger.ctx = None
 
-        self.ctx = c_void_p(libfibre_open(event_loop, logger))
+        self.ctx = c_void_p(libfibre_open(event_loop, self.c_on_run_tasks, logger))
         assert(self.ctx)
 
     def _log(self, ctx, file, line, level, info0, info1, text):
@@ -844,12 +981,38 @@ class LibFibre():
             self.loop.remove_writer(event_fd)
         return 0
 
-    def _call_later(self, delay, callback, ctx):
-        timer_id = insert_with_new_id(self.timer_map, self.loop.call_later(delay, callback, ctx))
-        return timer_id
+    def _open_timer(self, p_timer_id, callback, ctx):
+        timer = {
+            'callback': callback,
+            'ctx': ctx,
+            'interval': 0.0,
+            'mode': 0,
+            'tim': None,
+        }
+        p_timer_id[0] = insert_with_new_id(self.timer_map, timer)
+        return 0
 
-    def _cancel_timer(self, timer_id):
-        self.timer_map.pop(timer_id).cancel()
+    def _set_timer(self, timer_id, interval, mode):
+        assert(timer_id in self.timer_map)
+        timer = self.timer_map[timer_id]
+        if not timer['tim'] is None:
+            timer['tim'].cancel()
+        timer['interval'] = interval
+        timer['mode'] = mode
+        if timer['mode'] != 0:
+            timer['tim'] = self.loop.call_later(timer['interval'], self._on_timer, timer)
+        return 0
+
+    def _on_timer(self, timer):
+        if timer['mode'] != 0:
+            timer['tim'] = self.loop.call_later(timer['interval'], self._on_timer, timer)
+        timer['callback'](timer['ctx'])
+
+    def _close_timer(self, timer_id):
+        assert(timer_id in self.timer_map)
+        timer = self.timer_map.pop(timer_id)
+        if not timer['tim'] is None:
+            timer['tim'].cancel()
         return 0
 
     def _load_py_func(self, func_handle):
@@ -924,10 +1087,10 @@ class LibFibre():
                 self._release_py_intf(intf._handle)
             self.interfaces.pop(intf_handle)
 
-    def _load_py_obj(self, obj_handle, intf_handle):
+    def _load_py_obj(self, obj_handle, intf_handle, path):
         if not obj_handle in self._objects:
             py_intf = self._load_py_intf(intf_handle)
-            py_obj = py_intf(self, obj_handle)
+            py_obj = py_intf(self, obj_handle, path)
             self._objects[obj_handle] = py_obj
         else:
             py_obj = self._objects[obj_handle]
@@ -947,8 +1110,63 @@ class LibFibre():
             py_obj._destroy()
             self._release_py_intf(intf_handle)
 
-    def _on_found_object(self, ctx, obj, intf):
-        py_obj = self._load_py_obj(obj, intf)
+    def enqueue_task(self, task):
+        # Enlarge array by factor 5 if necessary
+        if self._n_pending_tasks >= len(self._tasks):
+            self._tasks = customresize(self._tasks, 5 * len(self._tasks))
+
+        self._tasks[self._n_pending_tasks] = task
+        self._n_pending_tasks += 1
+
+        # Dispatch all tasks at next opportunity
+        if self._autostart_dispatcher:
+            self._autostart_dispatcher = False
+            self.loop.call_soon(self.dispatch_tasks_to_lib)
+
+    def clear_tasks(self):
+        self._tasks = (LibFibreTask * 10)()
+        self._n_pending_tasks = 0
+
+    def dispatch_tasks_to_lib(self):
+        self._in_dispatcher = True
+
+        while self._n_pending_tasks:
+            out_tasks = POINTER(LibFibreTask)()
+            n_out_tasks = c_size_t()
+            libfibre_run_tasks(self.ctx, self._tasks, self._n_pending_tasks, byref(out_tasks), byref(n_out_tasks))
+            
+            self.clear_tasks()
+
+            self.handle_tasks(out_tasks, n_out_tasks.value)
+
+        self._autostart_dispatcher = True
+        self._in_dispatcher = False
+
+    def handle_tasks(self, tasks, n_tasks):
+        tasks = (LibFibreTask * n_tasks).from_address(cast(tasks, c_void_p).value or 0)
+        for task in tasks:
+            if task.type == kStartCall:
+                print("function server not implemented")
+            elif task.type == kWrite:
+                self._calls[task.handle]._rx_socket._on_write(task.content.write)
+            elif task.type == kWriteDone:
+                self._calls[task.handle]._tx_socket._on_write_done(task.content.write_done)
+            else:
+                print("unknown task type: ", task.type)
+
+    def _on_run_tasks(self, ctx, tasks, n_tasks, out_tasks, n_out_tasks):
+        assert(not self._in_dispatcher)
+        self.handle_tasks(tasks, n_tasks)
+
+        # Move new tasks to the shadow task queue so they remain valid until the
+        # next invokation of _on_run_tasks.
+        self._shadow_tasks = self._tasks
+        out_tasks[0] = self._shadow_tasks
+        n_out_tasks[0] = c_ulong(self._n_pending_tasks)
+        self.clear_tasks()
+
+    def _on_found_object(self, ctx, obj, intf, path, path_length):
+        py_obj = self._load_py_obj(obj, intf, string_at(path, path_length).decode('utf-8'))
         discovery = self.discovery_processes[ctx]
         discovery._unannounced.append(py_obj)
         old_future = discovery._future

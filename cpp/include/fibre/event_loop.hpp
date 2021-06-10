@@ -1,13 +1,11 @@
 #ifndef __FIBRE_EVENT_LOOP_HPP
 #define __FIBRE_EVENT_LOOP_HPP
 
-#include "callback.hpp"
-#include <fibre/rich_status.hpp>
+#include <fibre/callback.hpp>
+#include <fibre/timer.hpp>
 #include <stdint.h>
 
 namespace fibre {
-
-struct EventLoopTimer;
 
 /**
  * @brief Base class for event loops.
@@ -17,7 +15,7 @@ struct EventLoopTimer;
  * Generally the functions of an event loop are only safe to be called from the
  * event loop's thread itself.
  */
-class EventLoop {
+class EventLoop : public TimerProvider {
 public:
     /**
      * @brief Registers a callback for immediate execution on the event loop
@@ -49,25 +47,6 @@ public:
      * invoked and its resources can be freed.
      */
     virtual RichStatus deregister_event(int fd) = 0;
-
-    /**
-     * @brief Registers a callback to be called at a later point in time.
-     * 
-     * This returns an opaque handler which can be used to cancel the timer.
-     * 
-     * @param delay: The delay from now in seconds.
-     *               TOOD: specify if OS sleep time is counted in.
-     */
-    virtual RichStatus call_later(float delay, Callback<void> callback, EventLoopTimer** p_timer) = 0;
-
-    /**
-     * @brief Cancels a timer which was previously started by call_later().
-     * 
-     * Must not be called after invokation of the callback has started.
-     * This also means that cancel_timer() must not be called from within the
-     * callback of the timer itself.
-     */
-    virtual RichStatus cancel_timer(EventLoopTimer* timer) = 0;
 };
 
 }

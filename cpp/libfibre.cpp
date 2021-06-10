@@ -1,10 +1,13 @@
 
+#include <algorithm>
 #include <fibre/libfibre.h>
+#include <fibre/channel_discoverer.hpp>
 #include <fibre/fibre.hpp>
 #include "print_utils.hpp"
 #include "legacy_protocol.hpp" // TODO: remove this include
 #include "legacy_object_client.hpp" // TODO: remove this include
 #include <algorithm>
+#include <random>
 #include <string.h>
 
 using namespace fibre;
@@ -52,9 +55,15 @@ LibFibreChannelDiscoveryCtx* to_c(fibre::ChannelDiscoveryContext* ptr) {
 fibre::ChannelDiscoveryContext* from_c(LibFibreChannelDiscoveryCtx* ptr) {
     return reinterpret_cast<fibre::ChannelDiscoveryContext*>(ptr);
 }
+const fibre::Chunk* from_c(const LibFibreChunk* ptr) {
+    return reinterpret_cast<const fibre::Chunk*>(ptr);
+}
+const LibFibreChunk* to_c(const fibre::Chunk* ptr) {
+    return reinterpret_cast<const LibFibreChunk*>(ptr);
+}
 
 
-static const struct LibFibreVersion libfibre_version = { 0, 2, 0 };
+static const struct LibFibreVersion libfibre_version = { 0, 3, 0 };
 
 class FIBRE_PRIVATE ExternalEventLoop final : public fibre::EventLoop {
 public:
@@ -81,20 +90,34 @@ public:
         return RichStatus::success();
     }
 
-    RichStatus call_later(float delay, fibre::Callback<void> callback, fibre::EventLoopTimer** p_timer) final {
-        F_RET_IF(!impl_.call_later, "not implemented");
-        fibre::EventLoopTimer* timer = (fibre::EventLoopTimer*)(*impl_.call_later)(delay, callback.get_ptr(), callback.get_ctx());
-        if (p_timer) {
-            *p_timer = timer;
+    struct ExternalTimer final : Timer {
+        RichStatus set(float interval, TimerMode mode) {
+            F_RET_IF(!parent->impl_.open_timer, "not implemented");
+            F_RET_IF((*parent->impl_.set_timer)(timer, interval, (int)mode) != 0, "user provided set_timer() failed");
+            return RichStatus::success();
         }
-        F_RET_IF(!timer, "user provided call_later() failed");
+        ExternalEventLoop* parent;
+        LibFibreEventLoopTimer* timer;
+    };
+
+    RichStatus open_timer(Timer** p_timer, Callback<void> on_trigger) final {
+        F_RET_IF(!impl_.open_timer, "not implemented");
+        LibFibreEventLoopTimer* id;
+        F_RET_IF((*impl_.open_timer)(&id, on_trigger.get_ptr(), on_trigger.get_ctx()) != 0, "user provided open_timer() failed");
+        ExternalTimer* t = new ExternalTimer{};
+        t->parent = this;
+        t->timer = id;
+        if (p_timer) {
+            *p_timer = t;
+        }
         return RichStatus::success();
     }
 
-    RichStatus cancel_timer(struct fibre::EventLoopTimer* timer) final {
-        F_RET_IF(impl_.cancel_timer, "not implemented");
-        F_RET_IF((*impl_.cancel_timer)((LibFibreEventLoopTimer*)timer) == 0,
-                 "user provided cancel_timer() failed");
+    RichStatus close_timer(Timer* timer) final {
+        ExternalTimer* t = static_cast<ExternalTimer*>(timer);
+        F_RET_IF(!impl_.close_timer, "not implemented");
+        F_RET_IF((*impl_.close_timer)(t->timer) != 0, "user provided close_timer() failed");
+        delete t;
         return RichStatus::success();
     }
 
@@ -138,7 +161,7 @@ namespace fibre {
 
 class AsyncStreamLink final : public AsyncStreamSink, public AsyncStreamSource {
 public:
-    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) final;
+    void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) final;
     void cancel_write(TransferHandle transfer_handle) final;
     void start_read(bufptr_t buffer, TransferHandle* handle, Callback<void, ReadResult> completer) final;
     void cancel_read(TransferHandle transfer_handle) final;
@@ -146,11 +169,11 @@ public:
 
     Callback<void, ReadResult> read_completer_;
     bufptr_t read_buf_;
-    Callback<void, WriteResult> write_completer_;
+    Callback<void, WriteResult0> write_completer_;
     cbufptr_t write_buf_;
 };
 
-void AsyncStreamLink::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) {
+void AsyncStreamLink::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) {
     if (read_completer_) {
         size_t n_copy = std::min(read_buf_.size(), buffer.size());
         memcpy(read_buf_.begin(), buffer.begin(), n_copy);
@@ -213,15 +236,40 @@ fibre::StreamStatus convert_status(LibFibreStatus status) {
     }
 }
 
+struct LibFibreCall final : Socket {
+    WriteResult write(WriteArgs args) final;
+    WriteArgs on_write_done(WriteResult result) final;
+    void close_half(int side);
+    LibFibreCallHandle handle;
+    LibFibreCtx* ctx;
+    Socket* call;
+    bool closed[2] = {false, false};
+};
+
 struct FIBRE_PRIVATE LibFibreCtx {
+    void enqueue_task(LibFibreCallHandle handle, WriteResult result);
+    void enqueue_task(LibFibreCallHandle handle, WriteArgs args);
+    void enqueue_task(LibFibreTask task);
+    void dispatch_tasks_to_app();
+    void handle_tasks(LibFibreTask* tasks, size_t n_tasks);
+
     ExternalEventLoop* event_loop;
+    run_tasks_cb_t run_tasks_cb;
     //size_t n_discoveries = 0;
-    fibre::Context* fibre_ctx;
+    fibre::Fibre* fibre_ctx;
     //std::unordered_map<std::string, std::shared_ptr<fibre::ChannelDiscoverer>> discoverers;
+
+    bool in_dispatcher = false;
+    bool autostart_dispatcher = true;
+
+    std::unordered_map<LibFibreCallHandle, LibFibreCall*> calls;
+
+    std::vector<LibFibreTask> task_queue;
+    std::vector<LibFibreTask> shadow_task_queue;
 };
 
 struct FIBRE_PRIVATE LibFibreDiscoveryCtx {
-    void on_found_object(fibre::Object* obj, fibre::Interface* intf);
+    void on_found_object(fibre::Object* obj, fibre::Interface* intf, std::string path);
     void on_lost_object(fibre::Object* obj);
 
     on_found_object_cb_t on_found_object_;
@@ -231,7 +279,7 @@ struct FIBRE_PRIVATE LibFibreDiscoveryCtx {
 };
 
 struct LibFibreTxStream {
-    void on_tx_done(fibre::WriteResult result) {
+    void on_tx_done(fibre::WriteResult0 result) {
         if (on_completed) {
             (*on_completed)(ctx, this, convert_status(result.status), result.end);
         }
@@ -261,10 +309,10 @@ struct LibFibreRxStream {
 };
 
 
-void LibFibreDiscoveryCtx::on_found_object(fibre::Object* obj, fibre::Interface* intf) {
+void LibFibreDiscoveryCtx::on_found_object(fibre::Object* obj, fibre::Interface* intf, std::string path) {
     if (on_found_object_) {
         F_LOG_D(domain_->ctx->logger, "discovered object " << fibre::as_hex(reinterpret_cast<uintptr_t>(obj)));
-        (*on_found_object_)(cb_ctx_, to_c(obj), to_c(intf));
+        (*on_found_object_)(cb_ctx_, to_c(obj), to_c(intf), path.data(), path.size());
     }
 }
 
@@ -275,13 +323,157 @@ void LibFibreDiscoveryCtx::on_lost_object(fibre::Object* obj) {
     }
 }
 
+void LibFibreCtx::enqueue_task(LibFibreCallHandle handle, WriteResult result) {
+    LibFibreTask task = {
+        .type = kWriteDone,
+        .handle = handle,
+        .on_write_done = {
+            .status = to_c(result.status),
+            .c_end = to_c(result.end.chunk),
+            .b_end = result.end.byte
+        }
+    };
+    enqueue_task(task);
+}
+
+void LibFibreCtx::enqueue_task(LibFibreCallHandle handle, WriteArgs args) {
+    LibFibreTask task = {
+        .type = kWrite,
+        .handle = handle,
+        .write = {
+            .b_begin = args.buf.n_chunks() ? args.buf.front().buf().begin() : nullptr,
+            .c_begin = to_c(args.buf.c_begin()),
+            .c_end = to_c(args.buf.c_end()),
+            .elevation = (int8_t)(args.buf.n_chunks() ? (args.buf.front().layer() - args.buf.c_begin()->layer()) : 0),
+            .status = to_c(args.status)
+        }
+    };
+    enqueue_task(task);
+}
+
+void LibFibreCtx::enqueue_task(LibFibreTask task) {
+    task_queue.push_back(task);
+
+    if (autostart_dispatcher) {
+        autostart_dispatcher = false;
+        event_loop->post(MEMBER_CB(this, dispatch_tasks_to_app));
+    }
+}
+
+void LibFibreCtx::dispatch_tasks_to_app() {
+    in_dispatcher = true;
+
+    while (task_queue.size()) {
+        LibFibreTask* out_tasks;
+        size_t n_out_tasks = 123;
+        (*run_tasks_cb)(this, task_queue.data(), task_queue.size(), &out_tasks, &n_out_tasks);
+        task_queue = {};
+        handle_tasks(out_tasks, n_out_tasks);
+    }
+
+    in_dispatcher = false;
+    autostart_dispatcher = true;
+}
+
+void LibFibreCtx::handle_tasks(LibFibreTask* tasks, size_t n_tasks) {
+    for (size_t i = 0; i < n_tasks; ++i) {
+        switch (tasks[i].type) {
+            case kStartCall: {
+                LibFibreCall* call = new LibFibreCall{}; // deleted in LibFibreCall::close_half()
+                call->handle = tasks[i].handle;
+                call->ctx = this;
+                call->call = from_c(tasks[i].start_call.func)->start_call(from_c(tasks[i].start_call.domain), {}, call);
+                calls[tasks[i].handle] = call;
+                break;
+            }
+
+            case kWrite: {
+                auto it = calls.find(tasks[i].handle);
+                if (it == calls.end()) {
+                    F_LOG_E(fibre_ctx->logger, "unknown call");
+                    continue;
+                }
+
+                LibFibreCall* call = it->second;
+
+                WriteResult result = call->call->write({
+                    {tasks[i].write.b_begin, from_c(tasks[i].write.c_begin), from_c(tasks[i].write.c_end), tasks[0].write.elevation},
+                    from_c(tasks[i].write.status)});
+                
+                if (result.is_busy()) {
+                    // ignore
+                } else {
+                    enqueue_task(tasks[i].handle, result);
+                }
+                
+                if (result.status != fibre::kFibreOk) {
+                    call->close_half(1);
+                }
+
+                break;
+            }
+
+            case kWriteDone: {
+                auto it = calls.find(tasks[i].handle);
+                if (it == calls.end()) {
+                    F_LOG_E(fibre_ctx->logger, "unknown call");
+                    continue;
+                }
+
+                LibFibreCall* call = it->second;
+
+                WriteResult result = {
+                    from_c(tasks[i].on_write_done.status),
+                    {from_c(tasks[i].on_write_done.c_end), tasks[i].on_write_done.b_end}};
+                WriteArgs args = call->call->on_write_done(result);
+
+                if (result.status != fibre::kFibreOk) {
+                    // if the call returns a new non-empty buffer here that's an error
+                    call->close_half(0);
+                } else if (args.is_busy()) {
+                    // ignore
+                } else {
+                    enqueue_task(tasks[i].handle, args);
+                }
+                
+                break;
+            }
+
+            default: {
+                F_LOG_E(fibre_ctx->logger, "unknown task ID" << tasks[i].type);
+            }
+        }
+    }
+}
+
+WriteResult LibFibreCall::write(WriteArgs args) {
+    ctx->enqueue_task(handle, args);
+    return WriteResult::busy();
+}
+
+WriteArgs LibFibreCall::on_write_done(WriteResult result) {
+    ctx->enqueue_task(handle, result);
+    if (result.status != fibre::kFibreOk) {
+        close_half(1);
+    }
+    return result.status == fibre::kFibreOk ? WriteArgs::busy() : WriteArgs{{}, result.status};
+}
+
+void LibFibreCall::close_half(int side) {
+    closed[side] = true;
+    if (closed[0] && closed[1]) {
+        delete this;
+    }
+}
+
 const struct LibFibreVersion* libfibre_get_version() {
     return &libfibre_version;
 }
 
-LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, LibFibreLogger logger) {
+LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, run_tasks_cb_t run_tasks_cb, LibFibreLogger logger) {
     LibFibreCtx* ctx = new LibFibreCtx();
     ctx->event_loop = new ExternalEventLoop(event_loop);
+    ctx->run_tasks_cb = run_tasks_cb;
 
     Logger fibre_logger = logger.log ? Logger{{logger.log, logger.ctx}, (LogLevel)logger.verbosity} : Logger::none();
 
@@ -324,8 +516,14 @@ FIBRE_PUBLIC LibFibreDomain* libfibre_open_domain(LibFibreCtx* ctx,
     if (!ctx) {
         return nullptr; // invalid argument
     } else {
-        F_LOG_D(ctx->fibre_ctx->logger, "opening domain");
-        return to_c(ctx->fibre_ctx->create_domain({specs, specs_len}));
+        std::random_device engine;
+        unsigned node_id[(16 + sizeof(unsigned) - 1) / sizeof(unsigned)];
+        for (size_t i = 0; i < sizeof(node_id) / sizeof(unsigned); ++i) {
+            node_id[i] = engine();
+        }
+
+        F_LOG_D(ctx->fibre_ctx->logger, "opening domain with node ID " << as_hex(node_id));
+        return to_c(ctx->fibre_ctx->create_domain({specs, specs_len}, (uint8_t*)node_id, {}));
     }
 }
 
@@ -370,7 +568,7 @@ void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel
     }
 
     fibre::ChannelDiscoveryResult result = {fibre::kFibreOk, rx_link, tx_link, mtu, packetized};
-    from_c(domain)->add_channels(result);
+    from_c(domain)->add_legacy_channels(result, "external");
 }
 
 void libfibre_start_discovery(LibFibreDomain* domain, LibFibreDiscoveryCtx** handle,
@@ -519,65 +717,19 @@ LibFibreStatus libfibre_get_attribute(LibFibreInterface* intf, LibFibreObject* p
     return LibFibreStatus::kFibreOk;
 }
 
-/**
- * @brief Inserts or removes the specified number of elements
- * @param delta: Positive value: insert elements, negative value: remove elements
- */
-void resize_at(std::vector<uint8_t>& vec, size_t pos, ssize_t delta) {
-    if (delta > 0) {
-        std::fill_n(std::inserter(vec, vec.begin() + pos), delta, 0);
-    } else {
-        vec.erase(std::min(vec.begin() + pos, vec.end()),
-                  std::min(vec.begin() + pos + -delta, vec.end()));
-    }
-}
-
-LibFibreStatus libfibre_call(LibFibreFunction* func, LibFibreCallContext** handle,
-        LibFibreStatus status,
-        const unsigned char* tx_buf, size_t tx_len,
-        unsigned char* rx_buf, size_t rx_len,
-        const unsigned char** tx_end,
-        unsigned char** rx_end,
-        libfibre_call_cb_t callback, void* cb_ctx) {
-    bool valid_args = func && handle
-                   && (!tx_len || tx_buf) // tx_buf valid
-                   && (!rx_len || rx_buf) // rx_buf valid
-                   && tx_end && rx_end // tx_end, rx_end valid
-                   && ((status != LibFibreStatus::kFibreOk) || tx_len || rx_len || !handle); // progress
-    if (!valid_args) {
-        return LibFibreStatus::kFibreInvalidArgument;
+void libfibre_run_tasks(LibFibreCtx* ctx, LibFibreTask* tasks, size_t n_tasks, LibFibreTask** out_tasks, size_t* n_out_tasks) {
+    if (ctx->in_dispatcher) {
+        F_LOG_E(ctx->fibre_ctx->logger, "libfibre_run_tasks must not be called from inside the libfibre_run_tasks_callback");
     }
 
-    struct Ctx { libfibre_call_cb_t callback; void* ctx; };
-    struct Ctx* ctx = new Ctx{callback, cb_ctx};
+    ctx->handle_tasks(tasks, n_tasks);
 
-    fibre::Callback<std::optional<fibre::CallBuffers>, fibre::CallBufferRelease> cb{
-        [](void* ctx_, fibre::CallBufferRelease result) -> std::optional<fibre::CallBuffers> {
-            auto ctx = reinterpret_cast<Ctx*>(ctx_);
-            const unsigned char* tx_buf;
-            size_t tx_len;
-            unsigned char* rx_buf;
-            size_t rx_len;
-            auto status = ctx->callback(ctx->ctx, to_c(result.status), result.tx_end, result.rx_end, &tx_buf, &tx_len, &rx_buf, &rx_len);
-            if (status == LibFibreStatus::kFibreBusy) {
-                delete ctx;
-                return std::nullopt;
-            } else {
-                return fibre::CallBuffers{from_c(status), {tx_buf, tx_len}, {rx_buf, rx_len}};
-            }
-    }, ctx};
-
-
-    auto response = from_c(func)->call(from_c(handle), {from_c(status), {tx_buf, tx_len}, {rx_buf, rx_len}}, cb);
-
-    if (!response.has_value()) {
-        return LibFibreStatus::kFibreBusy;
-    } else {
-        delete ctx;
-        *tx_end = response->tx_end;
-        *rx_end = response->rx_end;
-        return to_c(response->status);
-    }
+    // Move new tasks to the shadow task queue so they remain valid until the
+    // next call to `libfibre_run_tasks()`.
+    ctx->shadow_task_queue = {};
+    std::swap(ctx->shadow_task_queue, ctx->task_queue);
+    *out_tasks = ctx->shadow_task_queue.data();
+    *n_out_tasks = ctx->shadow_task_queue.size();
 }
 
 void libfibre_start_tx(LibFibreTxStream* tx_stream,

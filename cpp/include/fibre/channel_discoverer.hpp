@@ -2,11 +2,19 @@
 #define __FIBRE_CHANNEL_DISCOVERER
 
 #include "async_stream.hpp"
-#include <fibre/callback.hpp>
-#include <fibre/rich_status.hpp>
+#include <fibre/bufchain.hpp>
 #include <fibre/status.hpp>
+#include <fibre/multiplexer.hpp>
+#include <string>
 
 namespace fibre {
+
+class Domain; // defined in domain.hpp
+struct Node; // defined in node.hpp
+class Logger; // defined in logging.hpp
+class EventLoop; // defined in event_loop.hpp
+struct RichStatus; // defined in rich_status.hpp
+struct TxPipe;
 
 struct ChannelDiscoveryResult {
     Status status;
@@ -16,9 +24,17 @@ struct ChannelDiscoveryResult {
     bool packetized;
 };
 
-struct ChannelDiscoveryContext {};
 
-class Domain; // defined in fibre.hpp
+struct FrameStreamSink {
+    virtual bool open_output_slot(uintptr_t* p_slot_id, Node* dest) = 0;
+    virtual bool close_output_slot(uintptr_t slot_id) = 0;
+    virtual bool start_write(TxTaskChain tasks) = 0;
+    virtual void cancel_write() = 0;
+
+    Multiplexer multiplexer_{this};
+};
+
+struct ChannelDiscoveryContext {};
 
 class ChannelDiscoverer {
 public:
@@ -33,6 +49,13 @@ public:
 protected:
     bool try_parse_key(const char* begin, const char* end, const char* key, const char** val_begin, const char** val_end);
     bool try_parse_key(const char* begin, const char* end, const char* key, int* val);
+    bool try_parse_key(const char* begin, const char* end, const char* key, std::string* val);
+};
+
+struct Backend : ChannelDiscoverer {
+    virtual ~Backend() {};
+    virtual RichStatus init(EventLoop* event_loop, Logger logger) = 0;
+    virtual RichStatus deinit() = 0;
 };
 
 }

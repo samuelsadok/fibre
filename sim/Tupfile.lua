@@ -34,6 +34,8 @@ end
 autogen_pkg = fibre_autogen('../test/test-interface.yaml')
 
 object_files += compile('sim_main.cpp')
+object_files += compile('simulator.cpp')
+object_files += compile('mock_can.cpp')
 object_files += compile('../test/test_node.cpp', autogen_pkg.autogen_headers)
 
 -- TODO: move up

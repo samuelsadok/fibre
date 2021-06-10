@@ -29,7 +29,7 @@ struct ReadResult {
     unsigned char* end;
 };
 
-struct WriteResult {
+struct WriteResult0 {
     StreamStatus status;
 
     /**
@@ -120,7 +120,7 @@ public:
      *        finishes, whether successful or not.
      *        Must remain valid until it is satisfied.
      */
-    virtual void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult> completer) = 0;
+    virtual void start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) = 0;
 
     /**
      * @brief Cancels an operation that was previously started with start_write().

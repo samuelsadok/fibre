@@ -11,17 +11,21 @@ There are two approaches to include Fibre in your project:
 
 ## Configuring fibre-cpp
 
-Various preprocessor defines can be used to customize Fibre:
+Fibre expects a file `fibre_config.hpp` to be in the include path. This file can be used to selectively enable/disable Fibre features.
 
- - `FIBRE_ENABLE_SERVER={0|1}` (_default 0_): Enable support for exposing objects to remote peers.
- - `FIBRE_ENABLE_CLIENT={0|1}` (_default 0_): Enable support for discovering and using objects exposed by remote peers.
+Some configurations can have the special value `F_RUNTIME_CONFIG`. If this is used, support for the feature is compiled into the output and a runtime argument is used to enable/disable the feature at runtime when opening the Fibre context.
+
+ - `FIBRE_ENABLE_SERVER={0|1|F_RUNTIME_CONFIG}` (_default 0_): Enable support for exposing objects to remote peers.
+ - `FIBRE_ENABLE_CLIENT={0|1|F_RUNTIME_CONFIG}` (_default 0_): Enable support for discovering and using objects exposed by remote peers.
  - `FIBRE_ENABLE_EVENT_LOOP={0|1}` (_default 0_): Enable the builtin event loop implementation. Not supported on all platforms.
  - `FIBRE_ALLOW_HEAP={0|1}` (_default 0_): Allow Fibre to allocate memory on the heap using `malloc` and `free`. If this option is disabled only one Fibre instance can be opened. Currently `FIBRE_ENABLE_CLIENT` (and several other options) cannot be used together with this option.
  - `FIBRE_MAX_LOG_VERBOSITY={0...5}` (_default 5_): The maximum log verbosity that will be compiled into the binary. In embedded systems it's recommended to set this to 2 or lower to reduce binary size and log churn. The actual runtime log verbosity is specified by the application in the `libfibre_open()` or `fibre::open()` call.
  - `FIBRE_ENABLE_TEXT_LOGGING={0|1}` (_default 1_): Enable text-based logging. If disabled, the log function is called without a text argument but other arguments (such as code location) are still provided. This can significantly reduce binary size.
+ - `FIBRE_ENABLE_CAN_ADAPTER={0|1}` (_default 0_): Enable CAN adapter. This allows to run Fibre over CAN using either the built-in Linux SocketCAN backend or a custom CAN backend.
  - `FIBRE_ENABLE_LIBUSB_BACKEND={0|1}` (_default 0_): Enable libusb backend for host side USB support. This requires `FIBRE_ALLOC_HEAP=1`.
  - `FIBRE_ENABLE_TCP_CLIENT_BACKEND={0|1}` (_default 0_): Enable TCP client backend. This requires `FIBRE_ALLOC_HEAP=1`.
  - `FIBRE_ENABLE_TCP_SERVER_BACKEND={0|1}` (_default 0_): Enable TCP server backend. This requires `FIBRE_ALLOC_HEAP=1`.
+ - `FIBRE_ENABLE_SOCKET_CAN_BACKEND={0|1}` (_default 0_): Enable Linux SocketCAN backend. This requires `FIBRE_ENABLE_CAN_ADAPTER=1`.
 
 ## Adding fibre-cpp to your application's build process
 

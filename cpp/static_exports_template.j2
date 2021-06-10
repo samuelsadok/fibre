@@ -1,4 +1,5 @@
 
+#include <fibre/func_utils.hpp>
 #include <fibre/object_server.hpp>
 #include "interfaces.hpp"
 
@@ -15,9 +16,9 @@ using namespace fibre;
 [%- if type.c_name %][[type.c_name]][% else %]unknown name for [[type]][% endif %]
 [%- endmacro %]
 
-ServerFunctionDefinition fibre::static_server_function_table[] = {
+const Function* fibre::static_server_function_table[] = {
 [%- for func in exported_functions %]
-    { MEMBER_CB((&sync_member_func_wrapper<decltype(&[[intf_name(func.intf)]]::[[func.name[-1]]]), &[[intf_name(func.intf)]]::[[func.name[-1]]]>), entrypoint) },
+    &SyncMemberWrapper<decltype(&[[intf_name(func.intf)]]::[[func.name[-1]]]), &[[intf_name(func.intf)]]::[[func.name[-1]]]>::instance,
 [%- endfor %]
 };
 [% for intf in exported_interfaces %]
