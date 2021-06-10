@@ -56,7 +56,7 @@ public:
     template<typename T> static inline void get_[[property.name]](T* obj, void* ptr) { new (ptr) [[property.type.c_name]]{obj, [](void* ctx){ return ([[property.type.value_type.c_name]])((T*)ctx)->[[property.c_getter]]; }, [](void* ctx, [[property.type.value_type.c_name]] value){ ((T*)ctx)->[[property.c_setter]](value); }}; }
 [%- endif %]
 [%- else %]
-    template<typename T> static inline auto get_[[property.name]](T* obj) { return &obj->[[property.c_name]]; }
+    template<typename T> static inline auto get_[[property.name]](T* obj) { return &obj->[%- if property.c_getter %][[property.c_getter]][% else %][[property.c_name]][% endif %]; }
 [%- endif %]
 [%- endfor %]
 
