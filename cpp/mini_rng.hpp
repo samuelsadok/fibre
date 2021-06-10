@@ -22,7 +22,7 @@ public:
         x++;
         a = (a ^ c ^ x);
         b = (b + a);
-        c = (c + (b >> 1) ^ a);
+        c = ((c + (b >> 1)) ^ a);
         return c;
     }
 

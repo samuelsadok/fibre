@@ -312,7 +312,7 @@ void SocketCan::send_message_now(uint32_t tx_slot, const can_Message_t& message)
         return;
     }
 
-    size_t msg_len = message.fd_frame ? sizeof(struct canfd_frame) : sizeof(struct can_frame);
+    ssize_t msg_len = message.fd_frame ? sizeof(struct canfd_frame) : sizeof(struct can_frame);
 
     if (write(socket_id_, &frame, msg_len) != msg_len) {
         F_LOG_E(logger_, "write() failed: " << sys_err());

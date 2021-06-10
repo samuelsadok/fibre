@@ -35,7 +35,7 @@ namespace std {
 /**
  * @brief Dumps the state of the FIFO for debugging purposes
  */
-static inline std::ostream& operator<<(std::ostream& stream, const Fifo& fifo) {
+static inline __attribute__((unused)) std::ostream& operator<<(std::ostream& stream, const Fifo& fifo) {
     auto it = fifo.read_begin();
     while (it != fifo.read_end()) {
         stream << "\n\t\t" << it.chunk();
@@ -147,7 +147,7 @@ Fifo::ReadIterator Fifo::advance_it(ReadIterator it,
 
 Fifo::ReadIterator Fifo::advance_it(ReadIterator it, Chunk* c_begin,
                                     Chunk* c_end, CBufIt end) {
-    for (size_t i = 0; i < end.chunk - c_begin; ++i) {
+    for (size_t i = 0; i < (size_t)(end.chunk - c_begin); ++i) {
         ++it;
     }
     if (end.chunk != c_end) {

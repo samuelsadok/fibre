@@ -18,9 +18,9 @@ struct FibreNode {
     void start(bool enable_server, bool enable_client);
 
     void add_can_intf(simulator::SimCanInterface* intf) {
-
-        //intf->start(1000000, 1000000, {}, {});
-        CanAdapter* can_backend = new CanAdapter{simulator_, impl_.domain_, intf, intf->port_->name.data()};
+        // intf->start(1000000, 1000000, {}, {});
+        CanAdapter* can_backend = new CanAdapter{
+            simulator_, impl_.domain_, intf, intf->port_->name.data()};
         can_backend->start(0, 128);
     }
 
@@ -34,8 +34,6 @@ struct FibreNode {
 using namespace fibre;
 using namespace fibre::simulator;
 
-
-
 struct Pipe {};
 
 Pipe* start_call(std::string destination) {
@@ -46,8 +44,8 @@ void FibreNode::start(bool enable_server, bool enable_client) {
     uint8_t node_id[16];
     simulator_->rng.get_random(node_id);
 
-    impl_.start(simulator_, node_id, "", enable_server, enable_client, sim_node_.logger());
-
+    impl_.start(simulator_, node_id, "", enable_server, enable_client,
+                sim_node_.logger());
 
     /*
         // optimistic weak pipe
@@ -77,11 +75,9 @@ int main() {
     client.add_can_intf(can_medium.new_intf(&client.sim_node_, "can0"));
     can_medium.join({"server.can0", "client.can0"}, "the_can_bus");
 
-
-
     // TODO: remove hack
-    //server.impl_.domain_->on_found_node(client.impl_.domain_->node_id);
-    //client.impl_.domain_->on_found_node(server.impl_.domain_->node_id);
+    // server.impl_.domain_->on_found_node(client.impl_.domain_->node_id);
+    // client.impl_.domain_->on_found_node(server.impl_.domain_->node_id);
 
     simulator.run(200, 0.35f);
 

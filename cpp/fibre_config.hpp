@@ -2,7 +2,8 @@
 #define FIBRE_ENABLE_SERVER 0
 #define FIBRE_ENABLE_CLIENT 1
 
-#if !defined(__EMSCRIPTEN__)
+#if defined(__linux__)
+// event loop currently only implemented on Linux
 #define FIBRE_ENABLE_EVENT_LOOP 1
 #endif
 

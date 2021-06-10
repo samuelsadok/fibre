@@ -365,7 +365,7 @@ struct TheStateMachine {
     WriteArgs on_write_done(WriteResult result, Socket** source);
 
     LegacyCallContext2* ctx_;
-    int start_arg;
+    size_t start_arg;
     const std::vector<fibre::LegacyFibreArg>& args_;
     size_t arg_num_ = 0;
     std::vector<uint8_t> buf;

@@ -115,7 +115,8 @@ RichStatus TestNode::start(fibre::EventLoop* event_loop, const uint8_t* node_id,
     return RichStatus::success();
 }
 
-void TestNode::on_found_object(fibre::Object* obj, fibre::Interface* intf, std::string path) {
+void TestNode::on_found_object(fibre::Object* obj, fibre::Interface* intf,
+                               std::string path) {
     F_LOG_D(logger_, "discovered Object on " + path);
     fibre::InterfaceInfo* info = intf->get_info();
 

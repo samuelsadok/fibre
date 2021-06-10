@@ -54,17 +54,17 @@ However if you're actively developing fibre you may want to compile natively for
 
 ### Docker
 
+The Docker container [fibreframework/compiler](https://hub.docker.com/r/fibreframework/compiler) contains everything necessary to compile libfibre for all supported target platforms. You can download it with `docker pull fibreframework/compiler` or build it yourself with `docker build -t fibre-compiler .`.
+
 The following example compiles libfibre for the `linux-amd64` target. Refer to the "configs/" folder for a list of supported targets. You can also add new targets there but you may need to modify the Dockerfile to include tooling for your new target.
 
 ```
-docker build -t fibre-compiler .
-docker run -it -v /tmp/build:/build/cpp/build --entrypoint bash fibre-compiler -c "rm -rd /build/cpp/build/*"
-docker run -it -v "$(pwd)":/build -v /tmp/build:/build/build -w /build fibre-compiler configs/linux-amd64.config
+docker run -it -v "$(pwd)":/build fibreframework/compiler configs/linux-amd64.config
 ```
 
-The output file is now located under `/tmp/build/libfibre-linux-amd64.so` on your host system.
+The output file is now located under `build/libfibre-linux-amd64.so` on your host system (relative to where you ran docker).
 
-If something fails you can enter the container interactively with `docker run -it -v "$(pwd)":/build -v /tmp/build:/build/build -w /build --entrypoint bash fibre-compiler`.
+If something fails you can enter the container interactively with `docker run -it -v "$(pwd)":/build --entrypoint bash fibreframework/compiler`.
 
 ### Windows
   1. Download MinGW from [here](https://sourceforge.net/projects/mingw-w64/files/Toolchains%20targetting%20Win32/Personal%20Builds/mingw-builds/installer/mingw-w64-install.exe/download) and install it.

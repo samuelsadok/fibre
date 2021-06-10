@@ -136,7 +136,7 @@ end
 
 tup.frule{
     inputs=object_files,
-    command='^c^ '..LINKER..' %f '..tostring(CFLAGS)..' '..tostring(LDFLAGS)..' -Wl,--undefined=environ_get -o %o',
+    command='^c^ '..LINKER..' %f '..tostring(CFLAGS)..' '..tostring(LDFLAGS)..' -o %o',
     outputs={compile_outname, extra_outputs=extra_outputs}
 }
 

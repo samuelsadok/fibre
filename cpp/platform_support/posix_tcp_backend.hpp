@@ -1,6 +1,10 @@
 #ifndef __FIBRE_POSIX_TCP_BACKEND_HPP
 #define __FIBRE_POSIX_TCP_BACKEND_HPP
 
+#include <fibre/config.hpp>
+
+#if FIBRE_ENABLE_TCP_CLIENT_BACKEND || FIBRE_ENABLE_TCP_SERVER_BACKEND
+
 #include "posix_socket.hpp"
 #include <fibre/channel_discoverer.hpp>
 #include <fibre/event_loop.hpp>
@@ -76,5 +80,7 @@ public:
 };
 
 }
+
+#endif
 
 #endif // __FIBRE_POSIX_TCP_BACKEND_HPP

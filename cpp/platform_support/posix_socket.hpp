@@ -1,17 +1,27 @@
 #ifndef __FIBRE_POSIX_SOCKET_HPP
 #define __FIBRE_POSIX_SOCKET_HPP
 
+#include <fibre/config.hpp>
+
+#if FIBRE_ENABLE_TCP_CLIENT_BACKEND || FIBRE_ENABLE_TCP_SERVER_BACKEND
+
 #include <fibre/async_stream.hpp>
 #include <fibre/bufptr.hpp>
 #include <fibre/cpp_utils.hpp>
 #include <fibre/event_loop.hpp>
 #include <fibre/logging.hpp>
 #include <fibre/rich_status.hpp>
-#include <netinet/in.h>
 #include <string>
 
-namespace fibre {
+#if defined(__linux__)
+#include <netinet/in.h>
+#elif defined(_WIN32) || defined(_WIN64)
+#error "WinSock not supported yet"
+#else
+#error "sockets not supported yet on this platform"
+#endif
 
+namespace fibre {
 
 #if defined(__linux__)
 //using PosixSocketWorker = LinuxWorker; // TODO: rename to EPollWorker or LinuxEPollWorker
@@ -172,5 +182,7 @@ private:
 namespace std {
 std::ostream& operator<<(std::ostream& stream, const struct sockaddr_storage& val);
 }
+
+#endif
 
 #endif // __FIBRE_POSIX_SOCKET_HPP

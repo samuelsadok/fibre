@@ -75,7 +75,7 @@ jobs:
           cp ./artifacts/libfibre-$ARCH/* ./python/fibre/
 
           # Launch test server in background
-          FIBRE_LOG=5 ./artifacts/test-server-$ARCH/test_node.elf --server --domain tcp-server:address=localhost,port=14220 >test_server.log 2>&1 &
+          LD_PRELOAD=libSegFault.so FIBRE_LOG=5 ./artifacts/test-server-$ARCH/test_node.elf --server --domain tcp-server:address=localhost,port=14220 >test_server.log 2>&1 &
 
           # TODO: try launching client/server in reverse order
           sleep 1
@@ -132,9 +132,24 @@ jobs:
       - name: Check C++ Formatting
         run: |
           clang-format --version
+
           # TODO: we run this only on a few selected files for now until we have it properly configured
-          clang-format -style=file --Werror --dry-run test/test_node.cpp
-          clang-format -style=file --Werror --dry-run test/test_node.hpp
-          clang-format -style=file --Werror --dry-run sim/sim_main.cpp
+          files="test/test_node.cpp
+          test/test_node.hpp
+          sim/sim_main.cpp"
+
+          NUM_BAD=0
+          while read file; do
+            if ! clang-format -style=file --Werror --dry-run "$file"; then
+              NUM_BAD=$(( $NUM_BAD + 1 ))
+            fi
+          done <<< "$files"
+
+          if ! [ "$NUM_BAD" == "0" ]; then
+              echo "$NUM_BAD files need formatting"
+              false # fail CI
+          else
+              echo "all files good"
+          fi
 
   #    TODO: check if interface_generator outputs the same thing with Python 3.5 and Python 3.8

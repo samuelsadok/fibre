@@ -133,8 +133,8 @@ inline CBufIt LowLevelProtocol::pack(SenderState& state, BufChain chain,
                     *length_field = 0x1f << 2;
                     n_copy = packet.size();
                 } else {
-                    *length_field = std::min(chunk.buf().size(), 0x1eUL) << 2;
-                    n_copy = std::min(chunk.buf().size(), 0x1eUL);
+                    *length_field = std::min(chunk.buf().size(), (size_t)0x1eUL) << 2;
+                    n_copy = std::min(chunk.buf().size(), (size_t)0x1eUL);
                 }
                 std::copy_n(chunk.buf().begin(), n_copy, packet.begin());
                 packet = packet.skip(n_copy);

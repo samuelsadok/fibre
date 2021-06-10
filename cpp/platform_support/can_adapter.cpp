@@ -211,7 +211,7 @@ void CanAdapter::on_can_msg(const can_Message_t& msg) {
                     "invalid heartbeat length: " << msg.len);
         }
     } else if (state_ == kOperational &&
-               ((msg.id & 0x1f00ff00) == (0x1e000000 | (node_id_ << 8)))) {
+               ((msg.id & 0x1f00ff00) == (0x1e000000 | (uint32_t)(node_id_ << 8)))) {
         uint8_t can_id = msg.id & 0xff;
         uint8_t slot_id = (msg.id >> 16) & 0xff;
 

@@ -56,7 +56,7 @@ public:
     }
 
     inline optional& operator=(const optional & other) {
-        (**this).~T();
+        (*this).~optional();
         new (this) optional{other};
         return *this;
     }
@@ -87,7 +87,7 @@ public:
         return *(T*)content_;
     }
 
-    storage_t content_;
+    alignas(T) storage_t content_;
     size_t has_value_;
 };
 
