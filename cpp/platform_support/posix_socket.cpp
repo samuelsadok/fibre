@@ -327,7 +327,7 @@ RichStatus PosixSocket::deinit() {
 }
 
 void PosixSocket::start_read(bufptr_t buffer, TransferHandle* handle, Callback<void, ReadResult> completer) {
-    if (rx_callback_) {
+    if (rx_callback_.has_value()) {
         F_LOG_E(logger_, "RX request already pending");
         completer.invoke({kStreamError});
         return;
@@ -350,7 +350,7 @@ void PosixSocket::start_read(bufptr_t buffer, TransferHandle* handle, Callback<v
 void PosixSocket::cancel_read(TransferHandle transfer_handle) {
     if (transfer_handle != reinterpret_cast<TransferHandle>(this)) {
         F_LOG_E(logger_, "invalid handle");
-    } else if (!rx_callback_) {
+    } else if (!rx_callback_.has_value()) {
         F_LOG_E(logger_, "no RX pending");
     } else {
         rx_callback_.invoke_and_clear({kStreamCancelled, rx_buf_.begin()});
@@ -358,7 +358,7 @@ void PosixSocket::cancel_read(TransferHandle transfer_handle) {
 }
 
 void PosixSocket::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) {
-    if (tx_callback_) {
+    if (tx_callback_.has_value()) {
         F_LOG_E(logger_, "TX request already pending");
         completer.invoke({kStreamError});
         return;
@@ -381,7 +381,7 @@ void PosixSocket::start_write(cbufptr_t buffer, TransferHandle* handle, Callback
 void PosixSocket::cancel_write(TransferHandle transfer_handle) {
     if (transfer_handle != reinterpret_cast<TransferHandle>(this)) {
         F_LOG_E(logger_, "invalid handle");
-    } else if (!tx_callback_) {
+    } else if (!tx_callback_.has_value()) {
         F_LOG_E(logger_, "no TX pending");
     } else {
         tx_callback_.invoke_and_clear({kStreamCancelled, tx_buf_.begin()});
@@ -455,8 +455,8 @@ std::optional<WriteResult0> PosixSocket::write_sync(cbufptr_t buffer) {
 }
 
 void PosixSocket::update_subscription() {
-    uint32_t new_mask = (tx_callback_ ? EPOLLOUT : 0)
-                      | (rx_callback_ ? EPOLLIN : 0);
+    uint32_t new_mask = (tx_callback_.has_value() ? EPOLLOUT : 0)
+                      | (rx_callback_.has_value() ? EPOLLIN : 0);
     if (new_mask != mask_) {
         if (mask_) {
             event_loop_->deregister_event(socket_id_);
@@ -474,7 +474,7 @@ void PosixSocket::on_event(uint32_t mask) {
         // The socket is ready for RX. If an RX request is pending, handle it
         // here, otherwise ignore the event.
 
-        if (rx_callback_) {
+        if (rx_callback_.has_value()) {
             auto result = read_sync(rx_buf_);
             rx_buf_ = {};
             if (result.has_value()) {
@@ -487,7 +487,7 @@ void PosixSocket::on_event(uint32_t mask) {
         // The socket is ready for RX. If an RX request is pending, handle it
         // here, otherwise ignore the event.
 
-        if (tx_callback_) {
+        if (tx_callback_.has_value()) {
             auto result = write_sync(tx_buf_);
             tx_buf_ = {};
             if (result.has_value()) {

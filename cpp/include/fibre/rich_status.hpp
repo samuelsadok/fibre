@@ -109,13 +109,13 @@ private:
 
 #if FIBRE_ENABLE_TEXT_LOGGING
 
-#define F_MAKE_ERR(msg) RichStatus{[&](std::ostream& str) { str << msg; }, __FILE__, __LINE__, RichStatus::success()}
-#define F_AMEND_ERR(inner, msg) RichStatus{[&](std::ostream& str) { str << msg; }, __FILE__, __LINE__, (inner)}
+#define F_MAKE_ERR(msg) fibre::RichStatus{[&](std::ostream& str) { str << msg; }, __FILE__, __LINE__, fibre::RichStatus::success()}
+#define F_AMEND_ERR(inner, msg) fibre::RichStatus{[&](std::ostream& str) { str << msg; }, __FILE__, __LINE__, (inner)}
 
 #else
 
-#define F_MAKE_ERR(msg) RichStatus{0, __FILE__, __LINE__, RichStatus::success()}
-#define F_AMEND_ERR(inner, msg) RichStatus{0, __FILE__, __LINE__, (inner)}
+#define F_MAKE_ERR(msg) fibre::RichStatus{0, __FILE__, __LINE__, fibre::RichStatus::success()}
+#define F_AMEND_ERR(inner, msg) fibre::RichStatus{0, __FILE__, __LINE__, (inner)}
 
 #endif
 

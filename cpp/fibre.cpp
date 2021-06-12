@@ -31,6 +31,10 @@ using EventLoopImpl = fibre::EpollEventLoop;
 #include "platform_support/libusb_transport.hpp"
 #endif
 
+#if FIBRE_ENABLE_WEBUSB_BACKEND
+#include "platform_support/webusb_backend.hpp"
+#endif
+
 #if FIBRE_ENABLE_TCP_CLIENT_BACKEND
 #include "platform_support/posix_tcp_backend.hpp"
 #endif
@@ -106,7 +110,12 @@ RichStatus fibre::open(EventLoop* event_loop, Logger logger, Fibre** p_ctx) {
     RichStatus status;
 #if FIBRE_ENABLE_LIBUSB_BACKEND
     if (status.is_success()) {
-        status = ctx->init_backend("usb", new LibusbDiscoverer{});
+        status = ctx->init_backend("usb", new LibusbBackend{});
+    }
+#endif
+#if FIBRE_ENABLE_WEBUSB_BACKEND
+    if (status.is_success()) {
+        status = ctx->init_backend("usb", new WebusbBackend{});
     }
 #endif
 #if FIBRE_ENABLE_TCP_CLIENT_BACKEND
@@ -301,6 +310,11 @@ void Domain::add_legacy_channels(ChannelDiscoveryResult result, const char* name
 
     if (!result.rx_channel || !result.tx_channel) {
         F_LOG_E(ctx->logger, "unidirectional operation not supported yet");
+        return;
+    }
+
+    if (result.mtu < 12) {
+        F_LOG_E(ctx->logger, "MTU too small");
         return;
     }
 

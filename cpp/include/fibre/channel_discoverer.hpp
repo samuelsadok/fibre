@@ -46,10 +46,9 @@ public:
         ChannelDiscoveryContext** handle) = 0;
     virtual RichStatus stop_channel_discovery(ChannelDiscoveryContext* handle) = 0;
 
-protected:
-    bool try_parse_key(const char* begin, const char* end, const char* key, const char** val_begin, const char** val_end);
-    bool try_parse_key(const char* begin, const char* end, const char* key, int* val);
-    bool try_parse_key(const char* begin, const char* end, const char* key, std::string* val);
+    static bool try_parse_key(const char* begin, const char* end, const char* key, const char** val_begin, const char** val_end);
+    static bool try_parse_key(const char* begin, const char* end, const char* key, int* val);
+    static bool try_parse_key(const char* begin, const char* end, const char* key, std::string* val);
 };
 
 struct Backend : ChannelDiscoverer {

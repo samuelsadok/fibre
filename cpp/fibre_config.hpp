@@ -10,7 +10,9 @@
 #define FIBRE_ALLOW_HEAP 1
 #define FIBRE_ENABLE_TEXT_LOGGING 1
 
-#if !defined(__EMSCRIPTEN__)
+#if defined(__EMSCRIPTEN__)
+#define FIBRE_ENABLE_WEBUSB_BACKEND 1
+#else
 #define FIBRE_ENABLE_LIBUSB_BACKEND 1
 #endif
 

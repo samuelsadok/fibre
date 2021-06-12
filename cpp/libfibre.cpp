@@ -174,7 +174,7 @@ public:
 };
 
 void AsyncStreamLink::start_write(cbufptr_t buffer, TransferHandle* handle, Callback<void, WriteResult0> completer) {
-    if (read_completer_) {
+    if (read_completer_.has_value()) {
         size_t n_copy = std::min(read_buf_.size(), buffer.size());
         memcpy(read_buf_.begin(), buffer.begin(), n_copy);
         read_completer_.invoke_and_clear({kStreamOk, read_buf_.begin() + n_copy});
@@ -193,7 +193,7 @@ void AsyncStreamLink::cancel_write(TransferHandle transfer_handle) {
 }
 
 void AsyncStreamLink::start_read(bufptr_t buffer, TransferHandle* handle, Callback<void, ReadResult> completer) {
-    if (write_completer_) {
+    if (write_completer_.has_value()) {
         size_t n_copy = std::min(buffer.size(), write_buf_.size());
         memcpy(buffer.begin(), write_buf_.begin(), n_copy);
         write_completer_.invoke_and_clear({kStreamOk, write_buf_.begin() + n_copy});
@@ -440,7 +440,7 @@ void LibFibreCtx::handle_tasks(LibFibreTask* tasks, size_t n_tasks) {
             }
 
             default: {
-                F_LOG_E(fibre_ctx->logger, "unknown task ID" << tasks[i].type);
+                F_LOG_E(fibre_ctx->logger, "unknown task ID " << tasks[i].type);
             }
         }
     }
@@ -476,6 +476,12 @@ LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, run_tasks_cb_t run_task
     ctx->run_tasks_cb = run_tasks_cb;
 
     Logger fibre_logger = logger.log ? Logger{{logger.log, logger.ctx}, (LogLevel)logger.verbosity} : Logger::none();
+
+    F_LOG_D(fibre_logger, "test log call");
+
+    //return (LibFibreCtx*)((uintptr_t)logger.log);
+    //return (LibFibreCtx*)logger.log;
+    
 
     if (F_LOG_IF_ERR(fibre_logger, fibre::open(ctx->event_loop, fibre_logger, &ctx->fibre_ctx), "failed to open fibre")) {
         delete ctx->event_loop;

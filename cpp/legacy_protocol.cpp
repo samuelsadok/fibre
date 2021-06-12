@@ -623,7 +623,7 @@ void LegacyProtocolPacketBased::on_rx_tx_closed(StreamStatus status) {
 
     // Cancel all ongoing endpoint operations
     for (auto& item: expected_acks_) {
-        if (item.second.callback) {
+        if (item.second.callback.has_value()) {
             item.second.callback.invoke_and_clear({item.second.handle(), status, item.second.tx_buf.begin(), item.second.rx_buf.begin()});
         }
     }
@@ -645,7 +645,7 @@ void LegacyProtocolPacketBased::start(Callback<void, LegacyProtocolPacketBased*,
     rx_channel_->start_read(rx_buf_, &dummy, MEMBER_CB(this, on_read_finished));
 
 #if FIBRE_ENABLE_CLIENT
-    if (on_stopped_) {
+    if (on_stopped_.has_value()) {
         client_.start(nullptr, domain_, MEMBER_CB(this, start_call), std::string{intf_name_} + " (legacy protocol)");
     }
 #endif

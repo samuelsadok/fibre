@@ -555,7 +555,7 @@ bool LibusbBulkEndpoint<TRes>::init(LibusbDiscoverer* parent, libusb_device_hand
 
 template<typename TRes>
 bool LibusbBulkEndpoint<TRes>::deinit() {
-    if (completer_) {
+    if (completer_.has_value()) {
         F_LOG_E(parent_->logger_, "Transfer on EP " << as_hex(endpoint_id_) << " still in progress. This is gonna be messy.");
     }
 
@@ -570,7 +570,7 @@ void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* h
         *handle = reinterpret_cast<TransferHandle>(this);
     }
 
-    if (completer_) {
+    if (completer_.has_value()) {
         F_LOG_E(parent_->logger_, "transfer already in progress");
         completer.invoke({kStreamError, nullptr});
         return;
@@ -605,7 +605,7 @@ void LibusbBulkEndpoint<TRes>::start_transfer(bufptr_t buffer, TransferHandle* h
 
 template<typename TRes>
 void LibusbBulkEndpoint<TRes>::cancel_transfer(TransferHandle transfer_handle) {
-    if (!completer_) {
+    if (!completer_.has_value()) {
         F_LOG_E(parent_->logger_, "transfer not in progress");
         return;
     }

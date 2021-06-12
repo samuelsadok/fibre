@@ -94,6 +94,8 @@ function get_fibre_package(args)
     pkg.code_files += 'platform_support/can_adapter.cpp'
     pkg.code_files += 'platform_support/posix_tcp_backend.cpp'
     pkg.code_files += 'platform_support/posix_socket.cpp'
+    pkg.code_files += 'platform_support/usb_host_adapter.cpp'
+    pkg.code_files += 'platform_support/webusb_backend.cpp'
 
     if args.enable_tcp_client_backend or args.enable_tcp_server_backend then
         -- TODO: chose between windows and posix backend

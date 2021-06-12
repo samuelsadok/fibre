@@ -23,7 +23,17 @@
                }
                domain.startDiscovery(onFoundObject);
 
-               document.getElementById("connectBtn").onclick = libfibre.usbDiscoverer.showDialog;
+               const showDialog = async (obj) => {
+                    await navigator.usb.requestDevice({filters: [{
+                        vendorId: 0x1209,
+                        productId: 0x0D32,
+                        classCode: 0,
+                        subclassCode: 1,
+                        protocolCode: 0
+                    }]});
+               }
+
+               document.getElementById("connectBtn").onclick = showDialog;
                document.getElementById("connectBtn").removeAttribute('disabled');
             });
         </script>

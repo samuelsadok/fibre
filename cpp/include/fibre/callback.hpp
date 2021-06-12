@@ -52,7 +52,7 @@ public:
             return (*(const TFunc*)ctx)(args...);
         }), ctx_((void*)&func) {}
 
-    operator bool() {
+    bool has_value() {
         return cb_;
     }
     
@@ -72,6 +72,11 @@ public:
             return (*cb)(ctx, arg...);
         }
         return detail::get_default<TRet>::val();
+    }
+
+    void clear() {
+        ctx_ = nullptr;
+        cb_ = nullptr;
     }
 
     typedef TRet(*cb_t)(void*, TArgs...);

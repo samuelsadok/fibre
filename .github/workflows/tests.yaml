@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: [master, devel]
   push:
-    branches: [master, devel, test-ci]
+    branches: [master, devel, test-ci, webusb]
 
 jobs:
   compile:
