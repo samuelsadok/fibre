@@ -11,6 +11,7 @@
 #include <memory>
 
 struct JsStub;
+struct JsFuncStub;
 class JsObjectTempRef;
 using JsObjectRef = std::shared_ptr<JsObjectTempRef>;
 
@@ -18,19 +19,21 @@ extern "C" {
 /**
  * @brief Increments the refcount of an opaque JavaScript object ID.
  */
-extern void _js_ref(unsigned int obj);
+extern void _js_ref(unsigned int obj_id);
 
 /**
  * @brief Decrements the refcount of an opaque JavaScript object ID.
  * 
  * When the refcount reaches zero the object ID must not be used anymore.
  */
-extern void _js_unref(unsigned int obj);
+extern void _js_unref(unsigned int obj_id);
 
-extern void _js_call_sync(unsigned int obj, const char* func, JsStub* args, size_t n_args);
-extern void _js_call_async(unsigned int obj, const char* func, JsStub* args, size_t n_args, void(*callback)(void*, const JsStub&), void* ctx, unsigned int dict_depth);
-extern void _js_get_property(unsigned int obj, const char* property, void(*callback)(void*, const JsStub&), void* ctx, unsigned int dict_depth);
-extern void _js_set_property(unsigned int obj, const char* property, JsStub* arg);
+extern void* _js_get_property(unsigned int obj_id, const char* property, unsigned int dict_depth, JsStub* p_out);
+extern void _js_set_property(unsigned int obj_id, const char* property, JsStub* arg);
+extern void* _js_call_sync(unsigned int obj_id, const char* func, JsStub* args, size_t n_args, unsigned int dict_depth, JsStub* p_out);
+extern void _js_call_async(unsigned int obj_id, const char* func, JsStub* args, size_t n_args, void(*callback)(void*, const JsStub&, const JsStub&), void* ctx, unsigned int dict_depth);
+
+extern void _js_release(void*);
 }
 
 
@@ -53,10 +56,11 @@ struct JsStub {
 struct JsFuncStub {
     uintptr_t callback;
     uintptr_t ctx;
+    unsigned int dict_depth;
 };
 
 struct JsArrayStub {
-    uintptr_t start;
+    uintptr_t begin;
     uintptr_t end;
 };
 
@@ -75,7 +79,10 @@ public:
             delete [] ptr;
         }
         for (auto ptr: funcs) {
-            delete [] ptr;
+            delete ptr;
+        }
+        for (auto ptr: arrays) {
+            delete ptr;
         }
     }
 
@@ -115,7 +122,7 @@ public:
     }
 
     JsStub to_js(fibre::Callback<void, const JsStub*, size_t> val) {
-        JsFuncStub* func = new JsFuncStub{(uintptr_t)val.get_ptr(), (uintptr_t)val.get_ctx()};
+        JsFuncStub* func = new JsFuncStub{(uintptr_t)val.get_ptr(), (uintptr_t)val.get_ctx(), 0};
         funcs.push_back(func);
         return {JsType::kFunc, (uintptr_t)func};
     }
@@ -146,14 +153,10 @@ public:
     }
 
     template<typename TVal> fibre::RichStatus get_property(std::string property, TVal* result, unsigned int dict_depth = 0) {
-        fibre::RichStatus status;
-        fibre::Callback<void, const JsStub&> callback{
-            [&](const JsStub& stub) {
-                status = from_js(stub, result);
-            }
-        };
-        _js_get_property(id_, property.data(), callback.get_ptr(),
-                         callback.get_ctx(), dict_depth);
+        JsStub out;
+        void* storage = _js_get_property(id_, property.data(), dict_depth, &out);
+        fibre::RichStatus status = from_js(out, result);
+        _js_release(storage);
         return status;
     }
 
@@ -172,7 +175,7 @@ public:
 
     template<typename... TArgs>
     void call_async(std::string func,
-                    fibre::Callback<void, const JsStub&> callback,
+                    fibre::Callback<void, const JsStub&, const JsStub&> callback,
                     unsigned int dict_depth,
                     TArgs... args) {
         JsTransferStorage storage;
@@ -266,7 +269,7 @@ static inline fibre::RichStatus from_js(const JsStub& stub, fibre::cbufptr_t* ou
     // time allocated buffer. Maybe we can optimize this?
     F_RET_IF(stub.type != JsType::kArray, "expected array type but got " << (int)stub.type);
     JsArrayStub* array_stub = (JsArrayStub*)stub.val;
-    *output = {(const unsigned char*)array_stub->start, (const unsigned char*)array_stub->end};
+    *output = {(const unsigned char*)array_stub->begin, (const unsigned char*)array_stub->end};
     return fibre::RichStatus::success();
 }
 

@@ -170,7 +170,7 @@ mergeInto(LibraryManager.library, {
       const cb = Module.asm.__indirect_function_table.get(callback);
       const storage = makeStorage();
       try {
-        const ptr = Module._malloc(8 + args.length);
+        const ptr = Module._malloc(8 * args.length);
         try {
           for (let i = 0; i < args.length; ++i) {
             toWasm(storage, args[i], ptr + 8 * i);
@@ -215,19 +215,22 @@ mergeInto(LibraryManager.library, {
 
     __js_ref = _js_ref;
     __js_unref = _js_unref;
-    __js_call_async = _js_call_async;
     __js_get_property = _js_get_property;
     __js_set_property = _js_set_property;
+    __js_call_async = _js_call_async;
+    __js_release = _js_release;
   },
 
   _js_ref: function() {},
   _js_ref__deps: ['$method_support'],
   _js_unref: function() {},
   _js_unref__deps: ['$method_support'],
-  _js_call_async: function() {},
-  _js_call_async__deps: ['$method_support'],
   _js_get_property: function() {},
   _js_get_property__deps: ['$method_support'],
   _js_set_property: function() {},
   _js_set_property__deps: ['$method_support'],
+  _js_call_async: function() {},
+  _js_call_async__deps: ['$method_support'],
+  _js_release: function() {},
+  _js_release__deps: ['$method_support'],
 });
