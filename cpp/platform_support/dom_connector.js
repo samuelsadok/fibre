@@ -34,6 +34,26 @@ mergeInto(LibraryManager.library, {
       }
     }
 
+    function makeStorage() {
+      return {stubs: [], objects: [], strings: [], arrays: []};
+    }
+
+    function deleteStorage(storage) {
+      for (let i in storage.stubs) {
+        Module._free(storage.stubs[i]);
+      }
+      for (let i in storage.strings) {
+        Module._free(storage.strings[i]);
+      }
+      for (let i in storage.arrays) {
+        Module._free(Module.HEAPU32[storage.arrays[i] >> 2]);
+        Module._free(storage.arrays[i]);
+      }
+      for (let i in storage.objects) {
+        releaseObject(storage.objects[i]);
+      }
+    }
+
     function fromWasm(jsStubPtr) {
       const type = Module.HEAPU32[jsStubPtr >> 2];
       const val = Module.HEAPU32[(jsStubPtr >> 2) + 1];
@@ -63,26 +83,6 @@ mergeInto(LibraryManager.library, {
         return theArr; // This does not copy the array contents
       } else {
         throw "stub type not supported: " + type;
-      }
-    }
-
-    function makeStorage() {
-      return {stubs: [], objects: [], strings: [], arrays: []};
-    }
-
-    function deleteStorage(storage) {
-      for (let i in storage.stubs) {
-        Module._free(storage.stubs[i]);
-      }
-      for (let i in storage.strings) {
-        Module._free(storage.strings[i]);
-      }
-      for (let i in storage.arrays) {
-        Module._free(Module.HEAPU32[storage.arrays[i] >> 2]);
-        Module._free(storage.arrays[i]);
-      }
-      for (let i in storage.objects) {
-        releaseObject(storage.objects[i]);
       }
     }
 
