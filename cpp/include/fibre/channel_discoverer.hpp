@@ -45,6 +45,7 @@ public:
         const char* specs, size_t specs_len,
         ChannelDiscoveryContext** handle) = 0;
     virtual RichStatus stop_channel_discovery(ChannelDiscoveryContext* handle) = 0;
+    virtual RichStatus show_device_dialog();
 
     static bool try_parse_key(const char* begin, const char* end, const char* key, const char** val_begin, const char** val_end);
     static bool try_parse_key(const char* begin, const char* end, const char* key, int* val);

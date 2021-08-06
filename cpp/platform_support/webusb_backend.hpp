@@ -22,6 +22,7 @@ public:
 
     void start_channel_discovery(Domain* domain, const char* specs, size_t specs_len, ChannelDiscoveryContext** handle) final;
     RichStatus stop_channel_discovery(ChannelDiscoveryContext* handle) final;
+    RichStatus show_device_dialog() final;
 
 private:
     Logger logger_ = Logger::none();

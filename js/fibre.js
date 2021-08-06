@@ -572,24 +572,14 @@ class LibFibre {
         }
     }
 
-    addChannels(domainHandle, mtu) {
-        console.log("add channel with mtu " + mtu);
-        const [txChannelId, rxChannelId] = this._withOutputArg((txChannelIdPtr, rxChannelIdPtr) =>
-            this.wasm.Module._libfibre_add_channels(domainHandle, txChannelIdPtr, rxChannelIdPtr, mtu, true)
-        );
-        return [
-            new RxStream(this, txChannelId), // libfibre => backend
-            new TxStream(this, rxChannelId) // backend => libfibre
-        ];
-    }
-
     openDomain(filter) {
-        let buf = [this.wasm.malloc(filter.length + 1), filter.length + 1];
+        const len = this.wasm.Module.lengthBytesUTF8(filter);
+        const buf = this.wasm.malloc(len + 1);
         try {
-            let len = this.wasm.stringToUTF8(filter, buf[0], buf[1]);
-            var domainHandle = this.wasm.Module._libfibre_open_domain(this._handle, buf[0], len);
+            this.wasm.stringToUTF8(filter, buf, len + 1);
+            var domainHandle = this.wasm.Module._libfibre_open_domain(this._handle, buf, len);
         } finally {
-            this.wasm.free(buf[0]);
+            this.wasm.free(buf);
         }
         console.log("opened domain", domainHandle);
         return new Domain(this, domainHandle);
@@ -891,8 +881,15 @@ class Domain {
         this._libfibre._domainMap[handle] = this;
     }
 
-    addChannels(mtu) {
-        return this._libfibre.addChannels(this._handle, mtu);
+    showDeviceDialog(backend) {
+        const len = this._libfibre.wasm.Module.lengthBytesUTF8(backend);
+        const buf = this._libfibre.wasm.malloc(len + 1);
+        try {
+            this._libfibre.wasm.stringToUTF8(backend, buf, len + 1);
+            this._libfibre.wasm.Module._libfibre_show_device_dialog(this._handle, buf);
+        } finally {
+            this._libfibre.wasm.free(buf);
+        }
     }
 
     startDiscovery(onFoundObject) {

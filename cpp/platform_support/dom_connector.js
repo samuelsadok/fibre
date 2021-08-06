@@ -2,43 +2,54 @@
 mergeInto(LibraryManager.library, {
   $method_support__postset: 'method_support();',
   $method_support: function() {
-    let _root = Function('return this')();
-    let _objects = {0: {o: _root, n: 1}}; // key: id, value: object
+
+    function HandleMap() {
+      this.content = {};
+      this.nextId = 0;
+      this.add = function(val) {
+        while (this.nextId in this.content) {
+          this.nextId = (this.nextId + 1) & 0xffffffff;
+        }
+        this.content[this.nextId] = val;
+        return this.nextId++;
+      }
+      this.remove = function(id) {
+        const val = this.content[id];
+        delete this.content[id];
+        return val;
+      }
+    }
+
+    const _root = Function('return this')();
+    const _objects = new HandleMap();
+    _objects.add({o: _root, n: 1}) // key: id, value: object
+    const _storages = new HandleMap();
 
     const kTypeUndefined = 0;
-    const kTypeInt = 1;
-    const kTypeString = 2;
-    const kTypeList = 3;
-    const kTypeDict = 4;
-    const kTypeObject = 5;
-    const kTypeFunc = 6;
-    const kTypeArray = 7;
+    const kTypeBool = 1;
+    const kTypeInt = 2;
+    const kTypeString = 3;
+    const kTypeList = 4;
+    const kTypeDict = 5;
+    const kTypeObject = 6;
+    const kTypeFunc = 7;
+    const kTypeArray = 8;
 
     function exportObject(obj) {
-      for (const id in _objects) {
-        if (_objects[id].o == obj) {
-          _objects[id].n++;
+      for (const id in _objects.content) {
+        if (_objects.content[id].o == obj) {
+          _objects.content[id].n++;
           return id;
         }
       }
-
-      let id = 0;
-      while (++id in _objects) {}
-      _objects[id] = {o: obj, n: 1};
-      return id;
-    }
-
-    function releaseObject(id) {
-      if (--_objects[id].n == 0) {
-        delete _objects[id];
-      }
+      return _objects.add({o: obj, n: 1});
     }
 
     function makeStorage() {
       return {stubs: [], objects: [], strings: [], arrays: []};
     }
 
-    function deleteStorage(storage) {
+    function closeStorage(storage) {
       for (let i in storage.stubs) {
         Module._free(storage.stubs[i]);
       }
@@ -50,7 +61,7 @@ mergeInto(LibraryManager.library, {
         Module._free(storage.arrays[i]);
       }
       for (let i in storage.objects) {
-        releaseObject(storage.objects[i]);
+        _js_unref(storage.objects[i]);
       }
     }
 
@@ -73,8 +84,22 @@ mergeInto(LibraryManager.library, {
       } else if (type == kTypeFunc) {
         const callback = Module.HEAPU32[(val >> 2)];
         const ctx = Module.HEAPU32[(val >> 2) + 1];
-        return () => {
-          callWasm2(callback, ctx, arguments);
+        const dictDepth = Module.HEAPU32[(val >> 2) + 2];
+        return (...args) => {
+          const ptr = Module._malloc(8 * args.length);
+          try {
+            const storage = makeStorage();
+            try {
+              for (let i = 0; i < args.length; ++i) {
+                toWasm(storage, args[i], ptr + 8 * i, dictDepth);
+              }
+              Module.asm.__indirect_function_table.get(callback)(ctx, ptr, args.length);
+            } finally {
+              closeStorage(storage);
+            }
+          } finally {
+            Module._free(ptr);
+          }
         };
       } else if (type == kTypeArray) {
         const start = Module.HEAPU32[(val >> 2)];
@@ -90,6 +115,10 @@ mergeInto(LibraryManager.library, {
       if ((typeof val) == "undefined") {
         Module.HEAPU32[jsStubPtr >> 2] = kTypeUndefined;
         Module.HEAPU32[(jsStubPtr >> 2) + 1] = 0;
+
+      } else if ((typeof val) == "boolean") {
+        Module.HEAPU32[jsStubPtr >> 2] = kTypeBool;
+        Module.HEAPU32[(jsStubPtr >> 2) + 1] = val;
 
       } else if ((typeof val) == "number") {
         Module.HEAPU32[jsStubPtr >> 2] = kTypeInt;
@@ -150,67 +179,62 @@ mergeInto(LibraryManager.library, {
       }
     }
 
-    function callWasm(callback, ctx, arg, dictDepth) {
-      const cb = Module.asm.__indirect_function_table.get(callback);
-      const storage = makeStorage();
-      try {
-        const ptr = Module._malloc(8);
-        try {
-          toWasm(storage, arg, ptr, dictDepth);
-          cb(ctx, ptr);
-        } finally {
-          Module._free(ptr);
-        }
-      } finally {
-        deleteStorage(storage);
+    const _js_ref = function(objId) {
+      _objects.content[objId].n++;
+    }
+
+    const _js_unref = function(objId) {
+      if (--_objects.content[objId].n == 0) {
+        delete _objects.content[objId];
       }
     }
 
-    function callWasm2(callback, ctx, args) {
-      const cb = Module.asm.__indirect_function_table.get(callback);
-      const storage = makeStorage();
-      try {
-        const ptr = Module._malloc(8 * args.length);
-        try {
-          for (let i = 0; i < args.length; ++i) {
-            toWasm(storage, args[i], ptr + 8 * i);
-          }
-          cb(ctx, ptr, args.length);
-        } finally {
-          Module._free(ptr);
-        }
-      } finally {
-        deleteStorage(storage);
-      }
-    }
-
-    const _js_ref = function(obj) {
-      _objects[obj].n++;
-    }
-
-    const _js_unref = function(obj) {
-      releaseObject(obj);
-    }
-
-    const _js_call_async = function(obj, func, args, nArgs, callback, ctx, dictDepth) {
+    const _js_call_async = function(objId, func, args, nArgs, callback, ctx, dictDepth) {
       const funcName = Module.UTF8ArrayToString(Module.HEAPU8, func);
       const argList = [...Array(nArgs).keys()].map((i) => fromWasm(args + 8 * i));
-      _objects[obj].o[funcName](...argList).then((result) => {
-        callWasm(callback, ctx, result, dictDepth)
-      });
+
+      const cb = (result, error) => {
+        const resultStub = Module._malloc(8);
+        try {
+          const errorStub = Module._malloc(8);
+          try {
+            const storage = makeStorage();
+            try {
+              toWasm(storage, result, resultStub, dictDepth);
+              toWasm(storage, error, errorStub, dictDepth);
+              Module.asm.__indirect_function_table.get(callback)(ctx, resultStub, errorStub);
+            } finally {
+              closeStorage(storage);
+            }
+          } finally {
+            Module._free(errorStub);
+          }
+        } finally {
+          Module._free(resultStub);
+        }
+      };
+
+      _objects.content[objId].o[funcName](...argList).then(
+        (result) => cb(result, undefined),
+        (error) => { console.log(error); cb(undefined, error)}
+      );
     }
 
-    const _js_get_property = function(obj, property, callback, ctx, dictDepth) {
+    const _js_get_property = function(objId, property, dictDepth, pOut) {
       const propName = Module.UTF8ArrayToString(Module.HEAPU8, property);
-      //console.log("get property ", propName, " of ", obj, _objects[obj]);
-      const result = _objects[obj].o[propName];
-      callWasm(callback, ctx, result, dictDepth);
+      const result = _objects.content[objId].o[propName];
+      const storage = makeStorage();
+      toWasm(storage, result, pOut, dictDepth)
+      return _storages.add(storage);
     }
 
-    const _js_set_property = function(obj, property, arg) {
+    const _js_set_property = function(objId, property, arg) {
       const propName = Module.UTF8ArrayToString(Module.HEAPU8, property);
-      //console.log("set property ", propName, " of ", _objects[obj].o, " to ", fromWasm(arg));
-      _objects[obj].o[propName] = fromWasm(arg);
+      _objects.content[objId].o[propName] = fromWasm(arg);
+    }
+
+    const _js_release = function(storage) {
+      closeStorage(_storages.remove(storage));
     }
 
     __js_ref = _js_ref;

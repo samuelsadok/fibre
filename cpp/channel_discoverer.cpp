@@ -1,5 +1,6 @@
 
 #include <fibre/channel_discoverer.hpp>
+#include <fibre/rich_status.hpp>
 #include <string.h>
 #include <stdio.h>
 #include <algorithm>
@@ -54,4 +55,8 @@ bool ChannelDiscoverer::try_parse_key(const char* begin, const char* end, const 
     }
     *val = std::string{val_begin, val_end};
     return true;
+}
+
+RichStatus ChannelDiscoverer::show_device_dialog() {
+    return F_MAKE_ERR("not implemented");
 }

@@ -29,7 +29,11 @@ public:
     RichStatus start(on_found_device_t on_found,
                      on_lost_device_t on_lost) final;
     RichStatus stop() final;
+    RichStatus request_device(std::optional<uint16_t> vendor_id, std::optional<uint16_t> product_id, std::optional<uint8_t> intf_class, std::optional<uint8_t> intf_subclass, std::optional<uint8_t> intf_protocol) final;
 
+    RichStatus add_device(JsObjectRef ref);
+    RichStatus remove_device(JsObjectTempRef ref);
+    void on_request_device_finished(const JsStub& result_stub, const JsStub& error_stub);
     void on_get_devices_finished(const JsStub& result_stub, const JsStub& error_stub);
     void on_connect(const JsStub* args, size_t n_args);
     void on_disconnect(const JsStub* args, size_t n_args);
@@ -46,20 +50,21 @@ struct WebUsbDevice final : UsbDevice {
 
     RichStatus get_info(uint8_t* bus, uint8_t* address, uint16_t* vendor_id, uint16_t* product_id) final;
     RichStatus with_active_config_desc(Callback<void, UsbConfigDesc*> callback) final;
-    RichStatus open(Callback<void, UsbDevice*> callback) final;
-    RichStatus claim_interface(uint8_t interface_num, Callback<void, UsbDevice*> callback) final;
+    RichStatus open(Callback<void, RichStatus, UsbDevice*> callback) final;
+    RichStatus claim_interface(uint8_t interface_num, Callback<void, RichStatus, UsbDevice*> callback) final;
     RichStatus bulk_in_transfer(uint8_t ep_num, bufptr_t buffer, Callback<void, RichStatus, unsigned char*> callback) final;
     RichStatus bulk_out_transfer(uint8_t ep_num, cbufptr_t buffer, Callback<void, RichStatus, const unsigned char*> callback) final;
 
     void on_open_finished(const JsStub& result_stub, const JsStub& error_stub);
     void on_claim_interface_finished(const JsStub& result_stub, const JsStub& error_stub);
+    RichStatus wrap_up_transfer(const JsStub& result_stub, const JsStub& error_stub, std::string key, JsStub* val);
     void on_bulk_in_transfer_finished(const JsStub& result_stub, const JsStub& error_stub);
     void on_bulk_out_transfer_finished(const JsStub& result_stub, const JsStub& error_stub);
 
     WebUsb* webusb_;
     JsObjectRef ref_;
-    Callback<void, UsbDevice*> open_cb_;
-    Callback<void, UsbDevice*> claim_interface_cb_;
+    Callback<void, RichStatus, UsbDevice*> open_cb_;
+    Callback<void, RichStatus, UsbDevice*> claim_interface_cb_;
     bufptr_t bulk_in_transfer_buf_;
     Callback<void, RichStatus, unsigned char*> bulk_in_transfer_cb_;
     cbufptr_t bulk_out_transfer_buf_;
@@ -76,11 +81,11 @@ RichStatus WebUsb::start(on_found_device_t on_found, on_lost_device_t on_lost) {
     F_RET_IF_ERR(js_get_root()->get_property<JsObjectRef>("navigator", &navigator), "failed to get navigator object");
     F_RET_IF_ERR(navigator->get_property<JsObjectRef>("usb", &usb_), "failed to get WebUSB object (probably not supported by this browser)");
 
-    usb_->set_property("onconnect", MEMBER_CB(this, on_connect));
-    usb_->set_property("ondisconnect", MEMBER_CB(this, on_disconnect));
+    usb_->set_property("onconnect", JsFuncStub{MEMBER_CB(this, on_connect), 0});
+    usb_->set_property("ondisconnect", JsFuncStub{MEMBER_CB(this, on_disconnect), 0});
 
     std::unordered_map<
-        std::string, std::vector<std::unordered_map<std::string, std::string>>>
+        std::string, std::vector<std::unordered_map<std::string, unsigned int>>>
         filters = {{"filters", {}}};
 
     usb_->call_async("getDevices", MEMBER_CB(this, on_get_devices_finished), 0,
@@ -101,8 +106,74 @@ RichStatus WebUsb::stop() {
     return RichStatus::success();
 }
 
+RichStatus WebUsb::request_device(std::optional<uint16_t> vendor_id, std::optional<uint16_t> product_id, std::optional<uint8_t> intf_class, std::optional<uint8_t> intf_subclass, std::optional<uint8_t> intf_protocol) {
+    std::unordered_map<std::string, unsigned int> filter;
+
+    if (vendor_id.has_value()) {
+        filter["vendorId"] = *vendor_id;
+    }
+    if (product_id.has_value()) {
+        filter["productId"] = *product_id;
+    }
+    if (intf_class.has_value()) {
+        filter["classCode"] = *intf_class;
+    }
+    if (intf_subclass.has_value()) {
+        filter["subclassCode"] = *intf_subclass;
+    }
+    if (intf_protocol.has_value()) {
+        filter["protocolCode"] = *intf_protocol;
+    }
+
+    std::unordered_map<
+        std::string, std::vector<std::unordered_map<std::string, unsigned int>>>
+        filters = {{"filters", {filter}}};
+
+    usb_->call_async("requestDevice", MEMBER_CB(this, on_request_device_finished), 0, filters);
+
+    return RichStatus::success();
+}
+
+RichStatus WebUsb::add_device(JsObjectRef ref) {
+    F_RET_IF(known_devices_.find(ref->get_id()) != known_devices_.end(), "device already known");
+
+    WebUsbDevice* dev = new WebUsbDevice(this, ref);
+    known_devices_[dev->ref_->get_id()] = dev;
+    on_found_.invoke(dev);
+
+    return RichStatus::success();
+}
+
+RichStatus WebUsb::remove_device(JsObjectTempRef ref) {
+    auto it = known_devices_.find(ref.get_id());
+    F_RET_IF(it == known_devices_.end(), "unknown device");
+
+    WebUsbDevice* dev = it->second;
+    known_devices_.erase(it);
+    on_lost_.invoke(dev);
+    delete dev;
+
+    return RichStatus::success();
+}
+
+void WebUsb::on_request_device_finished(const JsStub& result_stub, const JsStub& error_stub) {
+    if (error_stub.type != JsType::kUndefined) {
+        F_LOG_W(logger_, "user did not select any device");
+        return;
+    }
+
+    JsObjectRef device;
+    if (F_LOG_IF_ERR(logger_, from_js(result_stub, &device), "cannot use result")) {
+        return;
+    }
+
+    F_LOG_IF_ERR(logger_, add_device(device), "can't add device");
+}
+
 void WebUsb::on_get_devices_finished(const JsStub& result_stub, const JsStub& error_stub) {
-    F_LOG_D(logger_, "got devices");
+    if (F_LOG_IF(logger_, error_stub.type != JsType::kUndefined, "getDevices() failed")) {
+        return;
+    }
 
     std::vector<JsObjectRef> devices;
     if (F_LOG_IF_ERR(logger_, from_js(result_stub, &devices), "in device list")) {
@@ -112,26 +183,48 @@ void WebUsb::on_get_devices_finished(const JsStub& result_stub, const JsStub& er
     F_LOG_D(logger_, "got " << devices.size() << " devices");
 
     for (auto& ref: devices) {
-        WebUsbDevice* dev = new WebUsbDevice(this, ref);
-        known_devices_[dev->ref_->get_id()] = dev;
-        on_found_.invoke(dev);
+        F_LOG_IF_ERR(logger_, add_device(ref), "can't add device");
     }
 }
 
 void WebUsb::on_connect(const JsStub* args, size_t n_args) {
-    if (n_args != 1) {
-        F_LOG_W(logger_, "expected 1 args but got " << n_args << " args");
+    if (F_LOG_IF(logger_, n_args != 1, "expected 1 args but got " << n_args << " args")) {
         return;
     }
-    F_LOG_W(logger_, "device connected [TODO]");
+
+    JsObjectTempRef event;
+    if (F_LOG_IF_ERR(logger_, from_js(args[0], &event), "in USBConnectionEvent")) {
+        return;
+    }
+
+    JsObjectRef device;
+    if (F_LOG_IF_ERR(logger_, event.get_property("device", &device), "in USBConnectionEvent")) {
+        return;
+    }
+
+    F_LOG_D(logger_, "device connected");
+
+    F_LOG_IF_ERR(logger_, add_device(device), "can't add device");
 }
 
 void WebUsb::on_disconnect(const JsStub* args, size_t n_args) {
-    if (n_args != 1) {
-        F_LOG_W(logger_, "expected 1 args but got " << n_args << " args");
+    if (F_LOG_IF(logger_, n_args != 1, "expected 1 args but got " << n_args << " args")) {
         return;
     }
-    F_LOG_W(logger_, "device disconnected [TODO]");
+
+    JsObjectTempRef event;
+    if (F_LOG_IF_ERR(logger_, from_js(args[0], &event), "in USBConnectionEvent")) {
+        return;
+    }
+
+    JsObjectTempRef device;
+    if (F_LOG_IF_ERR(logger_, event.get_property("device", &device), "in USBConnectionEvent")) {
+        return;
+    }
+
+    F_LOG_D(logger_, "device disconnected");
+
+    F_LOG_IF_ERR(logger_, remove_device(device), "can't remove device");
 }
 
 RichStatus WebUsbDevice::get_info(uint8_t* bus, uint8_t* address, uint16_t* vendor_id, uint16_t* product_id) {
@@ -215,13 +308,13 @@ RichStatus WebUsbDevice::with_active_config_desc(Callback<void, UsbConfigDesc*> 
     return RichStatus::success();
 }
 
-RichStatus WebUsbDevice::open(Callback<void, UsbDevice*> callback) {
+RichStatus WebUsbDevice::open(Callback<void, RichStatus, UsbDevice*> callback) {
     open_cb_ = callback;
     ref_->call_async("open", MEMBER_CB(this, on_open_finished), 0);
     return RichStatus::success();
 }
 
-RichStatus WebUsbDevice::claim_interface(uint8_t interface_num, Callback<void, UsbDevice*> callback) {
+RichStatus WebUsbDevice::claim_interface(uint8_t interface_num, Callback<void, RichStatus, UsbDevice*> callback) {
     claim_interface_cb_ = callback;
     ref_->call_async("claimInterface", MEMBER_CB(this, on_claim_interface_finished), 0, interface_num);
     return RichStatus::success();
@@ -244,101 +337,96 @@ RichStatus WebUsbDevice::bulk_out_transfer(uint8_t ep_num, cbufptr_t buffer, Cal
 }
 
 void WebUsbDevice::on_open_finished(const JsStub& result_stub, const JsStub& error_stub) {
-    if (error_stub.type != JsType::kUndefined) {
-        F_LOG_D(webusb_->logger_, "open failed with type " << (int)error_stub.type);
-        // TODO: error handling
-    } else {
-        F_LOG_D(webusb_->logger_, "open finished");
-        open_cb_.invoke_and_clear(this);
-    }
+    F_LOG_T(webusb_->logger_, "open() finished");
+    RichStatus status = error_stub.type == JsType::kUndefined ?
+        RichStatus::success() :
+        F_MAKE_ERR("open() failed with type " << (int)error_stub.type);
+    open_cb_.invoke_and_clear(status, this);
 }
 
 void WebUsbDevice::on_claim_interface_finished(const JsStub& result_stub, const JsStub& error_stub) {
-    F_LOG_D(webusb_->logger_, "claim_interface finished");
-    claim_interface_cb_.invoke_and_clear(this);
+    F_LOG_T(webusb_->logger_, "claimInterface() finished");
+    RichStatus status = error_stub.type == JsType::kUndefined ?
+        RichStatus::success() :
+        F_MAKE_ERR("claimInterface() failed with type " << (int)error_stub.type);
+    claim_interface_cb_.invoke_and_clear(status, this);
+}
+
+RichStatus WebUsbDevice::wrap_up_transfer(const JsStub& result_stub, const JsStub& error_stub, std::string key, JsStub* val) {
+    std::unordered_map<std::string, JsStub> result;
+    F_RET_IF_ERR(from_js(result_stub, &result), "can't parse transfer result");
+
+    auto status_it = result.find("status");
+    F_RET_IF(status_it == result.end(), "'status' not found");
+
+    std::string status;
+    F_RET_IF_ERR(from_js(status_it->second, &status), "can't read status");
+    F_RET_IF(status != "ok", "transfer failed: " << status);
+
+    auto it = result.find(key);
+    F_RET_IF(it == result.end(), "'" << key << "' not found");
+    *val = it->second;
+
+    return RichStatus::success();
 }
 
 void WebUsbDevice::on_bulk_in_transfer_finished(const JsStub& result_stub, const JsStub& error_stub) {
     F_LOG_T(webusb_->logger_, "bulk_in_transfer finished");
 
-    std::unordered_map<std::string, JsStub> result;
-    if (F_LOG_IF_ERR(webusb_->logger_, from_js(result_stub, &result), "can't parse transfer result")) {
-        return; // TODO: propagate error to callback
-    }
-
-    auto status_it = result.find("status");
-    if (F_LOG_IF(webusb_->logger_, status_it == result.end(), "'status' not found")) {
-        return;
-    }
-
-    std::string status;
-    if (F_LOG_IF_ERR(webusb_->logger_, from_js(status_it->second, &status), "can't read status")) {
-        return;
-    }
-
-    if (F_LOG_IF(webusb_->logger_, status != "ok", "transfer failed")) {
-        return;
-    }
-
-    auto data_it = result.find("data");
-    if (F_LOG_IF(webusb_->logger_, data_it == result.end(), "'data' not found")) {
-        return;
-    }
-
+    unsigned char* end = bulk_in_transfer_buf_.begin();
+    JsStub data_stub;
     cbufptr_t data;
-    if (F_LOG_IF_ERR(webusb_->logger_, from_js(data_it->second, &data), "can't read data")) {
-        return;
+
+    RichStatus status = wrap_up_transfer(result_stub, error_stub, "data", &data_stub);
+    if (status.is_error()) {
+        goto done;
     }
 
-    if (F_LOG_IF(webusb_->logger_, data.size() > bulk_in_transfer_buf_.size(), "more data than expected")) {
-        return;
+    status = from_js(data_stub, &data);
+    if (status.is_error()) {
+        status = F_AMEND_ERR(status, "can't read data");
+        goto done;
+    }
+
+    if (data.size() > bulk_in_transfer_buf_.size()) {
+        status = F_MAKE_ERR("more data than expected");
+        goto done;
     }
 
     std::copy_n(data.begin(), data.size(), bulk_in_transfer_buf_.begin());
-    auto end = bulk_in_transfer_buf_.begin() + data.size();
+    end += data.size();
 
+done:
     bulk_in_transfer_buf_ = {};
-    bulk_in_transfer_cb_.invoke_and_clear(RichStatus::success(), end);
+    bulk_in_transfer_cb_.invoke_and_clear(status, end);
 }
 
 void WebUsbDevice::on_bulk_out_transfer_finished(const JsStub& result_stub, const JsStub& error_stub) {
     F_LOG_T(webusb_->logger_, "bulk_out_transfer finished");
 
-    std::unordered_map<std::string, JsStub> result;
-    if (F_LOG_IF_ERR(webusb_->logger_, from_js(result_stub, &result), "can't parse transfer result")) {
-        return; // TODO: propagate error to callback
-    }
-
-    auto status_it = result.find("status");
-    if (F_LOG_IF(webusb_->logger_, status_it == result.end(), "'status' not found")) {
-        return;
-    }
-
-    std::string status;
-    if (F_LOG_IF_ERR(webusb_->logger_, from_js(status_it->second, &status), "can't read status")) {
-        return;
-    }
-
-    if (F_LOG_IF(webusb_->logger_, status != "ok", "transfer failed")) {
-        return;
-    }
-
-    auto bytes_written_it = result.find("bytesWritten");
-    if (F_LOG_IF(webusb_->logger_, bytes_written_it == result.end(), "'bytesWritten' not found")) {
-        return;
-    }
-
+    const unsigned char* end = bulk_in_transfer_buf_.begin();
+    JsStub bytes_written_stub;
     size_t bytes_written;
-    if (F_LOG_IF_ERR(webusb_->logger_, from_js(bytes_written_it->second, &bytes_written), "can't read bytes_written")) {
-        return;
+    
+    RichStatus status = wrap_up_transfer(result_stub, error_stub, "bytesWritten", &bytes_written_stub);
+    if (status.is_error()) {
+        goto done;
     }
 
-    if (F_LOG_IF(webusb_->logger_, bytes_written > bulk_out_transfer_buf_.size(), "more bytes written than expected")) {
-        return;
+    status = from_js(bytes_written_stub, &bytes_written);
+    if (status.is_error()) {
+        status = F_AMEND_ERR(status, "can't read bytes_written");
+        goto done;
     }
 
-    auto end = bulk_in_transfer_buf_.begin() + bytes_written;
+    if (bytes_written > bulk_out_transfer_buf_.size()) {
+        status = F_MAKE_ERR("more bytes written than expected");
+        goto done;
+    }
 
+    end += bytes_written;
+
+done:
     bulk_out_transfer_buf_ = {};
     bulk_out_transfer_cb_.invoke_and_clear(RichStatus::success(), end);
 }
@@ -359,6 +447,10 @@ RichStatus WebusbBackend::deinit() {
     delete adapter_;
     delete webusb_;
     return RichStatus::success();
+}
+
+RichStatus WebusbBackend::show_device_dialog() {
+    return adapter_->show_device_dialog();
 }
 
 void WebusbBackend::start_channel_discovery(Domain* domain, const char* specs,

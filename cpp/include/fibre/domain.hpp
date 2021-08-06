@@ -29,6 +29,8 @@ struct LegacyObject;
 class Domain {
     friend struct Fibre;
 public:
+    void show_device_dialog(std::string backend);
+
 #if FIBRE_ENABLE_CLIENT
     // TODO: add interface argument
     // TODO: support multiple discovery instances

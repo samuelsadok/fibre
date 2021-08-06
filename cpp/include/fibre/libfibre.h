@@ -85,8 +85,6 @@ struct LibFibreCallContext;
 struct LibFibreObject;
 struct LibFibreInterface;
 struct LibFibreFunction;
-struct LibFibreTxStream;
-struct LibFibreRxStream;
 struct LibFibreDomain;
 
 // This enum must remain identical to fibre::Status.
@@ -291,20 +289,6 @@ struct LibFibreTask {
 typedef void (*run_tasks_cb_t)(LibFibreCtx* ctx, LibFibreTask* tasks, size_t n_tasks, LibFibreTask** out_tasks, size_t* n_out_tasks);
 
 /**
- * @brief on_start_discovery callback type for libfibre_register_backend().
- * 
- * For every channel pair that the application finds that matches the filter of
- * this discoverer the application should call libfibre_add_channels().
- * 
- * @param discovery_handle: An opaque handle that libfibre will pass to the
- *        corresponding on_stop_discovery callback to stop the discovery.
- * @param specs, specs_length: The specs string that specifies discoverer-specific
- *        filter parameters.
- */
-typedef void (*on_start_discovery_cb_t)(void* ctx, LibFibreDomain* domain, const char* specs, size_t specs_length);
-typedef void (*on_stop_discovery_cb_t)(void* ctx, LibFibreDomain* domain);
-
-/**
  * @brief on_found_object callback type for libfibre_start_discovery().
  * @param obj: The object handle.
  * @param intf: The interface handle. Valid for as long as any handle of an
@@ -362,48 +346,6 @@ typedef LibFibreStatus (*libfibre_call_cb_t)(void* ctx,
         unsigned char** rx_buf, size_t* rx_len);
 
 /**
- * @brief TX completion callback type for libfibre_start_tx().
- * 
- * @param ctx: The user data that was passed to libfibre_start_tx().
- * @param tx_stream: The TX stream on which the TX operation completed.
- * @param status: The status of the last TX operation.
- *         - kFibreOk: The indicated range of the TX buffer was successfully
- *           transmitted and the stream might accept more data.
- *         - kFibreClosed: The indicated range of the TX buffer was successfully
- *           transmitted and the stream will no longer accept any data.
- *         - Any other status: Successful transmission of the data cannot be
- *           guaranteed and no more data can be sent on this stream.
- * @param tx_end: Points to the address after the last byte read from the
- *        TX buffer. This pointer always points to a valid position in the
- *        buffer (or the end of the buffer), even if the transmission failed.
- *        However if the status is something other than kFibreOk and
- *        kFibreClosed then the pointer may not precisely indicate the
- *        transmitted data range.
- */
-typedef void (*on_tx_completed_cb_t)(void* ctx, LibFibreTxStream* tx_stream, LibFibreStatus status, const uint8_t* tx_end);
-
-/**
- * @brief RX completion callback type for libfibre_start_rx().
- * 
- * @param ctx: The user data that was passed to libfibre_start_rx().
- * @param rx_stream: The RX stream on which the RX operation completed.
- * @param status: The status of the last RX operation.
- *         - kFibreOk: The indicated range of the RX buffer was successfully
- *           filled with received data and the stream might emit more data.
- *         - kFibreClosed: The indicated range of the RX buffer was successfully
- *           filled with received data and the stream will emit no more data.
- *         - Any other status: Successful transmission of the data cannot be
- *           guaranteed and no more data can be sent on this stream.
- * @param rx_end: Points to the address after the last byte written to the
- *        RX buffer. This pointer always points to a valid position in the
- *        buffer (or the end of the buffer), even if the reception failed.
- *        However if the status is something other than kFibreOk and
- *        kFibreClosed then the pointer may not precisely indicate the
- *        received data range.
- */
-typedef void (*on_rx_completed_cb_t)(void* ctx, LibFibreRxStream* rx_stream, LibFibreStatus status, uint8_t* rx_end);
-
-/**
  * @brief Returns the version of the libfibre library.
  * 
  * The returned struct must not be freed.
@@ -442,18 +384,6 @@ FIBRE_PUBLIC struct LibFibreCtx* libfibre_open(LibFibreEventLoop event_loop, run
 FIBRE_PUBLIC void libfibre_close(struct LibFibreCtx* ctx);
 
 /**
- * @brief Registers an external channel provider.
- * 
- * Libfibre starts and stops the discoverer on demand as a result of calls
- * to libfibre_start_discovery() and libfibre_stop_discovery().
- * This can be used by applications to implement transport providers which are
- * not supported natively in libfibre.
- */
-FIBRE_PUBLIC void libfibre_register_backend(LibFibreCtx* ctx, const char* name,
-    size_t name_length, on_start_discovery_cb_t on_start_discovery,
-    on_stop_discovery_cb_t on_stop_discovery, void* cb_ctx);
-
-/**
  * @brief Creates a communication domain from the specified spec string.
  * 
  * @param ctx: The libfibre context that was obtained from libfibre_open().
@@ -472,11 +402,22 @@ FIBRE_PUBLIC LibFibreDomain* libfibre_open_domain(LibFibreCtx* ctx,
 FIBRE_PUBLIC void libfibre_close_domain(LibFibreDomain* domain);
 
 /**
- * @brief Adds new TX and RX channels to a domain.
+ * @brief Opens a platform-specific interactive dialog to request access to a
+ * device or resource.
  * 
- * The channels can be closed with libfibre_close_tx() and libfibre_close_rx().
+ * This is only relevant in some sandboxed environments where libfibre doesn't
+ * have access to all devices by default. For instance when running in a
+ * webbrowser, libfibre's usb backend (WebUSB) doesn't have access to any USB
+ * devices by default. Calling this function will display the browser's USB
+ * device selection dialog. If the user selects a device, that device will be
+ * included in the current ongoing (and future) discovery processes.
+ * 
+ * Usually this function must be called as a result of user interaction, such
+ * as a button press.
+ * 
+ * @param backend: The backend for which to open the dialog.
  */
-FIBRE_PUBLIC void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel, LibFibreTxStream** rx_channel, size_t mtu, bool packetized);
+FIBRE_PUBLIC void libfibre_show_device_dialog(LibFibreDomain* domain, const char* backend);
 
 /**
  * @brief Starts looking for Fibre objects that match the specifications.
@@ -592,104 +533,6 @@ FIBRE_PUBLIC LibFibreStatus libfibre_get_attribute(LibFibreInterface* intf, LibF
  *        first.
  */
 FIBRE_PUBLIC void libfibre_run_tasks(LibFibreCtx* ctx, LibFibreTask* tasks, size_t n_tasks, LibFibreTask** out_tasks, size_t* n_out_tasks);
-
-/**
- * @brief Starts sending data on the specified TX stream.
- * 
- * DEPRECATED! (see top of this file)
- * TODO: remove
- * 
- * The TX operation must be considered in progress until the on_completed
- * callback is called. Until then the application must not start another TX
- * operation on the same stream. In the meantime the application can call
- * libfibre_cancel_tx() at any time to abort the operation.
- * 
- * @param tx_stream: The stream on which to send data.
- * @param tx_buf: The buffer to transmit. Must remain valid until the operation
- *        completes.
- * @param tx_len: Length of tx_buf.
- * @param on_completed: Called when the operation completes, whether successful
- *        or not.
- * @param ctx: Arbitrary user data passed to the on_completed callback.
- */
-FIBRE_PUBLIC void libfibre_start_tx(LibFibreTxStream* tx_stream, const uint8_t* tx_buf, size_t tx_len, on_tx_completed_cb_t on_completed, void* ctx);
-
-/**
- * @brief Cancels an ongoing TX operation.
- * 
- * DEPRECATED! (see top of this file)
- * TODO: remove
- * 
- * Must only be called if there is actually a TX operation in progress for which
- * cancellation has not yet been requested.
- * The application must still wait for the on_complete callback to be called
- * before the operation can be considered finished. The completion callback may
- * be called with kFibreCancelled or any other status.
- * 
- * TODO: specify if streams can be restarted (current doc of on_tx_completed_cb_t implies no)
- * 
- * @param tx_stream: The TX stream on which to cancel the ongoing TX operation.
- */
-FIBRE_PUBLIC void libfibre_cancel_tx(LibFibreTxStream* tx_stream);
-
-/**
- * @brief Permanently close TX stream.
- * 
- * DEPRECATED! (see top of this file)
- * TODO: remove
- * 
- * Must not be called while a transfer is ongoing.
- */
-FIBRE_PUBLIC void libfibre_close_tx(LibFibreTxStream* tx_stream, LibFibreStatus status);
-
-/**
- * @brief Starts receiving data on the specified RX stream.
- * 
- * DEPRECATED! (see top of this file)
- * TODO: remove
- * 
- * The RX operation must be considered in progress until the on_completed
- * callback is called. Until then the application must not start another RX
- * operation on the same stream. In the meantime the application can call
- * libfibre_cancel_rx() at any time to abort the operation.
- * 
- * @param rx_stream: The stream on which to receive data.
- * @param rx_buf: The buffer to receive to. Must remain valid until the
- *        operation completes.
- * @param rx_len: Length of rx_buf.
- * @param on_completed: Called when the operation completes, whether successful
- *        or not.
- * @param ctx: Arbitrary user data passed to the on_completed callback.
- */
-FIBRE_PUBLIC void libfibre_start_rx(LibFibreRxStream* rx_stream, uint8_t* rx_buf, size_t rx_len, on_rx_completed_cb_t on_completed, void* ctx);
-
-/**
- * @brief Cancels an ongoing RX operation.
- * 
- * DEPRECATED! (see top of this file)
- * TODO: remove
- * 
- * Must only be called if there is actually a RX operation in progress for which
- * cancellation has not yet been requested.
- * The application must still wait for the on_complete callback to be called
- * before the operation can be considered finished. The completion callback may
- * be called with kFibreCancelled or any other status.
- * 
- * TODO: specify if streams can be restarted (current doc of on_rx_completed_cb_t implies no)
- * 
- * @param rx_stream: The RX stream on which to cancel the ongoing RX operation.
- */
-FIBRE_PUBLIC void libfibre_cancel_rx(LibFibreRxStream* rx_stream);
-
-/**
- * @brief Permanently close RX stream.
- * 
- * DEPRECATED! (see top of this file)
- * TODO: remove
- * 
- * Must not be called while a transfer is ongoing.
- */
-FIBRE_PUBLIC void libfibre_close_rx(LibFibreRxStream* rx_stream, LibFibreStatus status);
 
 #ifdef __cplusplus
 }

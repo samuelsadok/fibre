@@ -92,6 +92,16 @@ void UsbHostAdapter::stop() {
     usb_->stop();
 }
 
+RichStatus UsbHostAdapter::show_device_dialog() {
+    return usb_->request_device(
+        specs_.vendor_id != -1 ? std::make_optional<uint16_t>(specs_.vendor_id) : std::nullopt,
+        specs_.product_id != -1 ? std::make_optional<uint16_t>(specs_.product_id) : std::nullopt,
+        specs_.interface_class != -1 ? std::make_optional<uint8_t>(specs_.interface_class) : std::nullopt,
+        specs_.interface_subclass != -1 ? std::make_optional<uint8_t>(specs_.interface_subclass) : std::nullopt,
+        specs_.interface_protocol != -1 ? std::make_optional<uint8_t>(specs_.interface_protocol) : std::nullopt
+    );
+}
+
 RichStatus UsbHostAdapter::consider(UsbDevice* device, InterfaceSpecs* specs) {
     uint8_t bus;
     uint8_t address;
@@ -179,12 +189,26 @@ void UsbHostAdapter::on_lost_device(UsbDevice* device) {
     }
 }
 
-void UsbHostAdapter::on_opened_device(UsbDevice* device) {
+void UsbHostAdapter::on_opened_device(RichStatus status, UsbDevice* device) {
     OpenDevice* dev = open_devices_[device];
+
+    if (F_LOG_IF_ERR(logger_, status, "couldn't open device")) {
+        delete dev;
+        open_devices_.erase(device);
+        return;
+    }
+
     device->claim_interface(dev->interface_num, MEMBER_CB(this, on_claimed_interface));
 }
 
-void UsbHostAdapter::on_claimed_interface(UsbDevice* device) {
+void UsbHostAdapter::on_claimed_interface(RichStatus status, UsbDevice* device) {
     OpenDevice* dev = open_devices_[device];
+
+    if (F_LOG_IF_ERR(logger_, status, "couldn't claim interface " << dev->interface_num)) {
+        delete dev;
+        open_devices_.erase(device);
+        return;
+    }
+
     domain_->add_legacy_channels({kFibreOk, &dev->ep_in, &dev->ep_out, dev->mtu, true}, "USB");
 }

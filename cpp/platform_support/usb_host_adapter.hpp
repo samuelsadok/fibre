@@ -15,6 +15,7 @@ struct UsbHostAdapter {
 
     void start(Domain* domain, const char* specs, size_t specs_len);
     void stop();
+    RichStatus show_device_dialog();
 
 private:
     struct InterfaceSpecs {
@@ -30,8 +31,8 @@ private:
     RichStatus consider(UsbDevice* device, InterfaceSpecs* specs);
     void on_found_device(UsbDevice* device);
     void on_lost_device(UsbDevice* device);
-    void on_opened_device(UsbDevice* device);
-    void on_claimed_interface(UsbDevice* device);
+    void on_opened_device(RichStatus status, UsbDevice* device);
+    void on_claimed_interface(RichStatus status, UsbDevice* device);
 
     Logger logger_;
     Domain* domain_;

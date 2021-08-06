@@ -39,13 +39,14 @@ extern void _js_release(void*);
 
 enum class JsType {
     kUndefined = 0,
-    kInt = 1,
-    kString = 2,
-    kList = 3,
-    kDict = 4,
-    kObject = 5,
-    kFunc = 6,
-    kArray = 7
+    kBool = 1,
+    kInt = 2,
+    kString = 3,
+    kList = 4,
+    kDict = 5,
+    kObject = 6,
+    kFunc = 7,
+    kArray = 8
 };
 
 struct JsStub {
@@ -54,6 +55,11 @@ struct JsStub {
 };
 
 struct JsFuncStub {
+    JsFuncStub(fibre::Callback<void, const JsStub*, size_t> cb, unsigned int dict_depth)
+        : callback((uintptr_t)cb.get_ptr()),
+          ctx((uintptr_t)cb.get_ctx()),
+          dict_depth(dict_depth) {}
+
     uintptr_t callback;
     uintptr_t ctx;
     unsigned int dict_depth;
@@ -67,6 +73,11 @@ struct JsArrayStub {
 struct JsUndefined {};
 static const constexpr JsUndefined js_undefined{};
 
+//struct JsCallback {
+//     cb;
+//    size_t dict_depth;
+//}
+//
 class JsTransferStorage {
 public:
     JsStub* push(size_t n) {
@@ -121,8 +132,8 @@ public:
         return {JsType::kDict, (uintptr_t)arr};
     }
 
-    JsStub to_js(fibre::Callback<void, const JsStub*, size_t> val) {
-        JsFuncStub* func = new JsFuncStub{(uintptr_t)val.get_ptr(), (uintptr_t)val.get_ctx(), 0};
+    JsStub to_js(JsFuncStub val) {
+        JsFuncStub* func = new JsFuncStub{val};
         funcs.push_back(func);
         return {JsType::kFunc, (uintptr_t)func};
     }
@@ -140,6 +151,7 @@ public:
 
 class JsObjectTempRef {
 public:
+    JsObjectTempRef() : id_(0) {}
     JsObjectTempRef(unsigned int id) : id_(id) {}
 
     JsObjectRef ref() {
@@ -189,8 +201,6 @@ public:
     }
 
 private:
-    JsObjectTempRef(const JsObjectTempRef&) = delete;
-
     unsigned int id_;
 };
 

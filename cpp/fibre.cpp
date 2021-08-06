@@ -281,6 +281,13 @@ RichStatus Fibre::deregister_backend(std::string name) {
 }
 #endif
 
+void Domain::show_device_dialog(std::string backend) {
+    if (F_LOG_IF(ctx->logger, channel_discovery_handles.find(backend) == channel_discovery_handles.end(), backend << " not running")) {
+        return;
+    }
+    F_LOG_IF_ERR(ctx->logger, ctx->discoverers[backend]->show_device_dialog(), "can't show device dialog");
+}
+
 #if FIBRE_ENABLE_CLIENT
 void Domain::start_discovery(Callback<void, Object*, Interface*, std::string> on_found_object, Callback<void, Object*> on_lost_object) {
     on_found_object_ = on_found_object;

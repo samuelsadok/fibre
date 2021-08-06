@@ -125,38 +125,6 @@ private:
     LibFibreEventLoop impl_;
 };
 
-class ExternalDiscoverer : public fibre::ChannelDiscoverer {
-    void start_channel_discovery(
-        fibre::Domain* domain,
-        const char* specs, size_t specs_len,
-        fibre::ChannelDiscoveryContext** handle) final;
-    RichStatus stop_channel_discovery(fibre::ChannelDiscoveryContext* handle) final;
-public:
-    on_start_discovery_cb_t on_start_discovery;
-    on_stop_discovery_cb_t on_stop_discovery;
-    void* cb_ctx;
-};
-
-
-void ExternalDiscoverer::start_channel_discovery(fibre::Domain* domain, const char* specs, size_t specs_len, fibre::ChannelDiscoveryContext** handle) {
-    LibFibreChannelDiscoveryCtx* ctx = new LibFibreChannelDiscoveryCtx{};
-    if (handle) {
-        *handle = from_c(ctx);
-    }
-    if (on_start_discovery) {
-        (*on_start_discovery)(cb_ctx, to_c(domain), specs, specs_len);
-    }
-}
-
-RichStatus ExternalDiscoverer::stop_channel_discovery(fibre::ChannelDiscoveryContext* handle) {
-    LibFibreChannelDiscoveryCtx* ctx = to_c(handle);
-    if (on_stop_discovery) {
-        (*on_stop_discovery)(cb_ctx, to_c(ctx->domain));
-    }
-    delete ctx;
-    return RichStatus::success();
-}
-
 namespace fibre {
 
 class AsyncStreamLink final : public AsyncStreamSink, public AsyncStreamSource {
@@ -276,36 +244,6 @@ struct FIBRE_PRIVATE LibFibreDiscoveryCtx {
     on_lost_object_cb_t on_lost_object_;
     void* cb_ctx_;
     fibre::Domain* domain_;
-};
-
-struct LibFibreTxStream {
-    void on_tx_done(fibre::WriteResult0 result) {
-        if (on_completed) {
-            (*on_completed)(ctx, this, convert_status(result.status), result.end);
-        }
-    }
-
-    fibre::AsyncStreamSink* sink;
-    fibre::TransferHandle handle;
-    on_tx_completed_cb_t on_completed;
-    void* ctx;
-    void (*on_closed)(LibFibreTxStream*, void*, fibre::StreamStatus);
-    void* on_closed_ctx;
-};
-
-struct LibFibreRxStream {
-    void on_rx_done(fibre::ReadResult result) {
-        if (on_completed) {
-            (*on_completed)(ctx, this, convert_status(result.status), result.end);
-        }
-    }
-
-    fibre::AsyncStreamSource* source;
-    fibre::TransferHandle handle;
-    on_rx_completed_cb_t on_completed;
-    void* ctx;
-    void (*on_closed)(LibFibreRxStream*, void*, fibre::StreamStatus);
-    void* on_closed_ctx;
 };
 
 
@@ -508,15 +446,6 @@ void libfibre_close(LibFibreCtx* ctx) {
     F_LOG_D(logger, "closed (" << fibre::as_hex((uintptr_t)ctx) << ")");
 }
 
-
-void libfibre_register_backend(LibFibreCtx* ctx, const char* name, size_t name_length, on_start_discovery_cb_t on_start_discovery, on_stop_discovery_cb_t on_stop_discovery, void* cb_ctx) {
-    auto disc = new ExternalDiscoverer();
-    disc->on_start_discovery = on_start_discovery;
-    disc->on_stop_discovery = on_stop_discovery;
-    disc->cb_ctx = cb_ctx;
-    ctx->fibre_ctx->register_backend({name, name + name_length}, disc);
-}
-
 FIBRE_PUBLIC LibFibreDomain* libfibre_open_domain(LibFibreCtx* ctx,
     const char* specs, size_t specs_len) {
     if (!ctx) {
@@ -542,39 +471,8 @@ void libfibre_close_domain(LibFibreDomain* domain) {
     from_c(domain)->ctx->close_domain(from_c(domain));
 }
 
-void libfibre_add_channels(LibFibreDomain* domain, LibFibreRxStream** tx_channel, LibFibreTxStream** rx_channel, size_t mtu, bool packetized) {
-    fibre::AsyncStreamLink* tx_link = new fibre::AsyncStreamLink(); // libfibre => backend
-    fibre::AsyncStreamLink* rx_link = new fibre::AsyncStreamLink(); // backend => libfibre
-    LibFibreRxStream* tx = new LibFibreRxStream(); // libfibre => backend
-    LibFibreTxStream* rx = new LibFibreTxStream(); // backend => libfibre
-    tx->source = tx_link;
-    rx->sink = rx_link;
-
-    tx->on_closed = [](LibFibreRxStream* stream, void* ctx, fibre::StreamStatus status) {
-        auto link = reinterpret_cast<fibre::AsyncStreamLink*>(ctx);
-        link->close(status);
-        delete link;
-        delete stream;
-    };
-    tx->on_closed_ctx = tx_link;
-    rx->on_closed = [](LibFibreTxStream* stream, void* ctx, fibre::StreamStatus status) {
-        auto link = reinterpret_cast<fibre::AsyncStreamLink*>(ctx);
-        link->close(status);
-        delete link;
-        delete stream;
-    };
-    rx->on_closed_ctx = rx_link;
-
-    if (tx_channel) {
-        *tx_channel = tx;
-    }
-
-    if (rx_channel) {
-        *rx_channel = rx;
-    }
-
-    fibre::ChannelDiscoveryResult result = {fibre::kFibreOk, rx_link, tx_link, mtu, packetized};
-    from_c(domain)->add_legacy_channels(result, "external");
+void libfibre_show_device_dialog(LibFibreDomain* domain, const char* backend) {
+    from_c(domain)->show_device_dialog(backend);
 }
 
 void libfibre_start_discovery(LibFibreDomain* domain, LibFibreDiscoveryCtx** handle,
@@ -736,40 +634,4 @@ void libfibre_run_tasks(LibFibreCtx* ctx, LibFibreTask* tasks, size_t n_tasks, L
     std::swap(ctx->shadow_task_queue, ctx->task_queue);
     *out_tasks = ctx->shadow_task_queue.data();
     *n_out_tasks = ctx->shadow_task_queue.size();
-}
-
-void libfibre_start_tx(LibFibreTxStream* tx_stream,
-        const uint8_t* tx_buf, size_t tx_len, on_tx_completed_cb_t on_completed,
-        void* ctx) {
-    tx_stream->on_completed = on_completed;
-    tx_stream->ctx = ctx;
-    tx_stream->sink->start_write({tx_buf, tx_len}, &tx_stream->handle, MEMBER_CB(tx_stream, on_tx_done));
-}
-
-void libfibre_cancel_tx(LibFibreTxStream* tx_stream) {
-    tx_stream->sink->cancel_write(tx_stream->handle);
-}
-
-void libfibre_close_tx(LibFibreTxStream* tx_stream, LibFibreStatus status) {
-    if (tx_stream->on_closed) {
-        (tx_stream->on_closed)(tx_stream, tx_stream->on_closed_ctx, convert_status(status));
-    }
-}
-
-void libfibre_start_rx(LibFibreRxStream* rx_stream,
-        uint8_t* rx_buf, size_t rx_len, on_rx_completed_cb_t on_completed,
-        void* ctx) {
-    rx_stream->on_completed = on_completed;
-    rx_stream->ctx = ctx;
-    rx_stream->source->start_read({rx_buf, rx_len}, &rx_stream->handle, MEMBER_CB(rx_stream, on_rx_done));
-}
-
-void libfibre_cancel_rx(LibFibreRxStream* rx_stream) {
-    rx_stream->source->cancel_read(rx_stream->handle);
-}
-
-void libfibre_close_rx(LibFibreRxStream* rx_stream, LibFibreStatus status) {
-    if (rx_stream->on_closed) {
-        (rx_stream->on_closed)(rx_stream, rx_stream->on_closed_ctx, convert_status(status));
-    }
 }
