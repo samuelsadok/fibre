@@ -70,7 +70,7 @@ function get_fibre_package(args)
     end
 
     if args.enable_libusb_backend then
-        pkg.code_files += 'platform_support/libusb_transport.cpp'
+        pkg.code_files += 'platform_support/libusb_backend.cpp'
         pkgconf(pkg, "libusb-1.0")
 
         -- TODO: only add pthread on linux and windows

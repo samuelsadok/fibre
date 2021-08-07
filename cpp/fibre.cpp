@@ -28,7 +28,7 @@ using EventLoopImpl = fibre::EpollEventLoop;
 #endif
 
 #if FIBRE_ENABLE_LIBUSB_BACKEND
-#include "platform_support/libusb_transport.hpp"
+#include "platform_support/libusb_backend.hpp"
 #endif
 
 #if FIBRE_ENABLE_WEBUSB_BACKEND
@@ -110,7 +110,7 @@ RichStatus fibre::open(EventLoop* event_loop, Logger logger, Fibre** p_ctx) {
     RichStatus status;
 #if FIBRE_ENABLE_LIBUSB_BACKEND
     if (status.is_success()) {
-        status = ctx->init_backend("usb", new LibusbBackend{});
+        status = ctx->init_backend("usb", new LibUsbBackend{});
     }
 #endif
 #if FIBRE_ENABLE_WEBUSB_BACKEND
