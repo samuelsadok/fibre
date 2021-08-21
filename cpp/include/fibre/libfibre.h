@@ -507,7 +507,7 @@ FIBRE_PUBLIC void libfibre_free_interface_info(LibFibreInterfaceInfo* info);
  *        libfibre_start_discovery() or from a previous call to
  *        libfibre_get_attribute().
  * @param attr_id: The attribute index pertaining to the attribute list returned
- *        by `libfibre_load_interface()`.
+ *        by `libfibre_get_interface_info()`.
  * @param child_obj_ptr: If and only if the function succeeds, the variable that
  *        this argument points to is set to the requested subobject. The returned
  *        object handle is only guaranteed to remain valid for as long as the
