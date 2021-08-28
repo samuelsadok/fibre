@@ -626,7 +626,9 @@ void libfibre_run_tasks(LibFibreCtx* ctx, LibFibreTask* tasks, size_t n_tasks, L
         F_LOG_E(ctx->fibre_ctx->logger, "libfibre_run_tasks must not be called from inside the libfibre_run_tasks_callback");
     }
 
+    ctx->autostart_dispatcher = false;
     ctx->handle_tasks(tasks, n_tasks);
+    ctx->autostart_dispatcher = true;
 
     // Move new tasks to the shadow task queue so they remain valid until the
     // next call to `libfibre_run_tasks()`.
