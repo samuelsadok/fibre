@@ -806,8 +806,9 @@ class LibFibre {
     enqueueTask(taskFactory) {
         // Enlarge array by factor 5 if necessary
         if (this._nPendingTasks >= this._nAllocatedTasks) {
-            const newTasks = this.mallocStructArray(5 * this._nAllocatedTasks);
-            this.wasm.Module.HEAPU8.set(this.wasm.Module.HEAPU8.subarray(this._tasks, this._nAllocatedTasks * LibFibreTask.size), newTasks);
+            const newTasks = this.mallocStructArray(LibFibreTask, 5 * this._nAllocatedTasks);
+            this.wasm.Module.HEAPU8.set(this.wasm.Module.HEAPU8.subarray(this._tasks.addr, this._tasks.addr + this._nAllocatedTasks * LibFibreTask.size), newTasks.addr);
+            this.wasm.free(this._tasks.addr);
             this._tasks = newTasks;
             this._nAllocatedTasks *= 5;
         }

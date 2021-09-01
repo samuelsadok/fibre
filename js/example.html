@@ -11,22 +11,22 @@
             import { fibreOpen } from './fibre.js';
 
             fibreOpen().then((libfibre) => {
-               const filter = 'usb:idVendor=0x1209,idProduct=0x0D32,bInterfaceClass=0,bInterfaceSubClass=1,bInterfaceProtocol=0';
-               const domain = libfibre.openDomain(filter);
+                const filter = 'usb:idVendor=0x1209,idProduct=0x0D32,bInterfaceClass=0,bInterfaceSubClass=1,bInterfaceProtocol=0';
+                const domain = libfibre.openDomain(filter);
 
-               const onFoundObject = async (obj) => {
-                  console.log("found an object!", obj);
-                  while (true) {
-                     document.getElementById("statusText").innerHTML = "vbus_voltage: " + (await obj.vbus_voltage.read());
-                     await new Promise((resolve) => setTimeout(resolve, 100));
-                  }
-               }
-               domain.startDiscovery(onFoundObject);
+                const onFoundObject = async (obj) => {
+                    console.log("found an object!", obj);
+                    while (true) {
+                        document.getElementById("statusText").innerHTML = "vbus_voltage: " + (await obj.vbus_voltage.read());
+                        await new Promise((resolve) => setTimeout(resolve, 100));
+                    }
+                }
+                domain.startDiscovery(onFoundObject);
 
-               const showDialog = (obj) => domain.showDeviceDialog("usb");
+                const showDialog = (obj) => domain.showDeviceDialog("usb");
 
-               document.getElementById("connectBtn").onclick = showDialog;
-               document.getElementById("connectBtn").removeAttribute('disabled');
+                document.getElementById("connectBtn").onclick = showDialog;
+                document.getElementById("connectBtn").removeAttribute('disabled');
             });
         </script>
     </body>
