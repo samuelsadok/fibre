@@ -335,7 +335,7 @@ void LibFibreCtx::handle_tasks(LibFibreTask* tasks, size_t n_tasks) {
                 LibFibreCall* call = it->second;
 
                 WriteResult result = call->call->write({
-                    {tasks[i].write.b_begin, from_c(tasks[i].write.c_begin), from_c(tasks[i].write.c_end), tasks[0].write.elevation},
+                    {tasks[i].write.b_begin, from_c(tasks[i].write.c_begin), from_c(tasks[i].write.c_end), tasks[i].write.elevation},
                     from_c(tasks[i].write.status)});
                 
                 if (result.is_busy()) {

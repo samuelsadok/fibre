@@ -440,14 +440,14 @@ Cont TheStateMachine::iteration(WriteArgs args) {
                     arg_num_ = args_.size() + start_arg;
                     status_ = kFibreInternalError;
                     changed_state = true;
-                    return Cont1{kFibreOk, args.buf.begin()};
+                    return Cont1{kFibreInternalError, args.buf.begin()};
                 }
 
             } else {
                 arg_num_ = args_.size() + start_arg;
                 status_ = kFibreInternalError;
                 changed_state = true;
-                return Cont1{kFibreOk, args.buf.begin()};
+                return Cont1{kFibreInternalError, args.buf.begin()};
             }
         }
         return Cont1{kFibreOk, args.buf.begin()};
@@ -469,7 +469,7 @@ Cont TheStateMachine::iteration(WriteArgs args) {
                     arg_num_ = args_.size() + start_arg;
                     status_ = kFibreInternalError;
                     changed_state = true;
-                    return Cont1{kFibreOk, args.buf.begin()};
+                    return Cont1{kFibreInternalError, args.buf.begin()};
                 }
                 chunks_[0] = Chunk{0, buf};
                 chunks_[1] = Chunk::frame_boundary(0);
@@ -480,7 +480,7 @@ Cont TheStateMachine::iteration(WriteArgs args) {
                 arg_num_ = args_.size() + start_arg;
                 status_ = kFibreInternalError;
                 changed_state = true;
-                return Cont1{kFibreOk, args.buf.begin()};
+                return Cont1{kFibreInternalError, args.buf.begin()};
             }
         }
         return Cont1{kFibreOk, args.buf.begin()};
