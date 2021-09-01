@@ -132,7 +132,7 @@ RichStatus UsbHostAdapter::consider(UsbDevice* device, InterfaceSpecs* specs) {
 
     F_RET_IF_ERR(device->with_active_config_desc([&](const UsbConfigDesc* config_desc) {
         for (uint8_t i = 0; i < config_desc->n_interfaces; ++i) {
-            for (int j = 0; j < config_desc->interfaces[i].n_altsettings; ++j) {
+            for (size_t j = 0; j < config_desc->interfaces[i].n_altsettings; ++j) {
                 const UsbAlternateDesc* alt_desc = &(config_desc->interfaces[i].alternates[j]);
 
                 bool mismatch = (specs->interface_class != -1 && alt_desc->interface_class != specs->interface_class)
