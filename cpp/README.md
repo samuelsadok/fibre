@@ -98,3 +98,12 @@ To compile your application you need to link against the libfibre binary (`-L/pa
  - Fibre currently targets C++11 to maximize compatibility with other projects
  - Notes on platform independent programming:
    - Don't use the keyword `interface` (defined as a macro on Windows in `rpc.h`)
+
+# Debugging Memory Leaks in WASM
+
+This works only in JS, not in dart:
+
+- Add `-fsanitize=leak` to CFLAGS
+- Add `-sINITIAL_MEMORY=104857600` to LDFLAGS
+- Compile
+- In example.html press "Leak Check"

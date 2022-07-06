@@ -910,28 +910,34 @@ class Domain {
     }
 }
 
-export function fibreOpen(log_verbosity = 5) {
+export function fibreOpen(log_verbosity = 3) {
     return new Promise(async (resolve) => {
         let Module = {
-            instantiateWasm: async (info, receiveInstance) => {
-                const isWebpack = typeof __webpack_require__ === 'function';
-                const wasmPath = isWebpack ? (await import("!!file-loader!./libfibre-wasm.wasm")).default
-                    : "./libfibre-wasm.wasm";
-
-                let result;
-                if (typeof navigator === 'object') {
-                    // Running in browser
-                    const response = fetch(wasmPath, { credentials: 'same-origin' });
-                    result = await WebAssembly.instantiateStreaming(response, info);
-                } else {
-                    // Running in bare NodeJS
-                    const fsPromises = (await import('fs/promises')).default;
-                    const response = await fsPromises.readFile('/Data/Projects/fibre/js/libfibre-wasm.wasm');
-                    result = await WebAssembly.instantiate(response, info);
-                }
-                receiveInstance(result['instance']);
-                return {};
-            }
+//            instantiateWasm: async (info, receiveInstance) => {
+//                const isWebpack = typeof __webpack_require__ === 'function';
+//                const wasmPath = isWebpack ? (await import("!!file-loader!./libfibre-wasm.wasm")).default
+//                    : "./libfibre-wasm.wasm";
+//
+//                let instantiationResult;
+//                var arrayBufferResult;
+//                if (typeof navigator === 'object') {
+//                    // Running in browser
+//                    const response = fetch(wasmPath, { credentials: 'same-origin' });
+//                    arrayBufferResult = (await response).clone().arrayBuffer();
+//                    instantiationResult = await WebAssembly.instantiateStreaming(response, info);
+//                    console.log(instantiationResult);
+//                    //arrayBufferResult = (await response).clone().arrayBuffer();
+//                } else {
+//                    // Running in bare NodeJS
+//                    const fsPromises = (await import('fs/promises')).default;
+//                    const response = await fsPromises.readFile('/Data/Projects/fibre/js/libfibre-wasm.wasm');
+//                    instantiationResult = await WebAssembly.instantiate(response, info);
+//                }
+//
+//                //wasmOffsetConverter = new WasmOffsetConverter(new Uint8Array(arrayBufferResult), instantiationResult.module);
+//                receiveInstance(instantiationResult['instance'], null, arrayBufferResult);
+//                return {};
+//            }
         };
         Module = await wasm(Module);
         await Module.ready;

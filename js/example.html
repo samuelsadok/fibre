@@ -7,6 +7,7 @@
     <body>
         <h1 id="statusText">not connected</h1>
         <button id="connectBtn" disabled>Connect...</button>
+        <button id="leakBtn" disabled>Leak check</button>
         <script type="module">
             import { fibreOpen } from './fibre.js';
 
@@ -27,6 +28,15 @@
 
                 document.getElementById("connectBtn").onclick = showDialog;
                 document.getElementById("connectBtn").removeAttribute('disabled');
+
+                document.getElementById("leakBtn").onclick = (obj) => {
+                    domain._libfibre.wasm.Module._do_leak_check();
+
+                    const addr = domain._libfibre.wasm.Module._malloc(1000);
+                    console.log("got addr", addr)
+                    domain._libfibre.wasm.Module._free(addr);
+                };
+                document.getElementById("leakBtn").removeAttribute('disabled');
             });
         </script>
     </body>
