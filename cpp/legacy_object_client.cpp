@@ -120,8 +120,9 @@ void LegacyObjectClient::start(Node* node, Domain* domain,
 
 WriteResult LegacyObjectClient::write(WriteArgs args) {
     while (args.buf.n_chunks()) {
-        if (args.buf.front().is_buf()) {
-            for (uint8_t b : args.buf.front().buf()) {
+        auto front = args.buf.front();
+        if (front.is_buf()) {
+            for (uint8_t b : front.buf()) {
                 json_.push_back(b);
             }
         } else {
@@ -376,7 +377,7 @@ struct TheStateMachine {
     WriteArgs pending;
 };
 
-struct LegacyCallContext2 : TwoSidedSocket {
+struct LegacyCallContext2 final : TwoSidedSocket {
     LegacyCallContext2(const LegacyFunction* func, Socket* caller);
 
     const LegacyFunction* func_;
@@ -387,10 +388,15 @@ struct LegacyCallContext2 : TwoSidedSocket {
     TheStateMachine tx_state_machine_;
     TheStateMachine rx_state_machine_;
 
+    bool upstream_closed_ = false;
+    bool downstream_closed_ = false;
+
     WriteResult downstream_write(WriteArgs args) final;
     WriteArgs on_upstream_write_done(WriteResult result) final;
     WriteResult upstream_write(WriteArgs args) final;
     WriteArgs on_downstream_write_done(WriteResult result) final;
+
+    void maybe_close(WriteResult result, bool& closed);
 };
 
 std::vector<uint16_t> get_arg_eps(const std::vector<LegacyFibreArg>& args,
@@ -491,7 +497,12 @@ Cont TheStateMachine::iteration(WriteArgs args) {
             return Cont1{args.status, args.buf.begin()};
         }
         CBufIt arg_end = args.buf.find_layer0_bound();
-        if (arg_end != args.buf.end()) {
+
+        if (arg_end == args.buf.end()) {
+            // don't move iterator ahead
+        } else if (arg_end.chunk + 1 == args.buf.end().chunk) {
+            arg_end = args.buf.end();
+        } else {
             arg_end = CBufIt{arg_end.chunk + 1, (arg_end.chunk + 1)->buf().begin()};
         }
         pending = args;
@@ -612,17 +623,34 @@ Socket* LegacyFunction::start_call(Domain* domain, bufptr_t call_frame,
 }
 
 WriteResult LegacyCallContext2::downstream_write(WriteArgs args) {
-    return tx_state_machine_.write(args, &callee_);
+    auto result = tx_state_machine_.write(args, &callee_);
+    maybe_close(result, downstream_closed_);
+    return result;
 }
 
 WriteArgs LegacyCallContext2::on_downstream_write_done(WriteResult result) {
-    return tx_state_machine_.on_write_done(result, &caller_);
+    auto args = tx_state_machine_.on_write_done(result, &caller_);
+    maybe_close(result, downstream_closed_);
+    return args;
 }
 
 WriteResult LegacyCallContext2::upstream_write(WriteArgs args) {
-    return rx_state_machine_.write(args, &caller_);
+    auto result = rx_state_machine_.write(args, &caller_);
+    maybe_close(result, upstream_closed_);
+    return result;
 }
 
 WriteArgs LegacyCallContext2::on_upstream_write_done(WriteResult result) {
-    return rx_state_machine_.on_write_done(result, &callee_);
+    auto args = rx_state_machine_.on_write_done(result, &callee_);
+    maybe_close(result, upstream_closed_);
+    return args;
+}
+
+void LegacyCallContext2::maybe_close(WriteResult result, bool& closed) {
+    if (result.status != Status::kFibreOk && result.status != Status::kFibreBusy) {
+        closed = true;
+    }
+    if (upstream_closed_ && downstream_closed_) {
+        delete this;
+    }
 }
