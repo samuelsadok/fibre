@@ -61,6 +61,8 @@ struct WebUsbDevice final : UsbDevice {
     void on_bulk_in_transfer_finished(const JsStub& result_stub, const JsStub& error_stub);
     void on_bulk_out_transfer_finished(const JsStub& result_stub, const JsStub& error_stub);
 
+    void maybe_tear_down();
+
     WebUsb* webusb_;
     JsObjectRef ref_;
     Callback<void, RichStatus, UsbDevice*> open_cb_;
@@ -69,6 +71,9 @@ struct WebUsbDevice final : UsbDevice {
     Callback<void, RichStatus, unsigned char*> bulk_in_transfer_cb_;
     cbufptr_t bulk_out_transfer_buf_;
     Callback<void, RichStatus, const unsigned char*> bulk_out_transfer_cb_;
+
+    size_t async_calls_ = 0;
+    bool disconnected_ = false;
 };
 
 }  // namespace fibre
@@ -151,7 +156,9 @@ RichStatus WebUsb::remove_device(JsObjectTempRef ref) {
     WebUsbDevice* dev = it->second;
     known_devices_.erase(it);
     on_lost_.invoke(dev);
-    delete dev;
+
+    dev->disconnected_ = true;
+    dev->maybe_tear_down();
 
     return RichStatus::success();
 }
@@ -310,12 +317,14 @@ RichStatus WebUsbDevice::with_active_config_desc(Callback<void, UsbConfigDesc*> 
 
 RichStatus WebUsbDevice::open(Callback<void, RichStatus, UsbDevice*> callback) {
     open_cb_ = callback;
+    async_calls_++;
     ref_->call_async("open", MEMBER_CB(this, on_open_finished), 0);
     return RichStatus::success();
 }
 
 RichStatus WebUsbDevice::claim_interface(uint8_t interface_num, Callback<void, RichStatus, UsbDevice*> callback) {
     claim_interface_cb_ = callback;
+    async_calls_++;
     ref_->call_async("claimInterface", MEMBER_CB(this, on_claim_interface_finished), 0, interface_num);
     return RichStatus::success();
 }
@@ -324,6 +333,7 @@ RichStatus WebUsbDevice::bulk_in_transfer(uint8_t ep_num, bufptr_t buffer, Callb
     bulk_in_transfer_buf_ = buffer;
     bulk_in_transfer_cb_ = callback;
     F_LOG_D(webusb_->logger_, "bulk in " << buffer.size() << " bytes");
+    async_calls_++;
     ref_->call_async("transferIn", MEMBER_CB(this, on_bulk_in_transfer_finished), 1, ep_num & 0x7f, std::min(buffer.size(), 63UL));
     return RichStatus::success();
 }
@@ -332,6 +342,7 @@ RichStatus WebUsbDevice::bulk_out_transfer(uint8_t ep_num, cbufptr_t buffer, Cal
     bulk_out_transfer_buf_ = buffer;
     bulk_out_transfer_cb_ = callback;
     F_LOG_D(webusb_->logger_, "bulk out " << buffer.size() << " bytes");
+    async_calls_++;
     ref_->call_async("transferOut", MEMBER_CB(this, on_bulk_out_transfer_finished), 1, ep_num, buffer);
     return RichStatus::success();
 }
@@ -342,6 +353,9 @@ void WebUsbDevice::on_open_finished(const JsStub& result_stub, const JsStub& err
         RichStatus::success() :
         F_MAKE_ERR("open() failed with type " << (int)error_stub.type);
     open_cb_.invoke_and_clear(status, this);
+
+    async_calls_--;
+    maybe_tear_down();
 }
 
 void WebUsbDevice::on_claim_interface_finished(const JsStub& result_stub, const JsStub& error_stub) {
@@ -350,6 +364,9 @@ void WebUsbDevice::on_claim_interface_finished(const JsStub& result_stub, const 
         RichStatus::success() :
         F_MAKE_ERR("claimInterface() failed with type " << (int)error_stub.type);
     claim_interface_cb_.invoke_and_clear(status, this);
+
+    async_calls_--;
+    maybe_tear_down();
 }
 
 RichStatus WebUsbDevice::wrap_up_transfer(const JsStub& result_stub, const JsStub& error_stub, std::string key, JsStub* val) {
@@ -399,6 +416,9 @@ void WebUsbDevice::on_bulk_in_transfer_finished(const JsStub& result_stub, const
 done:
     bulk_in_transfer_buf_ = {};
     bulk_in_transfer_cb_.invoke_and_clear(status, end);
+
+    async_calls_--;
+    maybe_tear_down();
 }
 
 void WebUsbDevice::on_bulk_out_transfer_finished(const JsStub& result_stub, const JsStub& error_stub) {
@@ -429,6 +449,16 @@ void WebUsbDevice::on_bulk_out_transfer_finished(const JsStub& result_stub, cons
 done:
     bulk_out_transfer_buf_ = {};
     bulk_out_transfer_cb_.invoke_and_clear(RichStatus::success(), end);
+
+    async_calls_--;
+    maybe_tear_down();
+}
+
+void WebUsbDevice::maybe_tear_down() {
+    if (disconnected_ && !async_calls_) {
+        F_LOG_T(webusb_->logger_, "deleting WebUsbDevice");
+        delete this;
+    }
 }
 
 RichStatus WebusbBackend::init(EventLoop* event_loop, Logger logger) {
