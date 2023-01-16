@@ -3,6 +3,7 @@
 #include "json.hpp"
 #include "legacy_object_client.hpp"
 #include "legacy_protocol.hpp"
+#include "print_utils.hpp"
 #include <fibre/simple_serdes.hpp>
 
 using namespace fibre;
@@ -441,6 +442,7 @@ Cont TheStateMachine::iteration(WriteArgs args) {
                             ctx_->downfacing_socket());
                     arg_num_++;
                     changed_state = true;
+                    buf = {};
                     return Cont1{kFibreOk, args.buf.begin()};
                 } else {
                     arg_num_ = args_.size() + start_arg;
@@ -477,6 +479,10 @@ Cont TheStateMachine::iteration(WriteArgs args) {
                     changed_state = true;
                     return Cont1{kFibreInternalError, args.buf.begin()};
                 }
+
+                // TODO: buf should probably be reset somewhere, otherwise we
+                // can't transcode two arguments in a row.
+
                 chunks_[0] = Chunk{0, buf};
                 chunks_[1] = Chunk::frame_boundary(0);
                 changed_state = true;
