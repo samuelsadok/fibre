@@ -640,7 +640,17 @@ void libfibre_run_tasks(LibFibreCtx* ctx, LibFibreTask* tasks, size_t n_tasks, L
 
 
 extern "C" {
-#if defined(__has_feature) && (__has_feature(leak_sanitizer) || __has_feature(address_sanitizer))
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(address_sanitizer)
+#    define LEAK_CHECK 1
+#  else
+#    define LEAK_CHECK 0
+#  endif
+#else
+#  define LEAK_CHECK 0
+#endif
+
+#if LEAK_CHECK
 #include <sanitizer/lsan_interface.h>
 FIBRE_PUBLIC void do_leak_check() {
     __lsan_do_recoverable_leak_check();
