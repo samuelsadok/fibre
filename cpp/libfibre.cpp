@@ -63,7 +63,7 @@ const LibFibreChunk* to_c(const fibre::Chunk* ptr) {
 }
 
 
-static const struct LibFibreVersion libfibre_version = { 0, 3, 2 };
+static const struct LibFibreVersion libfibre_version = { 0, 3, 3 };
 
 class FIBRE_PRIVATE ExternalEventLoop final : public fibre::EventLoop {
 public:
